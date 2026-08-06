@@ -1,0 +1,51 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, "feat/**"]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e '.[dev]'
+      - run: ruff check .
+      - run: pytest --cov=app --cov-report=term-missing
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --check apps/dashboard/public/app.js
+      - run: node --check apps/dashboard/public/ai-panel.js
+      - working-directory: apps/gateway
+        run: npm install --ignore-scripts
+      - working-directory: apps/gateway
+        run: npm run check
+      - working-directory: apps/gateway
+        run: npm test
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Validate shell and Compose configuration
+        run: |
+          bash -n infra/oracle/bootstrap.sh scripts/activate-release.sh scripts/restore-backup.sh infra/backup/run.sh
+          cp .env.example .env
+          docker compose config -q
+      - name: Build all custom images
+        run: docker compose build api worker backup
+      - name: Verify pinned tunnel image
+        run: docker pull cloudflare/cloudflared:2026.7.3

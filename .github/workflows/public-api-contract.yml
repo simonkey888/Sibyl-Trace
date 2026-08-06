@@ -1,0 +1,22 @@
+name: Public API Contract
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+permissions:
+  contents: read
+jobs:
+  polymarket:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e services/backend
+      - name: Verify current public contracts
+        env:
+          PYTHONPATH: services/backend
+        run: python scripts/verify_public_contracts.py

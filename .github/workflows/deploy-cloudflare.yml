@@ -1,0 +1,50 @@
+name: Deploy Cloudflare
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA or branch to deploy
+        required: true
+        default: main
+permissions:
+  contents: read
+concurrency:
+  group: sibyl-cloudflare-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: apps/gateway
+        run: npm install --ignore-scripts
+      - name: Deploy fail-closed Worker and assets
+        working-directory: apps/gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+      - name: Set Worker secrets
+        working-directory: apps/gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ORIGIN_BASE_URL: ${{ secrets.ORIGIN_BASE_URL }}
+          ORIGIN_SHARED_SECRET: ${{ secrets.ORIGIN_SHARED_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_POLICY_AUD: ${{ secrets.ACCESS_POLICY_AUD }}
+          ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
+        run: |
+          printf '%s' "$ORIGIN_BASE_URL" | npx wrangler secret put ORIGIN_BASE_URL
+          printf '%s' "$ORIGIN_SHARED_SECRET" | npx wrangler secret put ORIGIN_SHARED_SECRET
+          printf '%s' "$ADMIN_TOKEN" | npx wrangler secret put ADMIN_TOKEN
+          printf '%s' "$ACCESS_TEAM_DOMAIN" | npx wrangler secret put ACCESS_TEAM_DOMAIN
+          printf '%s' "$ACCESS_POLICY_AUD" | npx wrangler secret put ACCESS_POLICY_AUD
+          printf '%s' "$ACCESS_OWNER_EMAIL" | npx wrangler secret put ACCESS_OWNER_EMAIL

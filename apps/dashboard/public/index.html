@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#071017" />
+  <title>Sibyl Trace — Prediction Intelligence</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="noise"></div>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><span></span><span></span><span></span></div>
+        <div><strong>SIBYL</strong><small>TRACE</small></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-target="overview"><i>⌁</i> Overview</button>
+        <button class="nav-item" data-target="wallets"><i>◎</i> Wallet Intelligence</button>
+        <button class="nav-item" data-target="signals"><i>↯</i> Signal Stream</button>
+        <button class="nav-item" data-target="operations"><i>⇄</i> Operations</button>
+        <button class="nav-item" data-target="audit"><i>◫</i> Audit Trail</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="mini-row"><span>Runtime</span><b id="runtimeMode">PAPER</b></div>
+        <div class="mini-row"><span>Release</span><b id="runtimeVersion">—</b></div>
+        <div class="mini-row"><span>Origin</span><b id="originState">OFFLINE</b></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">AUTONOMOUS MARKET OBSERVATORY</div>
+          <h1>Prediction intelligence <span>without blind execution.</span></h1>
+        </div>
+        <div class="status-cluster">
+          <div class="clock" id="clock">--:--:-- UTC</div>
+          <div class="pill disconnected" id="connectionPill"><span></span> DISCONNECTED</div>
+        </div>
+      </header>
+
+      <section class="warning-strip" id="safetyStrip">
+        <span class="warning-icon">◆</span>
+        <strong>FAIL-CLOSED:</strong> Live execution is unavailable. Signals are evaluated by deterministic paper-risk rules.
+      </section>
+
+      <section id="overview" class="view active">
+        <div class="metrics-grid">
+          <article class="metric hero-metric">
+            <div class="metric-top"><span>PORTFOLIO EQUITY</span><em id="equityDelta">0.00%</em></div>
+            <div class="metric-value" id="equityValue">$0.00</div>
+            <div class="metric-sub"><span>Cash <b id="cashValue">$0.00</b></span><span>Exposure <b id="exposureValue">$0.00</b></span></div>
+          </article>
+          <article class="metric">
+            <div class="metric-top"><span>REALIZED PNL</span><em>LOCKED</em></div>
+            <div class="metric-value small" id="realizedValue">$0.00</div>
+            <div class="microbar"><i id="realizedBar"></i></div>
+          </article>
+          <article class="metric">
+            <div class="metric-top"><span>UNREALIZED PNL</span><em>MARKED</em></div>
+            <div class="metric-value small" id="unrealizedValue">$0.00</div>
+            <div class="microbar"><i id="unrealizedBar"></i></div>
+          </article>
+          <article class="metric danger-metric">
+            <div class="metric-top"><span>MAX DRAWDOWN</span><em>LIMIT 10%</em></div>
+            <div class="metric-value small" id="drawdownValue">0.00%</div>
+            <div class="microbar danger"><i id="drawdownBar"></i></div>
+          </article>
+        </div>
+
+        <div class="main-grid">
+          <article class="panel chart-panel">
+            <div class="panel-head">
+              <div><span class="panel-kicker">ACCOUNT CURVE</span><h2>Equity trajectory</h2></div>
+              <div class="legend"><span><i class="cyan"></i> Equity</span><span><i class="amber"></i> Drawdown</span></div>
+            </div>
+            <div class="chart-wrap">
+              <svg id="equityChart" viewBox="0 0 900 300" preserveAspectRatio="none" aria-label="Equity chart"></svg>
+              <div class="chart-empty" id="chartEmpty">Awaiting portfolio snapshots</div>
+            </div>
+          </article>
+
+          <article class="panel control-panel">
+            <div class="panel-head"><div><span class="panel-kicker">OWNER CONTROLS</span><h2>Safety console</h2></div></div>
+            <div class="system-state">
+              <div><span>Mode</span><b id="modeState">PAPER</b></div>
+              <div><span>Order intake</span><b id="pauseState">ACTIVE</b></div>
+              <div><span>Kill switch</span><b id="killState">CLEAR</b></div>
+              <div><span>Geo check</span><b id="geoState">UNKNOWN</b></div>
+            </div>
+            <div class="control-buttons">
+              <button class="control secondary" id="pauseButton">Pause intake</button>
+              <button class="control secondary" id="resumeButton">Resume</button>
+              <button class="control danger" id="killButton">Emergency stop</button>
+              <button class="control ghost" id="clearKillButton">Clear stop</button>
+            </div>
+            <p class="control-note">Controls are accepted only through Cloudflare Access and the server-side gateway token.</p>
+          </article>
+        </div>
+
+        <div class="two-grid">
+          <article class="panel">
+            <div class="panel-head"><div><span class="panel-kicker">SELECTED SOURCES</span><h2>Tracked wallets</h2></div><button class="text-button" data-jump="wallets">View all</button></div>
+            <div class="wallet-stack" id="walletStack"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><span class="panel-kicker">LATEST DECISIONS</span><h2>Signal gate</h2></div><button class="text-button" data-jump="signals">Open stream</button></div>
+            <div class="signal-stack" id="signalStack"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="wallets" class="view">
+        <div class="section-head"><div><span class="panel-kicker">WALLET INTELLIGENCE</span><h2>Ranked behavioral sources</h2></div><p>Scored from closed-position history. Outlier-dependent wallets are rejected.</p></div>
+        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Wallet</th><th>Score</th><th>Win rate</th><th>Profit factor</th><th>Realized PnL</th><th>Closed</th><th>Top-3 concentration</th><th>Status</th></tr></thead><tbody id="walletTable"></tbody></table></div></article>
+      </section>
+
+      <section id="signals" class="view">
+        <div class="section-head"><div><span class="panel-kicker">SIGNAL STREAM</span><h2>Observed wallet activity</h2></div><p>Each event is deduplicated by wallet, transaction, asset, and side.</p></div>
+        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Time</th><th>Source</th><th>Market</th><th>Side</th><th>Outcome</th><th>Price</th><th>Source size</th><th>Decision</th></tr></thead><tbody id="signalTable"></tbody></table></div></article>
+      </section>
+
+      <section id="operations" class="view">
+        <div class="section-head"><div><span class="panel-kicker">PAPER OPERATIONS</span><h2>Decision-to-fill ledger</h2></div><p>No result is hidden: approved, rejected, stale, and unavailable-price decisions remain visible.</p></div>
+        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Time</th><th>Market</th><th>Order</th><th>Requested</th><th>Filled</th><th>Source</th><th>Observed</th><th>Slippage</th><th>Status</th></tr></thead><tbody id="orderTable"></tbody></table></div></article>
+      </section>
+
+      <section id="audit" class="view">
+        <div class="section-head"><div><span class="panel-kicker">AUDIT TRAIL</span><h2>Immutable operational narrative</h2></div><p>Worker failures, scans, controls, and order decisions are recorded server-side.</p></div>
+        <article class="panel audit-list" id="auditList"></article>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/app.js" defer></script>
+  <script src="/ai-panel.js" defer></script>
+</body>
+</html>
