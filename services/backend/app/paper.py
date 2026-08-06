@@ -18,6 +18,7 @@ def activity_source_keys(wallet_address: str, activity: dict) -> tuple[str, str]
     asset_id = str(activity.get("asset") or "")
     side = str(activity.get("side") or "").upper()
     legacy = f"{wallet_address}:{tx_hash}:{asset_id}:{side}"
+    outcome_index = activity.get("outcomeIndex")
     identity = {
         "wallet": wallet_address,
         "transaction_hash": tx_hash,
@@ -27,11 +28,20 @@ def activity_source_keys(wallet_address: str, activity: dict) -> tuple[str, str]
         "price": str(activity.get("price") or ""),
         "size": str(activity.get("size") or ""),
         "usdc_size": str(activity.get("usdcSize") or ""),
-        "outcome_index": str(activity.get("outcomeIndex") or ""),
+        "outcome_index": str(outcome_index) if outcome_index is not None else "",
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     current = f"v2:{hashlib.sha256(encoded.encode()).hexdigest()}"
     return current, legacy
+
+
+def _legacy_signal_matches(signal: Signal, activity: dict) -> bool:
+    return (
+        signal.source_timestamp == int(activity.get("timestamp") or 0)
+        and abs(signal.source_price - float(activity.get("price") or 0)) <= 1e-12
+        and abs(signal.source_size - float(activity.get("size") or 0)) <= 1e-12
+        and abs(signal.source_usdc - float(activity.get("usdcSize") or 0)) <= 1e-9
+    )
 
 
 class PaperEngine:
@@ -255,10 +265,13 @@ def ingest_wallet_activity(
             if not timestamp or not tx_hash or not asset_id or side not in {"BUY", "SELL"}:
                 continue
             source_key, legacy_key = activity_source_keys(wallet.address, activity)
-            existing = db.scalar(
-                select(Signal.id).where(Signal.source_key.in_([source_key, legacy_key]))
+            if db.scalar(select(Signal.id).where(Signal.source_key == source_key)):
+                wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
+                continue
+            legacy_signal = db.scalar(
+                select(Signal).where(Signal.source_key == legacy_key).limit(1)
             )
-            if existing:
+            if legacy_signal is not None and _legacy_signal_matches(legacy_signal, activity):
                 wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
                 continue
             signal = Signal(
