@@ -44,6 +44,21 @@ class WalletSnapshot(Base):
     )
 
 
+class WalletScoreProfile(Base):
+    __tablename__ = "wallet_score_profiles"
+
+    wallet_address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    short_score: Mapped[float] = mapped_column(Float, default=0)
+    long_score: Mapped[float] = mapped_column(Float, default=0)
+    global_score: Mapped[float] = mapped_column(Float, default=0)
+    execution_edge_score: Mapped[float] = mapped_column(Float, default=50)
+    execution_edge_sample_size: Mapped[int] = mapped_column(Integer, default=0)
+    average_execution_edge: Mapped[float] = mapped_column(Float, default=0)
+    short_sample_size: Mapped[int] = mapped_column(Integer, default=0)
+    long_sample_size: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Signal(Base):
     __tablename__ = "signals"
     __table_args__ = (UniqueConstraint("source_key", name="uq_signal_source_key"),)
