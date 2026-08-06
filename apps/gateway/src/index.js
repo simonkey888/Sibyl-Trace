@@ -12,11 +12,14 @@ const SECURITY_HEADERS = {
 
 const jwksCache = new Map();
 
-function withSecurityHeaders(response) {
+export function withSecurityHeaders(response) {
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) headers.set(key, value);
-  const html = response.headers.get("Content-Type")?.includes("text/html");
-  headers.set("Cache-Control", html ? "no-store" : "public, max-age=300");
+  const contentType = response.headers.get("Content-Type") || "";
+  const privateContent = contentType.includes("text/html") || contentType.includes("json");
+  if (!headers.has("Cache-Control")) {
+    headers.set("Cache-Control", privateContent ? "no-store" : "public, max-age=300");
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
