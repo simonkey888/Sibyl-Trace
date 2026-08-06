@@ -4,9 +4,15 @@ No local PC is required.
 
 ## 1. Oracle host
 
-Create an Ubuntu LTS Ampere instance in a jurisdiction eligible for the target market. Add an SSH public key generated specifically for GitHub deployment. Run `infra/oracle/bootstrap.sh` once through Oracle Cloud Shell.
+Create an Ubuntu LTS Ampere instance in a jurisdiction eligible for the target market. Add an SSH public key generated specifically for GitHub deployment. From Oracle Cloud Shell run:
 
-Create `/opt/sibyl-trace/.env` from `.env.example`; keep permissions at `0600`. The database, API, worker, tunnel, and backup containers are then managed by Docker Compose. Keep `AI_ANALYSIS_ENABLED=false` until an OpenAI API key with an explicit project spend limit is installed.
+```bash
+sudo bash infra/oracle/bootstrap.sh ubuntu
+```
+
+Create `/opt/sibyl-trace/shared/.env` from `.env.example`, set ownership to the deploy user, and permissions to `0600`. Keep `AI_ANALYSIS_ENABLED=false` until an OpenAI API key with an explicit project spend limit is installed.
+
+Oracle deployments are immutable releases under `/opt/sibyl-trace/releases/<commit-sha>`. The workflow verifies the archive checksum, validates Compose, builds images before switching the `current` symlink, waits for every service and the API health endpoint, and automatically rolls back on failure. The current release, previous release, and two older recovery releases are retained.
 
 ## 2. Cloudflare Tunnel
 
@@ -39,7 +45,7 @@ Cloudflare secrets:
 - `ORIGIN_BASE_URL`, `ORIGIN_SHARED_SECRET`, `ADMIN_TOKEN`.
 - `ACCESS_TEAM_DOMAIN`, `ACCESS_POLICY_AUD`, `ACCESS_OWNER_EMAIL`.
 
-The Oracle workflow uploads an immutable source bundle for the selected commit and rebuilds containers remotely. The Cloudflare workflow runs a pinned Wrangler release from GitHub-hosted runners.
+Both deployments are manual and environment-gated. Deploy a reviewed commit SHA, not a moving branch name.
 
 ## 5. Optional GPT-5.6 advisory
 

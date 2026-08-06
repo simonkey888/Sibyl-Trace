@@ -40,10 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: services/backend
-          push: false
-          tags: sibyl-trace-backend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Validate shell and Compose configuration
+        run: |
+          bash -n infra/oracle/bootstrap.sh scripts/activate-release.sh scripts/restore-backup.sh infra/backup/run.sh
+          cp .env.example .env
+          docker compose config -q
+      - name: Build all custom images
+        run: docker compose build api worker backup
+      - name: Verify pinned tunnel image
+        run: docker pull cloudflare/cloudflared:2026.7.3

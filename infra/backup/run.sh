@@ -12,8 +12,11 @@ while true; do
   output="/tmp/sibyl-${stamp}.sql.gz.enc"
   pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl \
     | gzip -9 \
-    | openssl enc -aes-256-cbc -salt -pbkdf2 -pass env:BACKUP_ENCRYPTION_KEY -out "$output"
-  aws --endpoint-url "$R2_ENDPOINT_URL" s3 cp "$output" "s3://${R2_BUCKET}/daily/$(basename "$output")" --only-show-errors
+    | openssl enc -aes-256-cbc -salt -pbkdf2 \
+        -pass env:BACKUP_ENCRYPTION_KEY -out "$output"
+  aws --endpoint-url "$R2_ENDPOINT_URL" s3 cp "$output" \
+    "s3://${R2_BUCKET}/daily/$(basename "$output")" --only-show-errors
   rm -f "$output"
+  touch /tmp/ready
   sleep 86400
 done

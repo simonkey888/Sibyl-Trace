@@ -28,11 +28,26 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 0600 ~/.ssh/id_ed25519
           printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
-      - name: Upload immutable bundle
+      - name: Build immutable release archive
+        run: |
+          tar --exclude-vcs --exclude='./apps' -czf /tmp/sibyl-release.tgz .
+          sha256sum /tmp/sibyl-release.tgz > /tmp/sibyl-release.tgz.sha256
+      - name: Upload, verify, and activate release
         env:
           HOST: ${{ secrets.ORACLE_HOST }}
           USER: ${{ secrets.ORACLE_USER }}
         run: |
-          tar --exclude-vcs --exclude='apps' -czf /tmp/sibyl-release.tgz .
-          scp /tmp/sibyl-release.tgz "$USER@$HOST:/tmp/sibyl-${GITHUB_SHA}.tgz"
-          ssh "$USER@$HOST" "set -e; cd /opt/sibyl-trace; tar -xzf /tmp/sibyl-${GITHUB_SHA}.tgz; rm /tmp/sibyl-${GITHUB_SHA}.tgz; APP_VERSION=${GITHUB_SHA} docker compose up -d --build --remove-orphans; docker compose ps"
+          scp /tmp/sibyl-release.tgz /tmp/sibyl-release.tgz.sha256 \
+            "$USER@$HOST:/tmp/"
+          ssh "$USER@$HOST" "RELEASE_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          BASE=/opt/sibyl-trace
+          RELEASE="$BASE/releases/$RELEASE_SHA"
+          cd /tmp
+          sha256sum -c sibyl-release.tgz.sha256
+          rm -rf "$RELEASE"
+          mkdir -p "$RELEASE"
+          tar -xzf sibyl-release.tgz -C "$RELEASE"
+          rm -f sibyl-release.tgz sibyl-release.tgz.sha256
+          bash "$RELEASE/scripts/activate-release.sh" "$BASE" "$RELEASE_SHA"
+          REMOTE
