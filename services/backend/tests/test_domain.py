@@ -25,6 +25,18 @@ def test_wallet_score_rejects_concentrated_outlier() -> None:
     assert rejection == "pnl_too_concentrated"
 
 
+def state() -> PortfolioState:
+    return PortfolioState(
+        equity=300,
+        cash=300,
+        total_exposure=0,
+        daily_pnl=0,
+        drawdown=0,
+        asset_exposure=0,
+        asset_shares=0,
+    )
+
+
 def test_risk_policy_approves_small_fresh_copy() -> None:
     decision = RiskPolicy().evaluate(
         RiskRequest(
@@ -35,40 +47,47 @@ def test_risk_policy_approves_small_fresh_copy() -> None:
             observed_price=0.52,
             source_usdc=100,
         ),
-        PortfolioState(
-            equity=300,
-            cash=300,
-            total_exposure=0,
-            daily_pnl=0,
-            drawdown=0,
-            asset_exposure=0,
-            asset_shares=0,
-        ),
+        state(),
     )
     assert decision.approved
     assert decision.amount_usd == 6.0
 
 
-def test_risk_policy_rejects_stale_signal() -> None:
+def test_risk_policy_rejects_stale_signal_during_preflight() -> None:
+    request = RiskRequest(
+        side="BUY",
+        wallet_score=90,
+        signal_age_seconds=31,
+        source_price=0.5,
+        observed_price=None,
+        source_usdc=100,
+    )
+    decision = RiskPolicy().preflight(request, state())
+    assert decision is not None
+    assert not decision.approved
+    assert decision.reason == "stale_signal"
+
+
+def test_risk_policy_includes_exact_slippage_boundary() -> None:
     decision = RiskPolicy().evaluate(
         RiskRequest(
             side="BUY",
             wallet_score=90,
-            signal_age_seconds=31,
-            source_price=0.5,
-            observed_price=0.5,
+            signal_age_seconds=1,
+            source_price=0.53,
+            observed_price=0.56,
             source_usdc=100,
         ),
-        PortfolioState(300, 300, 0, 0, 0, 0, 0),
+        state(),
     )
-    assert not decision.approved
-    assert decision.reason == "stale_signal"
+    assert decision.approved
+    assert decision.reason == "approved"
 
 
 def test_risk_policy_never_naked_sells() -> None:
     decision = RiskPolicy().evaluate(
         RiskRequest("SELL", 90, 1, 0.5, 0.5, 100),
-        PortfolioState(300, 300, 0, 0, 0, 0, 0),
+        state(),
     )
     assert not decision.approved
     assert decision.reason == "no_paper_position_to_sell"
