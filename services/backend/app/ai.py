@@ -194,7 +194,7 @@ class OpenAIAnalyst:
         }
         return {
             "system": {
-                "mode": "PAPER",
+                "mode": self.settings.trading_mode,
                 "live_available": False,
                 "purpose": "risk advisory only",
                 "score_contract": {
