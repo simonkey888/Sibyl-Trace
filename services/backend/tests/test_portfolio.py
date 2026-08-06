@@ -6,9 +6,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
 from app.db import Base
-from app.models import PaperOrder, PaperPosition, PortfolioSnapshot, Wallet
+from app.models import AuditEvent, PaperOrder, PaperPosition, PortfolioSnapshot, SystemState, Wallet
 from app.paper import refresh_position_prices
-from app.repository import current_portfolio
+from app.repository import current_portfolio, initialize_state
 from app.scanner import scan_wallets
 
 
@@ -94,6 +94,20 @@ def test_daily_pnl_uses_last_snapshot_before_utc_day() -> None:
         portfolio = current_portfolio(db, 300)
         assert portfolio["equity"] == 302
         assert portfolio["daily_pnl"] == 7
+
+
+def test_initialize_state_reconciles_stale_paper_mode_to_read_only() -> None:
+    with session() as db:
+        db.add(SystemState(key="mode", value="PAPER"))
+        db.commit()
+        initialize_state(db, Settings())
+        mode = db.get(SystemState, "mode")
+        event = db.query(AuditEvent).filter_by(event_type="runtime_mode_reconciled").one()
+
+    assert mode is not None
+    assert mode.value == "READ_ONLY"
+    assert "PAPER" in event.message
+    assert "READ_ONLY" in event.message
 
 
 class PriceClient:
