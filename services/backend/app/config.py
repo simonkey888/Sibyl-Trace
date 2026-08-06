@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     admin_token: str = "development-admin-token"
     gateway_shared_secret: str = "development-gateway-secret"
     cors_origins: str = ""
-    trading_mode: Literal["READ_ONLY", "PAPER"] = "PAPER"
+    trading_mode: Literal["READ_ONLY", "PAPER"] = "READ_ONLY"
     live_trading_enabled: bool = False
 
     ai_analysis_enabled: bool = False
@@ -44,6 +44,21 @@ class Settings(BaseSettings):
         if value:
             raise ValueError("LIVE trading is not available in Sibyl Trace V1")
         return value
+
+    @model_validator(mode="after")
+    def reject_unsafe_production_defaults(self) -> "Settings":
+        if self.app_env.lower() != "production":
+            return self
+        secrets = {
+            "admin_token": self.admin_token,
+            "gateway_shared_secret": self.gateway_shared_secret,
+        }
+        for name, value in secrets.items():
+            if value.startswith("development-") or len(value) < 32:
+                raise ValueError(f"{name} must be a non-default secret of at least 32 characters")
+        if self.trading_mode != "READ_ONLY":
+            raise ValueError("production must start in READ_ONLY and be promoted explicitly")
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
