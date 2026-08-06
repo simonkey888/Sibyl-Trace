@@ -56,5 +56,5 @@ jobs:
           worker_image=$(docker compose config | awk '/^  worker:/{found=1} found && /image:/{print $2; exit}')
           test -n "$api_image"
           test "$worker_image" = "$api_image"
-      - name: Verify pinned tunnel image
-        run: docker pull cloudflare/cloudflared:2026.7.3
+      - name: Verify digest-pinned tunnel image
+        run: docker compose pull tunnel
