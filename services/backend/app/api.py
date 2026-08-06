@@ -1,6 +1,6 @@
 import json
 import secrets
-from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import desc, select
@@ -13,10 +13,16 @@ from app.repository import audit, current_portfolio, get_state, set_state
 
 router = APIRouter(prefix="/api/v1")
 
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+DatabaseDep = Annotated[Session, Depends(get_db)]
+GatewaySecretHeader = Annotated[str | None, Header()]
+AdminTokenHeader = Annotated[str | None, Header()]
+SelectedQuery = Annotated[bool | None, Query()]
+
 
 def verify_gateway(
-    x_sibyl_gateway_secret: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
+    settings: SettingsDep,
+    x_sibyl_gateway_secret: GatewaySecretHeader = None,
 ) -> None:
     if settings.app_env == "development":
         return
@@ -27,8 +33,8 @@ def verify_gateway(
 
 
 def verify_admin(
-    x_sibyl_admin_token: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
+    settings: SettingsDep,
+    x_sibyl_admin_token: AdminTokenHeader = None,
 ) -> None:
     if not x_sibyl_admin_token or not secrets.compare_digest(
         x_sibyl_admin_token, settings.admin_token
@@ -37,9 +43,14 @@ def verify_admin(
 
 
 @router.get("/dashboard", dependencies=[Depends(verify_gateway)])
-def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict:
+def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
     portfolio = current_portfolio(db, settings.initial_bankroll_usd)
-    wallets = list(db.scalars(select(Wallet).order_by(desc(Wallet.selected), desc(Wallet.score)).limit(20)))
+    wallet_query = (
+        select(Wallet)
+        .order_by(desc(Wallet.selected), desc(Wallet.score))
+        .limit(20)
+    )
+    wallets = list(db.scalars(wallet_query))
     signals = list(db.scalars(select(Signal).order_by(desc(Signal.id)).limit(30)))
     orders = list(db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(30)))
     history = list(
@@ -62,7 +73,11 @@ def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_se
         "signals": [serialize_signal(row) for row in signals],
         "orders": [serialize_order(row) for row in orders],
         "equity": [
-            {"time": row.captured_at.isoformat(), "equity": row.equity, "drawdown": row.drawdown}
+            {
+                "time": row.captured_at.isoformat(),
+                "equity": row.equity,
+                "drawdown": row.drawdown,
+            }
             for row in history
         ],
         "events": [
@@ -80,9 +95,7 @@ def dashboard(db: Session = Depends(get_db), settings: Settings = Depends(get_se
 
 
 @router.get("/wallets", dependencies=[Depends(verify_gateway)])
-def wallets(
-    selected: bool | None = Query(default=None), db: Session = Depends(get_db)
-) -> list[dict]:
+def wallets(db: DatabaseDep, selected: SelectedQuery = None) -> list[dict]:
     query = select(Wallet).order_by(desc(Wallet.score))
     if selected is not None:
         query = query.where(Wallet.selected.is_(selected))
@@ -90,7 +103,7 @@ def wallets(
 
 
 @router.post("/control/pause", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
-def pause(db: Session = Depends(get_db)) -> dict:
+def pause(db: DatabaseDep) -> dict:
     set_state(db, "paused", "true")
     audit(db, "system_paused", "New paper orders paused by owner", severity="WARN")
     db.commit()
@@ -98,7 +111,7 @@ def pause(db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/control/resume", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
-def resume(db: Session = Depends(get_db)) -> dict:
+def resume(db: DatabaseDep) -> dict:
     if get_state(db, "kill_switch", "false") == "true":
         raise HTTPException(status_code=409, detail="kill switch is active")
     set_state(db, "paused", "false")
@@ -108,18 +121,28 @@ def resume(db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/control/kill", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
-def kill(db: Session = Depends(get_db)) -> dict:
+def kill(db: DatabaseDep) -> dict:
     set_state(db, "kill_switch", "true")
     set_state(db, "paused", "true")
-    audit(db, "kill_switch_activated", "Emergency stop activated by owner", severity="CRITICAL")
+    audit(
+        db,
+        "kill_switch_activated",
+        "Emergency stop activated by owner",
+        severity="CRITICAL",
+    )
     db.commit()
     return {"ok": True, "kill_switch": True}
 
 
 @router.post("/control/clear-kill", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
-def clear_kill(db: Session = Depends(get_db)) -> dict:
+def clear_kill(db: DatabaseDep) -> dict:
     set_state(db, "kill_switch", "false")
-    audit(db, "kill_switch_cleared", "Emergency stop cleared; system remains paused", severity="WARN")
+    audit(
+        db,
+        "kill_switch_cleared",
+        "Emergency stop cleared; system remains paused",
+        severity="WARN",
+    )
     db.commit()
     return {"ok": True, "kill_switch": False, "paused": True}
 

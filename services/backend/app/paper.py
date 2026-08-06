@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -115,7 +115,7 @@ class PaperEngine:
             if position.shares <= 1e-9:
                 position.shares = 0
                 position.average_price = 0
-        position.updated_at = datetime.now(timezone.utc)
+        position.updated_at = datetime.now(UTC)
 
     def _reject(
         self, db: Session, signal: Signal, reason: str, observed_price: float | None = None
@@ -145,9 +145,15 @@ class PaperEngine:
 
     def _snapshot(self, db: Session) -> None:
         portfolio = current_portfolio(db, self.settings.initial_bankroll_usd)
-        db.add(PortfolioSnapshot(**{key: portfolio[key] for key in (
-            "cash", "exposure", "equity", "realized_pnl", "unrealized_pnl", "drawdown"
-        )}))
+        snapshot_keys = (
+            "cash",
+            "exposure",
+            "equity",
+            "realized_pnl",
+            "unrealized_pnl",
+            "drawdown",
+        )
+        db.add(PortfolioSnapshot(**{key: portfolio[key] for key in snapshot_keys}))
 
 
 def ingest_wallet_activity(
@@ -191,6 +197,6 @@ def ingest_wallet_activity(
             engine.process_signal(db, signal)
             wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
             processed += 1
-    set_state(db, "last_watch_at", datetime.now(timezone.utc).isoformat())
+    set_state(db, "last_watch_at", datetime.now(UTC).isoformat())
     db.commit()
     return processed

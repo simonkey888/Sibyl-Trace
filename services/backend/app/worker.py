@@ -1,7 +1,7 @@
 import logging
 import signal
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.config import get_settings
 from app.db import SessionLocal, init_db
@@ -38,11 +38,15 @@ def main() -> None:
                 with SessionLocal() as db:
                     if now >= next_geoblock:
                         geoblock = client.geoblock()
-                        set_state(db, "geoblock", "blocked" if geoblock.get("blocked") else "clear")
+                        geoblock_state = "blocked" if geoblock.get("blocked") else "clear"
+                        set_state(db, "geoblock", geoblock_state)
                         next_geoblock = now + 300
                     if now >= next_scan:
                         selected = scan_wallets(db, client, settings)
-                        log.info("selected wallets=%s", [wallet.address for wallet in selected])
+                        log.info(
+                            "selected wallets=%s",
+                            [wallet.address for wallet in selected],
+                        )
                         next_scan = now + settings.scan_interval_seconds
                     processed = ingest_wallet_activity(db, client, settings, engine)
                     if processed:
@@ -56,7 +60,7 @@ def main() -> None:
                         "worker_iteration_failed",
                         str(exc),
                         severity="ERROR",
-                        at=datetime.now(timezone.utc).isoformat(),
+                        at=datetime.now(UTC).isoformat(),
                     )
                     db.commit()
             time.sleep(settings.watch_interval_seconds)

@@ -112,7 +112,10 @@ class RiskPolicy:
             return RiskDecision(False, 0.0, "unsupported_side")
         if request.wallet_score < self.minimum_wallet_score:
             return RiskDecision(False, 0.0, "wallet_score_below_threshold")
-        if request.signal_age_seconds < 0 or request.signal_age_seconds > self.maximum_signal_age_seconds:
+        if (
+            request.signal_age_seconds < 0
+            or request.signal_age_seconds > self.maximum_signal_age_seconds
+        ):
             return RiskDecision(False, 0.0, "stale_signal")
         if not 0 < request.source_price < 1 or not 0 < request.observed_price < 1:
             return RiskDecision(False, 0.0, "invalid_price")
@@ -137,7 +140,12 @@ class RiskPolicy:
             portfolio.equity * self.maximum_total_exposure_fraction - portfolio.total_exposure,
             0.0,
         )
-        amount = min(request.source_usdc * self.copy_fraction, position_room, total_room, portfolio.cash)
+        amount = min(
+            request.source_usdc * self.copy_fraction,
+            position_room,
+            total_room,
+            portfolio.cash,
+        )
         if amount < self.minimum_order_usd:
             return RiskDecision(False, 0.0, "insufficient_risk_capacity")
         return RiskDecision(True, round(amount, 2), "approved")

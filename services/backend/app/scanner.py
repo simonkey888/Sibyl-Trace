@@ -1,6 +1,5 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -11,7 +10,7 @@ from app.repository import audit, set_state
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> list[Wallet]:
@@ -21,9 +20,18 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
             address = str(item.get("proxyWallet") or "").lower()
             if len(address) != 42:
                 continue
-            candidate = candidates.setdefault(address, {"pnl": 0.0, "vol": 0.0, "username": None})
-            candidate["pnl"] = max(float(candidate["pnl"]), float(item.get("pnl") or 0.0))
-            candidate["vol"] = max(float(candidate["vol"]), float(item.get("vol") or 0.0))
+            candidate = candidates.setdefault(
+                address,
+                {"pnl": 0.0, "vol": 0.0, "username": None},
+            )
+            candidate["pnl"] = max(
+                float(candidate["pnl"]),
+                float(item.get("pnl") or 0.0),
+            )
+            candidate["vol"] = max(
+                float(candidate["vol"]),
+                float(item.get("vol") or 0.0),
+            )
             candidate["username"] = candidate["username"] or item.get("userName")
 
     wallets: list[Wallet] = []
@@ -52,7 +60,7 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
         wallet.concentration = metrics.concentration
         wallet.rejection_reason = rejection
         wallet.selected = False
-        wallet.updated_at = datetime.now(timezone.utc)
+        wallet.updated_at = datetime.now(UTC)
         db.add(wallet)
         db.add(
             WalletSnapshot(

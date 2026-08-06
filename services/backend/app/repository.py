@@ -1,24 +1,15 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import (
-    AuditEvent,
-    PaperOrder,
-    PaperPosition,
-    PortfolioSnapshot,
-    Signal,
-    SystemState,
-    Wallet,
-    WalletSnapshot,
-)
+from app.models import AuditEvent, PaperOrder, PaperPosition, PortfolioSnapshot, SystemState
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def get_state(db: Session, key: str, default: str = "") -> str:
@@ -36,7 +27,13 @@ def set_state(db: Session, key: str, value: str) -> None:
         row.updated_at = utcnow()
 
 
-def audit(db: Session, event_type: str, message: str, severity: str = "INFO", **payload: object) -> None:
+def audit(
+    db: Session,
+    event_type: str,
+    message: str,
+    severity: str = "INFO",
+    **payload: object,
+) -> None:
     db.add(
         AuditEvent(
             event_type=event_type,
@@ -75,8 +72,14 @@ def initialize_state(db: Session, settings: Settings) -> None:
 
 def current_portfolio(db: Session, initial_bankroll: float) -> dict[str, float]:
     positions = list(db.scalars(select(PaperPosition)).all())
-    exposure = sum(max(position.shares, 0) * max(position.current_price, 0) for position in positions)
-    cost_basis = sum(max(position.shares, 0) * max(position.average_price, 0) for position in positions)
+    exposure = sum(
+        max(position.shares, 0) * max(position.current_price, 0)
+        for position in positions
+    )
+    cost_basis = sum(
+        max(position.shares, 0) * max(position.average_price, 0)
+        for position in positions
+    )
     realized = sum(position.realized_pnl for position in positions)
     filled_buys = db.scalar(
         select(func.coalesce(func.sum(PaperOrder.filled_usd), 0)).where(
