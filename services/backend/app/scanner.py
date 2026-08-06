@@ -4,10 +4,10 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.domain import compute_wallet_metrics, wallet_score
-from app.models import Wallet, WalletSnapshot
+from app.models import Wallet, WalletScoreProfile, WalletSnapshot
 from app.polymarket import PolymarketClient
 from app.repository import audit, set_state
+from app.scoring import score_matrix
 
 
 def now_iso() -> str:
@@ -49,25 +49,46 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
                 wallet=address,
             )
             continue
-        metrics = compute_wallet_metrics(closed, volume=float(candidate["vol"]))
-        score, rejection = wallet_score(metrics)
+
+        matrix = score_matrix(
+            db,
+            address,
+            closed,
+            volume=float(candidate["vol"]),
+        )
+        metrics = matrix.long_metrics
         wallet = db.get(Wallet, address) or Wallet(address=address)
         wallet.username = candidate["username"]
-        wallet.score = score
+        wallet.score = matrix.global_score
         wallet.win_rate = metrics.win_rate
         wallet.profit_factor = metrics.profit_factor
         wallet.realized_pnl = metrics.realized_pnl
         wallet.volume = metrics.volume
         wallet.closed_count = metrics.closed_count
         wallet.concentration = metrics.concentration
-        wallet.rejection_reason = rejection
+        wallet.rejection_reason = matrix.rejection_reason
         wallet.selected = False
         wallet.updated_at = datetime.now(UTC)
         db.add(wallet)
+
+        profile = db.get(WalletScoreProfile, address) or WalletScoreProfile(
+            wallet_address=address
+        )
+        profile.short_score = matrix.short_score
+        profile.long_score = matrix.long_score
+        profile.global_score = matrix.global_score
+        profile.execution_edge_score = matrix.execution_edge_score
+        profile.execution_edge_sample_size = matrix.execution_edge_sample_size
+        profile.average_execution_edge = matrix.average_execution_edge
+        profile.short_sample_size = matrix.short_metrics.closed_count
+        profile.long_sample_size = matrix.long_metrics.closed_count
+        profile.updated_at = datetime.now(UTC)
+        db.add(profile)
+
         db.add(
             WalletSnapshot(
                 wallet_address=address,
-                score=score,
+                score=matrix.global_score,
                 win_rate=metrics.win_rate,
                 profit_factor=metrics.profit_factor,
                 realized_pnl=metrics.realized_pnl,
@@ -92,6 +113,7 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
         f"Scored {len(wallets)} wallets; selected {len(eligible)}",
         candidates=len(wallets),
         selected=[wallet.address for wallet in eligible],
+        score_contract="GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability only",
     )
     db.commit()
     return eligible
