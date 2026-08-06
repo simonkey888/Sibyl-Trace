@@ -2,7 +2,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
 permissions:
   contents: read
 jobs:
@@ -37,6 +37,8 @@ jobs:
         run: npm test
   container:
     runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ci-${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -45,7 +47,13 @@ jobs:
           bash -n infra/oracle/bootstrap.sh scripts/activate-release.sh scripts/restore-backup.sh infra/backup/run.sh
           cp .env.example .env
           docker compose config -q
-      - name: Build all custom images
-        run: docker compose build api worker backup
+      - name: Build immutable custom images
+        run: docker compose build api backup
+      - name: Verify worker resolves the backend image
+        run: |
+          api_image=$(docker compose config --images | grep '^sibyl-trace-backend:' | head -1)
+          worker_image=$(docker compose config | awk '/^  worker:/{found=1} found && /image:/{print $2; exit}')
+          test -n "$api_image"
+          test "$worker_image" = "$api_image"
       - name: Verify pinned tunnel image
         run: docker pull cloudflare/cloudflared:2026.7.3
