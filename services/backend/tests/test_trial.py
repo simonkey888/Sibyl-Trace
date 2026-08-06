@@ -75,6 +75,7 @@ def trade(*, tx: str, timestamp: int, size: float = 40) -> dict:
 def paper_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "trading_mode": "PAPER",
+        "paper_trading_enabled": True,
         "activity_lookback_seconds": 500,
         "risk_max_signal_age_seconds": 30,
     }
@@ -90,6 +91,7 @@ def test_delayed_trial_profile_does_not_enable_live() -> None:
     )
     engine = PaperEngine(settings, ActivityProbe())
     assert settings.live_trading_enabled is False
+    assert settings.paper_trading_enabled is True
     assert engine.policy.maximum_signal_age_seconds == 14400
 
 
