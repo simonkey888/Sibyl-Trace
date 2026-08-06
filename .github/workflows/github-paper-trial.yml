@@ -13,7 +13,7 @@ on:
       - "services/backend/app/scanner.py"
       - "services/backend/app/trial.py"
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       reset_state:
@@ -46,8 +46,8 @@ jobs:
       INITIAL_BANKROLL_USD: "300"
       CANDIDATE_LIMIT: "6"
       TRACKED_WALLET_LIMIT: "3"
-      ACTIVITY_LOOKBACK_SECONDS: "14400"
-      RISK_MAX_SIGNAL_AGE_SECONDS: "14400"
+      ACTIVITY_LOOKBACK_SECONDS: "5400"
+      RISK_MAX_SIGNAL_AGE_SECONDS: "5400"
       HTTP_TIMEOUT_SECONDS: "20"
       AI_ANALYSIS_ENABLED: ${{ vars.SIBYL_AI_ENABLED || 'false' }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
