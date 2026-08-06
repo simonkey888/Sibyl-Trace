@@ -14,9 +14,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    networks: [private]
+    networks: [data]
 
   api:
+    image: sibyl-trace-backend:${APP_VERSION:-dev}
     build: ./services/backend
     restart: unless-stopped
     env_file: .env
@@ -25,14 +26,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+    networks: [data, egress]
     expose: ["8000"]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
 
   worker:
-    build: ./services/backend
+    image: sibyl-trace-backend:${APP_VERSION:-dev}
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
     env_file: .env
@@ -41,7 +42,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+      api:
+        condition: service_started
+    networks: [data, egress]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
@@ -53,24 +56,27 @@ services:
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on: [api]
-    networks: [private]
+    networks: [egress]
     read_only: true
     security_opt: ["no-new-privileges:true"]
 
   backup:
+    image: sibyl-trace-backup:${APP_VERSION:-dev}
     build: ./infra/backup
     restart: unless-stopped
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+    networks: [data, egress]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
 
 networks:
-  private:
+  data:
+    internal: true
+  egress:
     internal: false
 
 volumes:
