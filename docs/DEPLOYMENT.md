@@ -6,7 +6,7 @@ No local PC is required.
 
 Create an Ubuntu LTS Ampere instance in a jurisdiction eligible for the target market. Add an SSH public key generated specifically for GitHub deployment. Run `infra/oracle/bootstrap.sh` once through Oracle Cloud Shell.
 
-Create `/opt/sibyl-trace/.env` from `.env.example`; keep permissions at `0600`. The database, API, worker, tunnel, and backup containers are then managed by Docker Compose.
+Create `/opt/sibyl-trace/.env` from `.env.example`; keep permissions at `0600`. The database, API, worker, tunnel, and backup containers are then managed by Docker Compose. Keep `AI_ANALYSIS_ENABLED=false` until an OpenAI API key with an explicit project spend limit is installed.
 
 ## 2. Cloudflare Tunnel
 
@@ -35,3 +35,7 @@ Cloudflare secrets:
 - `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `ORIGIN_BASE_URL`, `ORIGIN_SHARED_SECRET`, `ADMIN_TOKEN`.
 
 The Oracle workflow uploads an immutable source bundle for the selected commit and rebuilds containers remotely. The Cloudflare workflow runs Wrangler from GitHub-hosted runners.
+
+## 5. Optional GPT-5.6 advisory
+
+Set `OPENAI_API_KEY` only in Oracle `.env`, choose `OPENAI_MODEL`, then set `AI_ANALYSIS_ENABLED=true`. The default model is `gpt-5.6-luna`. The system submits bounded portfolio, source-quality, signal, and paper-order evidence using pseudonymous source IDs. It requests strict structured output with `store: false`; the result is persisted for the dashboard but never enters the deterministic order-approval path.

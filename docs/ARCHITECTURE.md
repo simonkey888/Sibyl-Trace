@@ -8,7 +8,8 @@
 4. **FastAPI**: read API and owner controls. Production requests require a gateway shared secret.
 5. **Worker**: the only process allowed to scan wallets and create paper signals/orders.
 6. **PostgreSQL**: private Docker network only.
-7. **R2**: encrypted database backups only. Encryption occurs before upload.
+7. **OpenAI Responses API**: optional risk-analysis output only. Requests use `store: false`, pseudonymous source IDs, strict JSON schema, and no execution tools.
+8. **R2**: encrypted database backups only. Encryption occurs before upload.
 
 ## Data flow
 
@@ -17,7 +18,9 @@
 - Signal ingestion: `/activity` is polled for the three selected wallets and deduplicated.
 - Price verification: CLOB `/midpoint` supplies the current observable paper price.
 - Risk gate: code evaluates staleness, source quality, slippage, exposure, loss, and drawdown.
-- Persistence: every signal, rejection, fill, state change, and worker error is recorded.
+- Marking: open paper positions are periodically repriced from CLOB midpoint data.
+- Advisory: GPT-5.6 may summarize source risks and anomalies, but cannot approve orders.
+- Persistence: every signal, rejection, fill, state change, AI report, and worker error is recorded.
 
 ## Deliberate omissions
 

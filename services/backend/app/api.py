@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import AuditEvent, PaperOrder, PortfolioSnapshot, Signal, Wallet
+from app.models import (
+    AIAnalysis,
+    AuditEvent,
+    PaperOrder,
+    PortfolioSnapshot,
+    Signal,
+    Wallet,
+)
 from app.repository import audit, current_portfolio, get_state, set_state
 
 router = APIRouter(prefix="/api/v1")
@@ -57,6 +64,7 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
         db.scalars(select(PortfolioSnapshot).order_by(desc(PortfolioSnapshot.id)).limit(100))
     )[::-1]
     events = list(db.scalars(select(AuditEvent).order_by(desc(AuditEvent.id)).limit(40)))
+    analysis = db.scalar(select(AIAnalysis).order_by(desc(AIAnalysis.id)).limit(1))
     return {
         "system": {
             "mode": get_state(db, "mode", settings.trading_mode),
@@ -80,6 +88,7 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
             }
             for row in history
         ],
+        "ai_analysis": serialize_ai_analysis(analysis) if analysis else None,
         "events": [
             {
                 "id": row.id,
@@ -210,5 +219,16 @@ def serialize_order(row: PaperOrder) -> dict:
         "slippage": row.slippage,
         "status": row.status,
         "reason": row.rejection_reason,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def serialize_ai_analysis(row: AIAnalysis) -> dict:
+    return {
+        "id": row.id,
+        "model": row.model,
+        "report": json.loads(row.report_json),
+        "input_tokens": row.input_tokens,
+        "output_tokens": row.output_tokens,
         "created_at": row.created_at.isoformat(),
     }

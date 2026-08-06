@@ -16,11 +16,18 @@ class Settings(BaseSettings):
     watch_interval_seconds: int = Field(default=5, ge=2)
     candidate_limit: int = Field(default=20, ge=3, le=50)
     tracked_wallet_limit: int = Field(default=3, ge=1, le=10)
+    mark_interval_seconds: int = Field(default=30, ge=10, le=3600)
     admin_token: str = "development-admin-token"
     gateway_shared_secret: str = "development-gateway-secret"
     cors_origins: str = ""
     trading_mode: Literal["READ_ONLY", "PAPER"] = "PAPER"
     live_trading_enabled: bool = False
+
+    ai_analysis_enabled: bool = False
+    ai_analysis_interval_seconds: int = Field(default=21600, ge=900)
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.6-luna"
+    openai_api_base: str = "https://api.openai.com/v1"
 
     data_api_base: str = "https://data-api.polymarket.com"
     gamma_api_base: str = "https://gamma-api.polymarket.com"

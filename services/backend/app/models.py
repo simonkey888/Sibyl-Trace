@@ -141,3 +141,18 @@ class AuditEvent(Base):
 
 
 Index("ix_wallet_score_selected", Wallet.selected, Wallet.score)
+
+
+class AIAnalysis(Base):
+    __tablename__ = "ai_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model: Mapped[str] = mapped_column(String(80))
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    response_id: Mapped[str | None] = mapped_column(String(120))
+    report_json: Mapped[str] = mapped_column(Text)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -34,6 +35,7 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
             )
             candidate["username"] = candidate["username"] or item.get("userName")
 
+    db.execute(update(Wallet).values(selected=False))
     wallets: list[Wallet] = []
     for address, candidate in candidates.items():
         try:

@@ -200,3 +200,40 @@ def ingest_wallet_activity(
     set_state(db, "last_watch_at", datetime.now(UTC).isoformat())
     db.commit()
     return processed
+
+
+def refresh_position_prices(
+    db: Session,
+    client: PolymarketClient,
+    settings: Settings,
+) -> int:
+    positions = list(
+        db.scalars(select(PaperPosition).where(PaperPosition.shares > 0)).all()
+    )
+    updated = 0
+    for position in positions:
+        try:
+            position.current_price = client.midpoint(position.asset_id)
+            position.updated_at = datetime.now(UTC)
+            updated += 1
+        except Exception as exc:
+            audit(
+                db,
+                "position_mark_failed",
+                str(exc),
+                severity="WARN",
+                asset_id=position.asset_id,
+            )
+    if updated:
+        portfolio = current_portfolio(db, settings.initial_bankroll_usd)
+        snapshot_keys = (
+            "cash",
+            "exposure",
+            "equity",
+            "realized_pnl",
+            "unrealized_pnl",
+            "drawdown",
+        )
+        db.add(PortfolioSnapshot(**{key: portfolio[key] for key in snapshot_keys}))
+    db.commit()
+    return updated
