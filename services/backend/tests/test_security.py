@@ -14,6 +14,7 @@ def production_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "app_env": "production",
         "trading_mode": "READ_ONLY",
+        "paper_trading_enabled": False,
         "admin_token": STRONG_ADMIN,
         "gateway_shared_secret": STRONG_GATEWAY,
     }
@@ -43,7 +44,17 @@ def test_live_configuration_is_rejected() -> None:
 
 
 def test_default_mode_is_read_only() -> None:
-    assert Settings().trading_mode == "READ_ONLY"
+    settings = Settings()
+    assert settings.trading_mode == "READ_ONLY"
+    assert settings.paper_trading_enabled is False
+
+
+def test_paper_mode_requires_explicit_promotion_gate() -> None:
+    with pytest.raises(ValidationError):
+        Settings(trading_mode="PAPER")
+
+    settings = Settings(trading_mode="PAPER", paper_trading_enabled=True)
+    assert settings.trading_mode == "PAPER"
 
 
 @pytest.mark.parametrize(
@@ -51,15 +62,26 @@ def test_default_mode_is_read_only() -> None:
     [
         ("admin_token", "development-admin-token"),
         ("admin_token", "too-short"),
+        ("admin_token", "replace-with-at-least-32-random-characters"),
         ("gateway_shared_secret", "development-gateway-secret"),
         ("gateway_shared_secret", "too-short"),
+        ("gateway_shared_secret", "replace-with-at-least-32-random-characters"),
     ],
 )
-def test_production_rejects_default_or_short_secrets(field: str, value: str) -> None:
+def test_production_rejects_default_short_or_placeholder_secrets(
+    field: str,
+    value: str,
+) -> None:
     with pytest.raises(ValidationError):
         production_settings(**{field: value})
 
 
-def test_production_rejects_direct_paper_start() -> None:
+def test_production_paper_requires_both_promotion_values() -> None:
     with pytest.raises(ValidationError):
         production_settings(trading_mode="PAPER")
+
+    settings = production_settings(
+        trading_mode="PAPER",
+        paper_trading_enabled=True,
+    )
+    assert settings.trading_mode == "PAPER"
