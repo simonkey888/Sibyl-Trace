@@ -124,14 +124,56 @@ jobs:
           gzip -t "$OUTPUT_DIR/sibyl.db.gz"
           (cd "$OUTPUT_DIR" && sha256sum sibyl.db.gz > SHA256SUMS)
 
+      - name: Ensure an audit report exists
+        if: always()
+        env:
+          CYCLE_OUTCOME: ${{ steps.cycle.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ -s "$OUTPUT_DIR/trial-summary.json" && -s "$OUTPUT_DIR/trial-summary.md" ]]; then
+            exit 0
+          fi
+          python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          output = Path(os.environ["OUTPUT_DIR"])
+          output.mkdir(parents=True, exist_ok=True)
+          completed = datetime.now(UTC).isoformat()
+          outcome = os.environ.get("CYCLE_OUTCOME", "unknown")
+          payload = {
+              "schema_version": 2,
+              "run": {
+                  "status": "FAILED",
+                  "profile": "GITHUB_DELAYED_PAPER",
+                  "completed_at": completed,
+                  "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+                  "github_sha": os.environ.get("GITHUB_SHA", ""),
+                  "errors": [{
+                      "phase": "bounded_cycle",
+                      "type": "WorkflowOutcome",
+                      "message": f"Cycle ended with outcome {outcome} before report generation",
+                  }],
+              },
+              "safety": {"trading_mode": "PAPER", "live_available": False},
+          }
+          (output / "trial-summary.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          (output / "trial-summary.md").write_text(
+              "# Sibyl Trace PAPER cycle\n\n"
+              f"**Status:** `FAILED`  \n**Outcome:** `{outcome}`  \n"
+              "The last committed SQLite state was preserved and packaged.\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Publish run summary
         if: always()
-        run: |
-          if [[ -f "$OUTPUT_DIR/trial-summary.md" ]]; then
-            cat "$OUTPUT_DIR/trial-summary.md" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "# Sibyl Trace PAPER cycle failed before report generation" >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: cat "$OUTPUT_DIR/trial-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload audit artifact
         if: always()
@@ -157,7 +199,10 @@ jobs:
               --notes "Private rolling state for GitHub-delayed PAPER testing. No keys or live credentials." \
               --prerelease
           else
-            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" \
+              -F force=true
           fi
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/sibyl.db.gz" \
