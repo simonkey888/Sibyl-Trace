@@ -1,0 +1,150 @@
+name: GitHub PAPER Trial
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      reset_state:
+        description: "Discard the persisted PAPER database before this cycle"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sibyl-github-paper-trial
+  cancel-in-progress: false
+
+jobs:
+  paper-cycle:
+    name: Delayed PAPER cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      STATE_DIR: ${{ github.workspace }}/.trial-state
+      OUTPUT_DIR: ${{ github.workspace }}/trial-output
+      RELEASE_TAG: github-paper-state-v1
+      DATABASE_URL: sqlite:///${{ github.workspace }}/.trial-state/sibyl.db
+      APP_ENV: github-trial
+      APP_VERSION: ${{ github.sha }}
+      TRADING_MODE: PAPER
+      LIVE_TRADING_ENABLED: "false"
+      INITIAL_BANKROLL_USD: "300"
+      CANDIDATE_LIMIT: "6"
+      TRACKED_WALLET_LIMIT: "3"
+      ACTIVITY_LOOKBACK_SECONDS: "14400"
+      RISK_MAX_SIGNAL_AGE_SECONDS: "14400"
+      HTTP_TIMEOUT_SECONDS: "20"
+      AI_ANALYSIS_ENABLED: ${{ vars.SIBYL_AI_ENABLED || 'false' }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.SIBYL_OPENAI_MODEL || 'gpt-5.6-luna' }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out canonical main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/backend/pyproject.toml
+
+      - name: Install backend
+        working-directory: services/backend
+        run: pip install -e .
+
+      - name: Restore private PAPER state
+        env:
+          RESET_STATE: ${{ inputs.reset_state || 'false' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
+          if [[ "$RESET_STATE" == "true" ]]; then
+            echo "State reset requested."
+            exit 0
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if gh release download "$RELEASE_TAG" \
+              --pattern "sibyl.db.gz" \
+              --dir "$STATE_DIR" \
+              --clobber; then
+              gzip -t "$STATE_DIR/sibyl.db.gz"
+              gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
+              rm -f "$STATE_DIR/sibyl.db.gz"
+              echo "Previous PAPER state restored."
+            else
+              echo "Release exists without a database asset; starting clean."
+            fi
+          else
+            echo "No previous PAPER state found; starting clean."
+          fi
+
+      - name: Verify import surface
+        working-directory: services/backend
+        run: python -m compileall -q app
+
+      - name: Execute one delayed PAPER cycle
+        id: cycle
+        continue-on-error: true
+        working-directory: services/backend
+        run: python -m app.trial --output-dir "$OUTPUT_DIR"
+
+      - name: Package current state
+        if: always()
+        run: |
+          set -euo pipefail
+          test -s "$STATE_DIR/sibyl.db"
+          gzip -c "$STATE_DIR/sibyl.db" > "$OUTPUT_DIR/sibyl.db.gz"
+          gzip -t "$OUTPUT_DIR/sibyl.db.gz"
+          sha256sum "$OUTPUT_DIR/sibyl.db.gz" > "$OUTPUT_DIR/SHA256SUMS"
+
+      - name: Publish run summary
+        if: always()
+        run: |
+          if [[ -f "$OUTPUT_DIR/trial-summary.md" ]]; then
+            cat "$OUTPUT_DIR/trial-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# Sibyl Trace PAPER cycle failed before report generation" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sibyl-paper-${{ github.run_id }}
+          path: |
+            trial-output/trial-summary.json
+            trial-output/trial-summary.md
+            trial-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+
+      - name: Persist rolling state in private release
+        if: always()
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Sibyl Trace rolling PAPER state" \
+              --notes "Private rolling state for GitHub-delayed PAPER testing. No keys or live credentials." \
+              --prerelease
+          fi
+          gh release upload "$RELEASE_TAG" \
+            "$OUTPUT_DIR/sibyl.db.gz" \
+            "$OUTPUT_DIR/trial-summary.json" \
+            "$OUTPUT_DIR/trial-summary.md" \
+            "$OUTPUT_DIR/SHA256SUMS" \
+            --clobber
+
+      - name: Fail closed on degraded cycle
+        if: steps.cycle.outcome != 'success'
+        run: |
+          echo "The PAPER cycle was persisted but one or more phases degraded."
+          exit 1

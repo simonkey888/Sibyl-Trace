@@ -15,7 +15,9 @@ class PaperEngine:
     def __init__(self, settings: Settings, client: PolymarketClient):
         self.settings = settings
         self.client = client
-        self.policy = RiskPolicy()
+        self.policy = RiskPolicy(
+            maximum_signal_age_seconds=settings.risk_max_signal_age_seconds
+        )
 
     def process_signal(self, db: Session, signal: Signal) -> PaperOrder:
         mode = get_state(db, "mode", self.settings.trading_mode)
@@ -162,7 +164,11 @@ def ingest_wallet_activity(
     processed = 0
     wallets = list(db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all())
     for wallet in wallets:
-        start = wallet.last_activity_at + 1 if wallet.last_activity_at else int(time.time()) - 120
+        start = (
+            wallet.last_activity_at + 1
+            if wallet.last_activity_at
+            else int(time.time()) - settings.activity_lookback_seconds
+        )
         activities = client.activity(wallet.address, start=start)
         for activity in activities:
             if activity.get("type") != "TRADE":

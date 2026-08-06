@@ -11,7 +11,25 @@ Cloud-native prediction-market wallet intelligence, auditable paper trading, and
 - Risk decisions are deterministic and stored with every signal.
 - Nothing runs on an end-user PC.
 
-## Architecture
+## GitHub-only PAPER trial
+
+Sibyl Trace can run as an unattended delayed PAPER experiment using GitHub Actions only.
+
+```text
+GitHub schedule
+    -> restore private rolling SQLite state
+    -> scan and score public wallets
+    -> ingest unseen activity
+    -> deterministic delayed PAPER decisions
+    -> persist state in a private prerelease
+    -> publish Markdown/JSON run evidence
+```
+
+The workflow runs every three hours and can also be triggered manually. It does not require Oracle, Cloudflare, or a local computer. This profile is intentionally named `GITHUB_DELAYED_PAPER`: scheduled runners are not a continuous or low-latency execution environment, and LIVE remains unavailable.
+
+See `docs/GITHUB_PAPER_TRIAL.md`.
+
+## Full cloud architecture
 
 ```text
 Browser -> Cloudflare Access -> Worker gateway/static dashboard
@@ -22,6 +40,8 @@ Browser -> Cloudflare Access -> Worker gateway/static dashboard
                                   v
 Oracle VM: FastAPI + worker + PostgreSQL + encrypted R2 backup
 ```
+
+The full architecture remains available for a later persistent deployment, but it is not required for the GitHub-only trial.
 
 ## Quick verification
 
