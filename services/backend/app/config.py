@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     gateway_shared_secret: str = "development-gateway-secret"
     cors_origins: str = ""
     trading_mode: Literal["READ_ONLY", "PAPER"] = "READ_ONLY"
+    paper_trading_enabled: bool = False
     live_trading_enabled: bool = False
 
     ai_analysis_enabled: bool = False
@@ -46,18 +47,28 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def reject_unsafe_production_defaults(self) -> "Settings":
+    def reject_unsafe_configuration(self) -> "Settings":
+        if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
+            raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
+
         if self.app_env.lower() != "production":
             return self
+
         secrets = {
             "admin_token": self.admin_token,
             "gateway_shared_secret": self.gateway_shared_secret,
         }
+        weak_prefixes = ("development-", "replace-with-", "change-me")
         for name, value in secrets.items():
-            if value.startswith("development-") or len(value) < 32:
-                raise ValueError(f"{name} must be a non-default secret of at least 32 characters")
-        if self.trading_mode != "READ_ONLY":
-            raise ValueError("production must start in READ_ONLY and be promoted explicitly")
+            normalized = value.strip().lower()
+            if (
+                len(value) < 32
+                or not normalized
+                or any(normalized.startswith(prefix) for prefix in weak_prefixes)
+            ):
+                raise ValueError(
+                    f"{name} must be a non-placeholder secret of at least 32 characters"
+                )
         return self
 
     @property
