@@ -3,9 +3,10 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
@@ -89,7 +90,9 @@ def build_report(
             .limit(20)
         )
     )
-    orders = list(db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(12)))
+    orders = list(
+        db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(12))
+    )
     latest_ai = db.scalar(select(AIAnalysis).order_by(desc(AIAnalysis.id)).limit(1))
     filled = int(
         db.scalar(
@@ -287,7 +290,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             ]
         )
         for order in orders[:8]:
-            slippage = f"{order['slippage']:+.4f}" if order["slippage"] is not None else "—"
+            slippage = (
+                f"{order['slippage']:+.4f}" if order["slippage"] is not None else "—"
+            )
             lines.append(
                 f"| {_cell(order['market'])} | {order['side']} | {order['status']} | "
                 f"${order['filled_usd']:.2f} | {slippage} | "
