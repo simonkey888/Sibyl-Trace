@@ -49,6 +49,7 @@ jobs:
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
       TRADING_MODE: PAPER
+      PAPER_TRADING_ENABLED: "true"
       LIVE_TRADING_ENABLED: "false"
       INITIAL_BANKROLL_USD: "300"
       CANDIDATE_LIMIT: "6"
