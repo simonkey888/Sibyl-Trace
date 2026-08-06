@@ -10,6 +10,7 @@ on:
       - "services/backend/app/domain.py"
       - "services/backend/app/paper.py"
       - "services/backend/app/polymarket.py"
+      - "services/backend/app/repository.py"
       - "services/backend/app/scanner.py"
       - "services/backend/app/trial.py"
   schedule:
@@ -33,7 +34,7 @@ jobs:
   paper-cycle:
     name: Delayed PAPER cycle
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       STATE_DIR: ${{ github.workspace }}/.trial-state
       OUTPUT_DIR: ${{ github.workspace }}/trial-output
@@ -70,7 +71,7 @@ jobs:
         working-directory: services/backend
         run: pip install -e .
 
-      - name: Restore private PAPER state
+      - name: Restore and verify private PAPER state
         env:
           RESET_STATE: ${{ inputs.reset_state || 'false' }}
         run: |
@@ -81,17 +82,18 @@ jobs:
             exit 0
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if gh release download "$RELEASE_TAG" \
+            gh release download "$RELEASE_TAG" \
               --pattern "sibyl.db.gz" \
+              --pattern "SHA256SUMS" \
               --dir "$STATE_DIR" \
-              --clobber; then
-              gzip -t "$STATE_DIR/sibyl.db.gz"
-              gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
-              rm -f "$STATE_DIR/sibyl.db.gz"
-              echo "Previous PAPER state restored."
-            else
-              echo "Release exists without a database asset; starting clean."
-            fi
+              --clobber
+            test -s "$STATE_DIR/sibyl.db.gz"
+            test -s "$STATE_DIR/SHA256SUMS"
+            (cd "$STATE_DIR" && sha256sum -c SHA256SUMS)
+            gzip -t "$STATE_DIR/sibyl.db.gz"
+            gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
+            rm -f "$STATE_DIR/sibyl.db.gz" "$STATE_DIR/SHA256SUMS"
+            echo "Previous PAPER state restored and verified."
           else
             echo "No previous PAPER state found; starting clean."
           fi
@@ -100,11 +102,11 @@ jobs:
         working-directory: services/backend
         run: python -m compileall -q app
 
-      - name: Execute one delayed PAPER cycle
+      - name: Execute one bounded delayed PAPER cycle
         id: cycle
         continue-on-error: true
         working-directory: services/backend
-        run: python -m app.trial --output-dir "$OUTPUT_DIR"
+        run: timeout --signal=TERM --kill-after=30s 12m python -m app.trial --output-dir "$OUTPUT_DIR"
 
       - name: Package current state
         if: always()
@@ -113,7 +115,7 @@ jobs:
           test -s "$STATE_DIR/sibyl.db"
           gzip -c "$STATE_DIR/sibyl.db" > "$OUTPUT_DIR/sibyl.db.gz"
           gzip -t "$OUTPUT_DIR/sibyl.db.gz"
-          sha256sum "$OUTPUT_DIR/sibyl.db.gz" > "$OUTPUT_DIR/SHA256SUMS"
+          (cd "$OUTPUT_DIR" && sha256sum sibyl.db.gz > SHA256SUMS)
 
       - name: Publish run summary
         if: always()
@@ -147,6 +149,8 @@ jobs:
               --title "Sibyl Trace rolling PAPER state" \
               --notes "Private rolling state for GitHub-delayed PAPER testing. No keys or live credentials." \
               --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --target "$GITHUB_SHA"
           fi
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/sibyl.db.gz" \
@@ -158,5 +162,5 @@ jobs:
       - name: Fail closed on degraded cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "The PAPER cycle was persisted but one or more phases degraded."
+          echo "The PAPER cycle was persisted but one or more phases degraded or timed out."
           exit 1
