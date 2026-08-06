@@ -130,7 +130,9 @@ class RiskPolicy:
             if portfolio.asset_shares <= 0:
                 return RiskDecision(False, 0.0, "no_paper_position_to_sell")
             amount = min(request.source_usdc * self.copy_fraction, portfolio.asset_exposure)
-            return RiskDecision(amount >= self.minimum_order_usd, round(amount, 2), "approved")
+            if amount < self.minimum_order_usd:
+                return RiskDecision(False, 0.0, "insufficient_paper_position")
+            return RiskDecision(True, round(amount, 2), "approved")
 
         position_room = max(
             portfolio.equity * self.maximum_position_fraction - portfolio.asset_exposure,

@@ -24,7 +24,7 @@ jobs:
           node-version: "22"
       - working-directory: apps/gateway
         run: npm install --ignore-scripts
-      - name: Deploy Worker and assets
+      - name: Deploy fail-closed Worker and assets
         working-directory: apps/gateway
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -38,7 +38,13 @@ jobs:
           ORIGIN_BASE_URL: ${{ secrets.ORIGIN_BASE_URL }}
           ORIGIN_SHARED_SECRET: ${{ secrets.ORIGIN_SHARED_SECRET }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_POLICY_AUD: ${{ secrets.ACCESS_POLICY_AUD }}
+          ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
         run: |
           printf '%s' "$ORIGIN_BASE_URL" | npx wrangler secret put ORIGIN_BASE_URL
           printf '%s' "$ORIGIN_SHARED_SECRET" | npx wrangler secret put ORIGIN_SHARED_SECRET
           printf '%s' "$ADMIN_TOKEN" | npx wrangler secret put ADMIN_TOKEN
+          printf '%s' "$ACCESS_TEAM_DOMAIN" | npx wrangler secret put ACCESS_TEAM_DOMAIN
+          printf '%s' "$ACCESS_POLICY_AUD" | npx wrangler secret put ACCESS_POLICY_AUD
+          printf '%s' "$ACCESS_OWNER_EMAIL" | npx wrangler secret put ACCESS_OWNER_EMAIL

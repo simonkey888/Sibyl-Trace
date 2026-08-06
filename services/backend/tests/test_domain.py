@@ -72,3 +72,12 @@ def test_risk_policy_never_naked_sells() -> None:
     )
     assert not decision.approved
     assert decision.reason == "no_paper_position_to_sell"
+
+
+def test_small_sell_rejection_has_truthful_reason() -> None:
+    decision = RiskPolicy().evaluate(
+        RiskRequest("SELL", 90, 1, 0.5, 0.5, 1),
+        PortfolioState(300, 299.5, 0.5, 0, 0, 0.5, 1),
+    )
+    assert not decision.approved
+    assert decision.reason == "insufficient_paper_position"

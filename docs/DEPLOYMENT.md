@@ -10,17 +10,20 @@ Create `/opt/sibyl-trace/.env` from `.env.example`; keep permissions at `0600`. 
 
 ## 2. Cloudflare Tunnel
 
-Create a tunnel whose private service points to `http://api:8000`. Store its token only in Oracle `.env`. Do not expose port 8000 or PostgreSQL in the Oracle security list.
+Create a remotely managed tunnel whose private service points to `http://api:8000`. Store its token only in Oracle `.env`. Do not expose port 8000 or PostgreSQL in the Oracle security list.
 
-## 3. Cloudflare Worker
+## 3. Cloudflare Access and Worker
+
+Create a self-hosted Access application for the dashboard hostname and restrict its policy to the owner identity. Copy the application Audience (AUD) tag and team domain. The Worker validates `Cf-Access-Jwt-Assertion` on every request; missing Access configuration or an invalid token returns HTTP 403 before assets or APIs are served.
 
 Set Worker secrets:
 
 - `ORIGIN_BASE_URL`: tunnel hostname using HTTPS.
 - `ORIGIN_SHARED_SECRET`: must equal Oracle `GATEWAY_SHARED_SECRET`.
 - `ADMIN_TOKEN`: must equal Oracle `ADMIN_TOKEN`.
-
-Protect the Worker hostname with Cloudflare Access and an allow policy restricted to the owner identity.
+- `ACCESS_TEAM_DOMAIN`: `https://<team>.cloudflareaccess.com`.
+- `ACCESS_POLICY_AUD`: Access application Audience tag.
+- `ACCESS_OWNER_EMAIL`: exact owner login email allowed by the Access policy.
 
 ## 4. GitHub environments
 
@@ -32,9 +35,11 @@ Oracle secrets:
 
 Cloudflare secrets:
 
-- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `ORIGIN_BASE_URL`, `ORIGIN_SHARED_SECRET`, `ADMIN_TOKEN`.
+- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+- `ORIGIN_BASE_URL`, `ORIGIN_SHARED_SECRET`, `ADMIN_TOKEN`.
+- `ACCESS_TEAM_DOMAIN`, `ACCESS_POLICY_AUD`, `ACCESS_OWNER_EMAIL`.
 
-The Oracle workflow uploads an immutable source bundle for the selected commit and rebuilds containers remotely. The Cloudflare workflow runs Wrangler from GitHub-hosted runners.
+The Oracle workflow uploads an immutable source bundle for the selected commit and rebuilds containers remotely. The Cloudflare workflow runs a pinned Wrangler release from GitHub-hosted runners.
 
 ## 5. Optional GPT-5.6 advisory
 
