@@ -12,7 +12,17 @@ function withSecurityHeaders(response) {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) headers.set(key, value);
   const html = response.headers.get("Content-Type")?.includes("text/html");
   headers.set("Cache-Control", html ? "no-store" : "public, max-age=300");
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export function isControlRequestAuthorized(request, incoming) {
+  const origin = request.headers.get("Origin");
+  const contentType = request.headers.get("Content-Type") || "";
+  return origin === incoming.origin && contentType.toLowerCase().startsWith("application/json");
 }
 
 async function proxyApi(request, env) {
@@ -20,13 +30,20 @@ async function proxyApi(request, env) {
     return Response.json({ detail: "origin is not configured" }, { status: 503 });
   }
   const incoming = new URL(request.url);
+  const isControl = incoming.pathname.startsWith("/api/v1/control/");
+  if (isControl && !isControlRequestAuthorized(request, incoming)) {
+    return Response.json({ detail: "invalid control request" }, { status: 403 });
+  }
   const target = new URL(`${incoming.pathname}${incoming.search}`, env.ORIGIN_BASE_URL);
   const headers = new Headers(request.headers);
   headers.delete("cookie");
   headers.delete("authorization");
+  headers.delete("origin");
   headers.set("X-Sibyl-Gateway-Secret", env.ORIGIN_SHARED_SECRET);
-  if (incoming.pathname.startsWith("/api/v1/control/")) {
-    if (!env.ADMIN_TOKEN) return Response.json({ detail: "admin controls unavailable" }, { status: 503 });
+  if (isControl) {
+    if (!env.ADMIN_TOKEN) {
+      return Response.json({ detail: "admin controls unavailable" }, { status: 503 });
+    }
     headers.set("X-Sibyl-Admin-Token", env.ADMIN_TOKEN);
   }
   const response = await fetch(target, {
@@ -38,14 +55,20 @@ async function proxyApi(request, env) {
   const outputHeaders = new Headers(response.headers);
   outputHeaders.delete("set-cookie");
   outputHeaders.set("Cache-Control", "no-store");
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers: outputHeaders });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: outputHeaders,
+  });
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
-      if (!["GET", "POST"].includes(request.method)) return new Response("Method not allowed", { status: 405 });
+      if (!["GET", "POST"].includes(request.method)) {
+        return withSecurityHeaders(new Response("Method not allowed", { status: 405 }));
+      }
       return withSecurityHeaders(await proxyApi(request, env));
     }
     return withSecurityHeaders(await env.ASSETS.fetch(request));

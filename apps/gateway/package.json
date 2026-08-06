@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "node --check src/index.js",
+    "test": "node --test test/*.test.js",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

@@ -28,10 +28,13 @@ jobs:
         with:
           node-version: "22"
       - run: node --check apps/dashboard/public/app.js
+      - run: node --check apps/dashboard/public/ai-panel.js
       - working-directory: apps/gateway
         run: npm install --ignore-scripts
       - working-directory: apps/gateway
         run: npm run check
+      - working-directory: apps/gateway
+        run: npm test
   container:
     runs-on: ubuntu-latest
     steps:
