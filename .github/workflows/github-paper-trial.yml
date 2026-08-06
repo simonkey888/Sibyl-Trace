@@ -1,6 +1,17 @@
 name: GitHub PAPER Trial
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/github-paper-trial.yml"
+      - "services/backend/app/config.py"
+      - "services/backend/app/domain.py"
+      - "services/backend/app/paper.py"
+      - "services/backend/app/polymarket.py"
+      - "services/backend/app/scanner.py"
+      - "services/backend/app/trial.py"
   schedule:
     - cron: "17 */3 * * *"
   workflow_dispatch:
