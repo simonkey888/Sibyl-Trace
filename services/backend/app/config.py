@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     scan_interval_seconds: int = Field(default=3600, ge=60)
     watch_interval_seconds: int = Field(default=5, ge=2)
     activity_lookback_seconds: int = Field(default=120, ge=120, le=86400)
+    activity_fetch_limit: int = Field(default=500, ge=100, le=10000)
     candidate_limit: int = Field(default=20, ge=3, le=50)
     tracked_wallet_limit: int = Field(default=3, ge=1, le=10)
     mark_interval_seconds: int = Field(default=30, ge=10, le=3600)

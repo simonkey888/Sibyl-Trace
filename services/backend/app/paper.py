@@ -165,11 +165,15 @@ def ingest_wallet_activity(
     wallets = list(db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all())
     for wallet in wallets:
         start = (
-            wallet.last_activity_at + 1
+            wallet.last_activity_at
             if wallet.last_activity_at
             else int(time.time()) - settings.activity_lookback_seconds
         )
-        activities = client.activity(wallet.address, start=start)
+        activities = client.activity(
+            wallet.address,
+            start=start,
+            limit=settings.activity_fetch_limit,
+        )
         for activity in activities:
             if activity.get("type") != "TRADE":
                 continue

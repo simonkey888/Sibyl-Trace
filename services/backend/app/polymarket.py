@@ -54,19 +54,43 @@ class PolymarketClient:
                 break
         return results
 
-    def activity(self, wallet: str, start: int, limit: int = 100) -> list[dict]:
-        data = self._get(
-            f"{self.settings.data_api_base}/activity",
-            {
-                "user": wallet,
-                "start": max(start, 0),
-                "limit": min(limit, 500),
-                "type": "TRADE",
-                "sortBy": "TIMESTAMP",
-                "sortDirection": "ASC",
-            },
-        )
-        return data if isinstance(data, list) else []
+    def activity(self, wallet: str, start: int, limit: int = 500) -> list[dict]:
+        target = min(max(limit, 0), 10000)
+        if target == 0:
+            return []
+
+        results: list[dict] = []
+        seen: set[tuple[str, str, str, int]] = set()
+        page_size = min(500, target)
+        for offset in range(0, target, page_size):
+            current_limit = min(page_size, target - offset)
+            data = self._get(
+                f"{self.settings.data_api_base}/activity",
+                {
+                    "user": wallet,
+                    "start": max(start, 0),
+                    "limit": current_limit,
+                    "offset": offset,
+                    "type": "TRADE",
+                    "sortBy": "TIMESTAMP",
+                    "sortDirection": "ASC",
+                },
+            )
+            page = data if isinstance(data, list) else []
+            for item in page:
+                key = (
+                    str(item.get("transactionHash") or ""),
+                    str(item.get("asset") or ""),
+                    str(item.get("side") or ""),
+                    int(item.get("timestamp") or 0),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(item)
+            if len(page) < current_limit:
+                break
+        return results
 
     def recent_trades(self, limit: int = 20) -> list[dict]:
         data = self._get(
