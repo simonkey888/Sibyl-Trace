@@ -5,12 +5,13 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import AIAnalysis, PaperOrder, Signal, Wallet
+from app.models import AIAnalysis, PaperOrder, Signal, Wallet, WalletScoreProfile
 from app.repository import audit, current_portfolio
+from app.settlement_models import PaperSettlement
 
 
 class AIReport(BaseModel):
@@ -124,10 +125,12 @@ class OpenAIAnalyst:
             },
             "instructions": (
                 "You are the read-only risk analyst for a prediction-market paper system. "
-                "Assess source quality, anomalies, concentration, latency, and operational risk. "
-                "Never authorize, size, or place a trade. Never claim profitability. "
-                "Recommendations may only pause, investigate, collect more evidence, or retain "
-                "current paper-only controls. Use only the supplied evidence."
+                "Assess source quality, score-horizon divergence, anomalies, concentration, "
+                "latency, settlement maturity, and operational risk. Execution-edge score "
+                "measures copyability after price movement and is not outcome alpha. Never "
+                "authorize, size, or place a trade. Never claim profitability. Recommendations "
+                "may only pause, investigate, collect more evidence, or retain paper-only "
+                "controls. Use only the supplied evidence."
             ),
             "input": evidence_json,
         }
@@ -172,6 +175,16 @@ class OpenAIAnalyst:
                 .limit(10)
             )
         )
+        profiles = {
+            profile.wallet_address: profile
+            for profile in db.scalars(
+                select(WalletScoreProfile).where(
+                    WalletScoreProfile.wallet_address.in_(
+                        [wallet.address for wallet in wallets]
+                    )
+                )
+            ).all()
+        }
         signals = list(db.scalars(select(Signal).order_by(desc(Signal.id)).limit(40)))
         orders = list(db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(40)))
         portfolio = current_portfolio(db, self.settings.initial_bankroll_usd)
@@ -184,12 +197,46 @@ class OpenAIAnalyst:
                 "mode": "PAPER",
                 "live_available": False,
                 "purpose": "risk advisory only",
+                "score_contract": {
+                    "short": "most recent 50 closed positions",
+                    "long": "up to 200 closed positions",
+                    "global": "60% short + 40% long",
+                    "edge": "execution copyability, not outcome alpha",
+                },
+                "settled_positions": int(
+                    db.scalar(select(func.count()).select_from(PaperSettlement)) or 0
+                ),
             },
             "portfolio": portfolio,
             "wallets": [
                 {
                     "source_id": source_ids[wallet.address],
-                    "score": wallet.score,
+                    "short_score": (
+                        profiles[wallet.address].short_score
+                        if wallet.address in profiles
+                        else None
+                    ),
+                    "long_score": (
+                        profiles[wallet.address].long_score
+                        if wallet.address in profiles
+                        else None
+                    ),
+                    "global_score": wallet.score,
+                    "execution_edge_score": (
+                        profiles[wallet.address].execution_edge_score
+                        if wallet.address in profiles
+                        else None
+                    ),
+                    "execution_edge_sample_size": (
+                        profiles[wallet.address].execution_edge_sample_size
+                        if wallet.address in profiles
+                        else 0
+                    ),
+                    "average_execution_edge": (
+                        profiles[wallet.address].average_execution_edge
+                        if wallet.address in profiles
+                        else None
+                    ),
                     "win_rate": wallet.win_rate,
                     "profit_factor": wallet.profit_factor,
                     "realized_pnl": wallet.realized_pnl,
