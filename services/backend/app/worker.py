@@ -10,6 +10,7 @@ from app.paper import PaperEngine, ingest_wallet_activity, refresh_position_pric
 from app.polymarket import PolymarketClient
 from app.repository import audit, initialize_state, set_state
 from app.scanner import scan_wallets
+from app.settlement import settle_closed_positions
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("sibyl.worker")
@@ -53,6 +54,9 @@ def main() -> None:
                         )
                         next_scan = now + settings.scan_interval_seconds
                     if now >= next_mark:
+                        settled = settle_closed_positions(db, client, settings)
+                        if settled:
+                            log.info("settled positions=%s", settled)
                         marked = refresh_position_prices(db, client, settings)
                         if marked:
                             log.info("marked positions=%s", marked)
