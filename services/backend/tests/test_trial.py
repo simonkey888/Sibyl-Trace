@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.config import Settings  # noqa: E402
 from app.db import Base  # noqa: E402
-from app.models import PaperOrder, Wallet  # noqa: E402
+from app.models import PaperOrder, Signal, Wallet  # noqa: E402
 from app.paper import (  # noqa: E402
     PaperEngine,
     activity_source_keys,
@@ -72,8 +72,18 @@ def trade(*, tx: str, timestamp: int, size: float = 40) -> dict:
     }
 
 
+def paper_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "trading_mode": "PAPER",
+        "activity_lookback_seconds": 500,
+        "risk_max_signal_age_seconds": 30,
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
 def test_delayed_trial_profile_does_not_enable_live() -> None:
-    settings = Settings(
+    settings = paper_settings(
         activity_lookback_seconds=14400,
         risk_max_signal_age_seconds=14400,
         live_trading_enabled=False,
@@ -85,7 +95,7 @@ def test_delayed_trial_profile_does_not_enable_live() -> None:
 
 def test_activity_lookback_and_fetch_limit_are_configurable(monkeypatch) -> None:
     probe = ActivityProbe()
-    settings = Settings(activity_lookback_seconds=14400, activity_fetch_limit=2000)
+    settings = paper_settings(activity_lookback_seconds=14400, activity_fetch_limit=2000)
 
     monkeypatch.setattr("app.paper.time.time", lambda: 100000)
     with Session(memory_engine()) as db:
@@ -105,7 +115,7 @@ def test_activity_lookback_and_fetch_limit_are_configurable(monkeypatch) -> None
 
 def test_existing_cursor_requeries_last_second_for_safe_deduplication() -> None:
     probe = ActivityProbe()
-    settings = Settings(activity_fetch_limit=500)
+    settings = paper_settings(activity_fetch_limit=500)
 
     with Session(memory_engine()) as db:
         tracked = wallet("2")
@@ -124,7 +134,7 @@ def test_existing_cursor_requeries_last_second_for_safe_deduplication() -> None:
 
 def test_stale_signal_is_rejected_without_midpoint_request(monkeypatch) -> None:
     probe = ActivityProbe([trade(tx="0xstale", timestamp=900)])
-    settings = Settings(activity_lookback_seconds=500, risk_max_signal_age_seconds=30)
+    settings = paper_settings()
     monkeypatch.setattr("app.paper.time.time", lambda: 1000)
 
     with Session(memory_engine()) as db:
@@ -150,7 +160,7 @@ def test_midpoint_is_fetched_once_per_asset_per_cycle(monkeypatch) -> None:
             trade(tx="0xtwo", timestamp=999, size=20),
         ]
     )
-    settings = Settings(activity_lookback_seconds=500, risk_max_signal_age_seconds=30)
+    settings = paper_settings()
     monkeypatch.setattr("app.paper.time.time", lambda: 1000)
 
     with Session(memory_engine()) as db:
@@ -178,6 +188,44 @@ def test_activity_identity_does_not_collapse_distinct_fills() -> None:
     assert first_legacy == second_legacy
 
 
+def test_legacy_identity_only_deduplicates_matching_fill(monkeypatch) -> None:
+    first = trade(tx="0xlegacy", timestamp=999, size=20)
+    second = trade(tx="0xlegacy", timestamp=999, size=21)
+    _, legacy_key = activity_source_keys(wallet().address, first)
+    probe = ActivityProbe([second])
+    monkeypatch.setattr("app.paper.time.time", lambda: 1000)
+
+    with Session(memory_engine()) as db:
+        tracked = wallet()
+        db.add(tracked)
+        db.add(
+            Signal(
+                source_key=legacy_key,
+                wallet_address=tracked.address,
+                wallet_score=80,
+                condition_id="condition-1",
+                asset_id="asset-1",
+                market_title="Test market",
+                outcome="YES",
+                side="BUY",
+                source_price=0.5,
+                source_size=20,
+                source_usdc=10,
+                source_timestamp=999,
+                transaction_hash="0xlegacy",
+            )
+        )
+        db.commit()
+        processed = ingest_wallet_activity(
+            db,
+            probe,
+            paper_settings(),
+            PaperEngine(paper_settings(), probe),
+        )
+
+    assert processed == 1
+
+
 def test_trial_markdown_declares_delayed_paper_safety() -> None:
     report = {
         "run": {
@@ -197,6 +245,7 @@ def test_trial_markdown_declares_delayed_paper_safety() -> None:
         },
         "cycle": {
             "selected_wallets": 3,
+            "positions_settled": 1,
             "positions_marked": 1,
             "signals_processed": 2,
             "ai_report_created": False,
@@ -208,6 +257,7 @@ def test_trial_markdown_declares_delayed_paper_safety() -> None:
             "filled_orders": 1,
             "rejected_orders": 1,
             "open_positions": 1,
+            "settled_positions": 1,
         },
         "safety": {
             "trading_mode": "PAPER",
@@ -221,3 +271,4 @@ def test_trial_markdown_declares_delayed_paper_safety() -> None:
     assert "GITHUB_DELAYED_PAPER" in markdown
     assert "LIVE execution: `UNAVAILABLE`" in markdown
     assert "not a 24/7 executor" in markdown
+    assert "Settled" in markdown
