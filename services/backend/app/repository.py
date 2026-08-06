@@ -96,15 +96,16 @@ def current_portfolio(db: Session, initial_bankroll: float) -> dict[str, float]:
     equity = cash + exposure
     peak = db.scalar(select(func.max(PortfolioSnapshot.equity))) or initial_bankroll
     drawdown = max((float(peak) - equity) / float(peak), 0.0) if peak else 0.0
+
     day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    opening_snapshot = db.scalar(
+    prior_close = db.scalar(
         select(PortfolioSnapshot)
-        .where(PortfolioSnapshot.captured_at >= day_start)
-        .order_by(PortfolioSnapshot.captured_at.asc())
+        .where(PortfolioSnapshot.captured_at < day_start)
+        .order_by(PortfolioSnapshot.captured_at.desc())
         .limit(1)
     )
-    opening_equity = opening_snapshot.equity if opening_snapshot else initial_bankroll
-    daily_pnl = equity - float(opening_equity)
+    opening_equity = float(prior_close.equity) if prior_close else initial_bankroll
+    daily_pnl = equity - opening_equity
     return {
         "initial_bankroll": round(initial_bankroll, 4),
         "cash": round(cash, 4),
