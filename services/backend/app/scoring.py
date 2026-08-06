@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain import WalletMetrics, compute_wallet_metrics, wallet_score
-from app.models import PaperOrder, Signal
+from app.models import PaperOrder, Signal, Wallet, WalletScoreProfile
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,24 @@ def execution_edge(db: Session, wallet_address: str) -> tuple[float, int, float]
     confidence = min(len(values) / 30.0, 1.0)
     score = 50.0 + (raw - 50.0) * confidence
     return round(score, 2), len(values), round(average, 6)
+
+
+def refresh_execution_edge_profiles(db: Session) -> int:
+    wallets = list(db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all())
+    refreshed = 0
+    for wallet in wallets:
+        profile = db.get(WalletScoreProfile, wallet.address)
+        if profile is None:
+            continue
+        score, sample_size, average = execution_edge(db, wallet.address)
+        profile.execution_edge_score = score
+        profile.execution_edge_sample_size = sample_size
+        profile.average_execution_edge = average
+        profile.updated_at = datetime.now(UTC)
+        refreshed += 1
+    if refreshed:
+        db.commit()
+    return refreshed
 
 
 def score_matrix(
