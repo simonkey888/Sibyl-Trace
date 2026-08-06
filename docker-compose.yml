@@ -1,7 +1,7 @@
 name: sibyl-trace
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine3.23
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
