@@ -15,6 +15,7 @@ from app.models import (
     PortfolioSnapshot,
     Signal,
     Wallet,
+    WalletScoreProfile,
 )
 from app.repository import audit, current_portfolio, get_state, set_state
 
@@ -49,6 +50,16 @@ def verify_admin(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin token required")
 
 
+def score_profiles(db: Session, wallets: list[Wallet]) -> dict[str, WalletScoreProfile]:
+    addresses = [wallet.address for wallet in wallets]
+    if not addresses:
+        return {}
+    rows = db.scalars(
+        select(WalletScoreProfile).where(WalletScoreProfile.wallet_address.in_(addresses))
+    ).all()
+    return {row.wallet_address: row for row in rows}
+
+
 @router.get("/dashboard", dependencies=[Depends(verify_gateway)])
 def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
     portfolio = current_portfolio(db, settings.initial_bankroll_usd)
@@ -57,7 +68,8 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
         .order_by(desc(Wallet.selected), desc(Wallet.score))
         .limit(20)
     )
-    wallets = list(db.scalars(wallet_query))
+    wallet_rows = list(db.scalars(wallet_query))
+    profiles = score_profiles(db, wallet_rows)
     signals = list(db.scalars(select(Signal).order_by(desc(Signal.id)).limit(30)))
     orders = list(db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(30)))
     history = list(
@@ -75,9 +87,12 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
             "last_watch_at": get_state(db, "last_watch_at"),
             "version": settings.app_version,
             "live_available": False,
+            "score_contract": "GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability",
         },
         "portfolio": portfolio,
-        "wallets": [serialize_wallet(row) for row in wallets],
+        "wallets": [
+            serialize_wallet(row, profiles.get(row.address)) for row in wallet_rows
+        ],
         "signals": [serialize_signal(row) for row in signals],
         "orders": [serialize_order(row) for row in orders],
         "equity": [
@@ -108,7 +123,9 @@ def wallets(db: DatabaseDep, selected: SelectedQuery = None) -> list[dict]:
     query = select(Wallet).order_by(desc(Wallet.score))
     if selected is not None:
         query = query.where(Wallet.selected.is_(selected))
-    return [serialize_wallet(row) for row in db.scalars(query).all()]
+    wallet_rows = list(db.scalars(query).all())
+    profiles = score_profiles(db, wallet_rows)
+    return [serialize_wallet(row, profiles.get(row.address)) for row in wallet_rows]
 
 
 @router.post("/control/pause", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
@@ -169,11 +186,21 @@ def live_readiness() -> dict:
     }
 
 
-def serialize_wallet(row: Wallet) -> dict:
+def serialize_wallet(row: Wallet, profile: WalletScoreProfile | None = None) -> dict:
     return {
         "address": row.address,
         "username": row.username,
         "score": row.score,
+        "short_score": profile.short_score if profile else None,
+        "long_score": profile.long_score if profile else None,
+        "global_score": profile.global_score if profile else row.score,
+        "execution_edge_score": profile.execution_edge_score if profile else None,
+        "execution_edge_sample_size": (
+            profile.execution_edge_sample_size if profile else 0
+        ),
+        "average_execution_edge": profile.average_execution_edge if profile else None,
+        "short_sample_size": profile.short_sample_size if profile else 0,
+        "long_sample_size": profile.long_sample_size if profile else row.closed_count,
         "win_rate": row.win_rate,
         "profit_factor": row.profit_factor,
         "realized_pnl": row.realized_pnl,
