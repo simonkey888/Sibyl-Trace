@@ -18,13 +18,25 @@ from app.trial import render_markdown  # noqa: E402
 class ActivityProbe:
     def __init__(self) -> None:
         self.start: int | None = None
+        self.limit: int | None = None
 
     def activity(self, _wallet: str, start: int, limit: int = 100) -> list[dict]:
         self.start = start
+        self.limit = limit
         return []
 
     def midpoint(self, _asset_id: str) -> float:
         return 0.5
+
+
+def memory_engine():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return engine
 
 
 def test_delayed_trial_profile_does_not_enable_live() -> None:
@@ -38,18 +50,12 @@ def test_delayed_trial_profile_does_not_enable_live() -> None:
     assert engine.policy.maximum_signal_age_seconds == 14400
 
 
-def test_activity_lookback_is_configurable(monkeypatch) -> None:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
+def test_activity_lookback_and_fetch_limit_are_configurable(monkeypatch) -> None:
     probe = ActivityProbe()
-    settings = Settings(activity_lookback_seconds=14400)
+    settings = Settings(activity_lookback_seconds=14400, activity_fetch_limit=2000)
 
     monkeypatch.setattr("app.paper.time.time", lambda: 100000)
-    with Session(engine) as db:
+    with Session(memory_engine()) as db:
         db.add(
             Wallet(
                 address="0x" + "1" * 40,
@@ -68,6 +74,31 @@ def test_activity_lookback_is_configurable(monkeypatch) -> None:
 
     assert processed == 0
     assert probe.start == 85600
+    assert probe.limit == 2000
+
+
+def test_existing_cursor_requeries_last_second_for_safe_deduplication() -> None:
+    probe = ActivityProbe()
+    settings = Settings(activity_fetch_limit=500)
+
+    with Session(memory_engine()) as db:
+        db.add(
+            Wallet(
+                address="0x" + "2" * 40,
+                selected=True,
+                score=80,
+                last_activity_at=999,
+            )
+        )
+        db.commit()
+        ingest_wallet_activity(
+            db,
+            probe,
+            settings,
+            PaperEngine(settings, probe),
+        )
+
+    assert probe.start == 999
 
 
 def test_trial_markdown_declares_delayed_paper_safety() -> None:

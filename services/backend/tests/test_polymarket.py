@@ -1,8 +1,10 @@
+from typing import Any
+
 from app.config import Settings
 from app.polymarket import PolymarketClient, PolymarketError
 
 
-def client_with_payload(payload: dict) -> PolymarketClient:
+def client_with_payload(payload: Any) -> PolymarketClient:
     client = PolymarketClient(Settings())
     client._get = lambda *_args, **_kwargs: payload
     return client
@@ -35,3 +37,72 @@ def test_midpoint_fails_closed_without_price() -> None:
             raise AssertionError("missing midpoint must fail closed")
     finally:
         client.close()
+
+
+def test_activity_paginates_with_documented_offset_and_deduplicates() -> None:
+    client = PolymarketClient(Settings())
+    calls: list[dict[str, Any]] = []
+
+    def fake_get(_url: str, params: dict[str, Any]) -> list[dict]:
+        calls.append(params)
+        offset = int(params["offset"])
+        if offset == 0:
+            return [
+                {
+                    "transactionHash": f"tx-{index}",
+                    "asset": "asset",
+                    "side": "BUY",
+                    "timestamp": 1000 + index,
+                }
+                for index in range(500)
+            ]
+        return [
+            {
+                "transactionHash": "tx-499",
+                "asset": "asset",
+                "side": "BUY",
+                "timestamp": 1499,
+            },
+            {
+                "transactionHash": "tx-500",
+                "asset": "asset",
+                "side": "BUY",
+                "timestamp": 1500,
+            },
+        ]
+
+    client._get = fake_get
+    try:
+        activity = client.activity("0x" + "1" * 40, start=900, limit=700)
+    finally:
+        client.close()
+
+    assert [call["offset"] for call in calls] == [0, 500]
+    assert [call["limit"] for call in calls] == [500, 200]
+    assert len(activity) == 501
+    assert activity[-1]["transactionHash"] == "tx-500"
+
+
+def test_activity_stops_after_short_page() -> None:
+    client = PolymarketClient(Settings())
+    offsets: list[int] = []
+
+    def fake_get(_url: str, params: dict[str, Any]) -> list[dict]:
+        offsets.append(int(params["offset"]))
+        return [
+            {
+                "transactionHash": "tx-1",
+                "asset": "asset",
+                "side": "SELL",
+                "timestamp": 10,
+            }
+        ]
+
+    client._get = fake_get
+    try:
+        activity = client.activity("0x" + "2" * 40, start=0, limit=2000)
+    finally:
+        client.close()
+
+    assert offsets == [0]
+    assert len(activity) == 1
