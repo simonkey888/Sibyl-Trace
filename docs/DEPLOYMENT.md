@@ -10,17 +10,33 @@ Create an Ubuntu LTS Ampere instance in a jurisdiction eligible for the target m
 sudo bash infra/oracle/bootstrap.sh ubuntu
 ```
 
-Create `/opt/sibyl-trace/shared/.env` from `.env.example`, set ownership to the deploy user, and permissions to `0600`. Keep `AI_ANALYSIS_ENABLED=false` until an OpenAI API key with an explicit project spend limit is installed.
+Create `/opt/sibyl-trace/shared/.env` from `.env.example`, replace every placeholder, set ownership to the deploy user, and permissions to `0600`.
 
-Oracle deployments are immutable releases under `/opt/sibyl-trace/releases/<commit-sha>`. The workflow verifies the archive checksum, validates Compose, builds images before switching the `current` symlink, waits for every service and the API health endpoint, and automatically rolls back on failure. The current release, previous release, and two older recovery releases are retained.
+Safety configuration:
 
-## 2. Cloudflare Tunnel
+```text
+TRADING_MODE=READ_ONLY
+PAPER_TRADING_ENABLED=false
+LIVE_TRADING_ENABLED=false
+```
 
-Create a remotely managed tunnel whose private service points to `http://api:8000`. Store its token only in Oracle `.env`. Do not expose port 8000 or PostgreSQL in the Oracle security list.
+A deliberate PAPER deployment requires both `TRADING_MODE=PAPER` and `PAPER_TRADING_ENABLED=true`. `LIVE_TRADING_ENABLED=true` is rejected by the application.
 
-## 3. Cloudflare Access and Worker
+Keep `AI_ANALYSIS_ENABLED=false` until an OpenAI API key with an explicit project spend limit is installed.
 
-Create a self-hosted Access application for the dashboard hostname and restrict its policy to the owner identity. Copy the application Audience (AUD) tag and team domain. The Worker validates `Cf-Access-Jwt-Assertion` on every request; missing Access configuration or an invalid token returns HTTP 403 before assets or APIs are served.
+Oracle deployments are immutable releases under `/opt/sibyl-trace/releases/<commit-sha>`. The workflow checks out the requested ref, resolves the exact resulting commit, verifies the archive checksum, tags backend and backup images with that SHA, validates Compose, switches the `current` symlink only after building, and automatically rolls back to the prior SHA-tagged images on failure. The current release, previous release, and two older recovery releases are retained.
+
+## 2. Network boundary
+
+PostgreSQL is attached only to an internal Compose network. API, worker, backup, and tunnel receive the minimum network combinations required for database access or egress. Do not expose port 8000 or PostgreSQL in the Oracle security list.
+
+## 3. Cloudflare Tunnel
+
+Create a remotely managed tunnel whose private service points to `http://api:8000`. Store its token only in Oracle `.env`.
+
+## 4. Cloudflare Access and Worker
+
+Create a self-hosted Access application for the dashboard hostname and restrict its policy to the owner identity. Copy the application Audience (AUD) tag and team domain. The Worker validates `Cf-Access-Jwt-Assertion` on every request; missing Access configuration or an invalid token returns HTTP 403 before assets or APIs are served. Private HTML and JSON responses are `no-store`.
 
 Set Worker secrets:
 
@@ -31,7 +47,7 @@ Set Worker secrets:
 - `ACCESS_POLICY_AUD`: Access application Audience tag.
 - `ACCESS_OWNER_EMAIL`: exact owner login email allowed by the Access policy.
 
-## 4. GitHub environments
+## 5. GitHub environments
 
 Create `oracle-production` and `cloudflare-production`, both with required reviewers.
 
@@ -45,8 +61,20 @@ Cloudflare secrets:
 - `ORIGIN_BASE_URL`, `ORIGIN_SHARED_SECRET`, `ADMIN_TOKEN`.
 - `ACCESS_TEAM_DOMAIN`, `ACCESS_POLICY_AUD`, `ACCESS_OWNER_EMAIL`.
 
-Both deployments are manual and environment-gated. Deploy a reviewed commit SHA, not a moving branch name.
+Both deployments are manual and environment-gated. Deploy a reviewed commit SHA, not a moving branch name. The workflow logs the exact checked-out SHA.
 
-## 5. Optional GPT-5.6 advisory
+## 6. Encrypted and authenticated backups
 
-Set `OPENAI_API_KEY` only in Oracle `.env`, choose `OPENAI_MODEL`, then set `AI_ANALYSIS_ENABLED=true`. The default model is `gpt-5.6-luna`. The system submits bounded portfolio, source-quality, signal, and paper-order evidence using pseudonymous source IDs. It requests strict structured output with `store: false`; the result is persisted for the dashboard but never enters the deterministic order-approval path.
+The backup container creates PostgreSQL custom-format dumps, encrypts each dump with AES-256-CBC/PBKDF2, authenticates the encrypted bytes with HMAC-SHA256, and uploads both files to R2.
+
+A restore requires:
+
+```bash
+scripts/restore-backup.sh /path/sibyl-<timestamp>.dump.enc /path/sibyl-<timestamp>.dump.enc.hmac
+```
+
+The script verifies the HMAC with `BACKUP_ENCRYPTION_KEY`, decrypts to a temporary file, and runs `pg_restore --clean --if-exists --single-transaction --exit-on-error`. A modified backup or authenticator fails before database mutation.
+
+## 7. Optional GPT-5.6 advisory
+
+Set `OPENAI_API_KEY` only in Oracle `.env`, choose `OPENAI_MODEL`, then set `AI_ANALYSIS_ENABLED=true`. The default model is `gpt-5.6-luna`. The system submits bounded portfolio, score-horizon, settlement, signal, and PAPER-order evidence using pseudonymous source IDs. It requests strict structured output with `store: false`; the result is persisted for the dashboard but never enters the deterministic order-approval path.
