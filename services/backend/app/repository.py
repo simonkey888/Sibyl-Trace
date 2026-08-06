@@ -46,8 +46,23 @@ def audit(
 
 
 def initialize_state(db: Session, settings: Settings) -> None:
+    mode = db.get(SystemState, "mode")
+    if mode is None:
+        db.add(SystemState(key="mode", value=settings.trading_mode))
+    elif mode.value != settings.trading_mode:
+        previous = mode.value
+        mode.value = settings.trading_mode
+        mode.updated_at = utcnow()
+        audit(
+            db,
+            "runtime_mode_reconciled",
+            f"Persisted mode {previous} replaced by configured {settings.trading_mode}",
+            severity="WARN",
+            previous=previous,
+            configured=settings.trading_mode,
+        )
+
     defaults = {
-        "mode": settings.trading_mode,
         "paused": "false",
         "kill_switch": "false",
         "last_scan_at": "",
