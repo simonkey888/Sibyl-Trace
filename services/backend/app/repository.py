@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import AuditEvent, PaperOrder, PaperPosition, PortfolioSnapshot, SystemState
+from app.settlement_models import PaperSettlement
 
 
 def utcnow() -> datetime:
@@ -91,7 +92,15 @@ def current_portfolio(db: Session, initial_bankroll: float) -> dict[str, float]:
             PaperOrder.status == "FILLED", PaperOrder.side == "SELL"
         )
     )
-    cash = initial_bankroll - float(filled_buys or 0) + float(filled_sells or 0)
+    settlement_proceeds = db.scalar(
+        select(func.coalesce(func.sum(PaperSettlement.proceeds), 0))
+    )
+    cash = (
+        initial_bankroll
+        - float(filled_buys or 0)
+        + float(filled_sells or 0)
+        + float(settlement_proceeds or 0)
+    )
     unrealized = exposure - cost_basis
     equity = cash + exposure
     peak = db.scalar(select(func.max(PortfolioSnapshot.equity))) or initial_bankroll
@@ -115,4 +124,5 @@ def current_portfolio(db: Session, initial_bankroll: float) -> dict[str, float]:
         "unrealized_pnl": round(unrealized, 4),
         "drawdown": round(drawdown, 6),
         "daily_pnl": round(daily_pnl, 4),
+        "settlement_proceeds": round(float(settlement_proceeds or 0), 4),
     }
