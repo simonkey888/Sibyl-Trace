@@ -19,6 +19,8 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e '.[dev]'
+      - run: pip check
+      - run: pip-audit --local --progress-spinner off
       - run: ruff check .
       - run: pytest --cov=app --cov-report=term-missing
   dashboard:
@@ -31,7 +33,9 @@ jobs:
       - run: node --check apps/dashboard/public/app.js
       - run: node --check apps/dashboard/public/ai-panel.js
       - working-directory: apps/gateway
-        run: npm install --ignore-scripts
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - working-directory: apps/gateway
+        run: npm audit --omit=dev --audit-level=high
       - working-directory: apps/gateway
         run: npm run check
       - working-directory: apps/gateway
