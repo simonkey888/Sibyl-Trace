@@ -37,11 +37,12 @@ class PolymarketClient:
         results: list[dict] = []
         target = min(max(limit, 0), 200)
         for offset in range(0, target, 50):
+            page_limit = min(50, target - offset)
             data = self._get(
                 f"{self.settings.data_api_base}/closed-positions",
                 {
                     "user": wallet,
-                    "limit": min(50, target - offset),
+                    "limit": page_limit,
                     "offset": offset,
                     "sortBy": "TIMESTAMP",
                     "sortDirection": "DESC",
@@ -49,7 +50,7 @@ class PolymarketClient:
             )
             page = data if isinstance(data, list) else []
             results.extend(page)
-            if len(page) < min(50, target - offset):
+            if len(page) < page_limit:
                 break
         return results
 
@@ -67,9 +68,22 @@ class PolymarketClient:
         )
         return data if isinstance(data, list) else []
 
+    def recent_trades(self, limit: int = 20) -> list[dict]:
+        data = self._get(
+            f"{self.settings.data_api_base}/trades",
+            {"limit": min(max(limit, 1), 100), "offset": 0},
+        )
+        return data if isinstance(data, list) else []
+
     def midpoint(self, asset_id: str) -> float:
         data = self._get(f"{self.settings.clob_api_base}/midpoint", {"token_id": asset_id})
-        value = data.get("mid") if isinstance(data, dict) else None
+        value = None
+        if isinstance(data, dict):
+            value = data.get("mid_price")
+            if value is None:
+                value = data.get("mid")
+        if value is None:
+            raise PolymarketError("midpoint response did not contain a price")
         midpoint = float(value)
         if not 0 < midpoint < 1:
             raise PolymarketError("invalid midpoint")
