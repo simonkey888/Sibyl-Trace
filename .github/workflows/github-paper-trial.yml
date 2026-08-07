@@ -96,7 +96,16 @@ jobs:
               --clobber
             test -s "$STATE_DIR/sibyl.db.gz"
             test -s "$STATE_DIR/SHA256SUMS"
-            (cd "$STATE_DIR" && sha256sum -c SHA256SUMS)
+            EXPECTED_SHA="$(awk 'NF {print $1; exit}' "$STATE_DIR/SHA256SUMS" | tr '[:upper:]' '[:lower:]')"
+            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid SHA256SUMS payload; refusing to restore persisted PAPER state."
+              exit 1
+            fi
+            ACTUAL_SHA="$(sha256sum "$STATE_DIR/sibyl.db.gz" | awk '{print $1}')"
+            if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+              echo "Persisted PAPER state checksum mismatch; refusing to restore."
+              exit 1
+            fi
             gzip -t "$STATE_DIR/sibyl.db.gz"
             gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
             rm -f "$STATE_DIR/sibyl.db.gz" "$STATE_DIR/SHA256SUMS"
