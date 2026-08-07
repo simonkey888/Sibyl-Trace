@@ -15,7 +15,6 @@ from app.evidence import hash_payload
 from app.hypothesis import HypothesisSpec, make_hypothesis
 from app.latency import (
     CaptureResult,
-    FeedEvent,
     LatencyTarget,
     analyze_latency_opportunities,
     capture_latency_window,
@@ -29,7 +28,12 @@ from app.research_models import (
     WatchdogEvent,
 )
 from app.trader_research import trader_reconstruction, weather_hypothesis_status
-from app.watchdogs import feed_watchdog, global_watchdog_state, sample_watchdog
+from app.watchdogs import (
+    WatchdogAssessment,
+    feed_watchdog,
+    global_watchdog_state,
+    sample_watchdog,
+)
 
 
 def utcnow() -> datetime:
@@ -172,6 +176,18 @@ def checkpoint(db: Session, run_id: str, phase: str, state: Any) -> None:
     db.commit()
 
 
+def _fee_rate(info: dict[str, Any], category: str | None) -> float:
+    fee_detail = info.get("fd")
+    if isinstance(fee_detail, dict):
+        try:
+            rate = float(fee_detail.get("r"))
+        except (TypeError, ValueError):
+            rate = -1.0
+        if 0 <= rate <= 1:
+            return rate
+    return taker_fee_rate_for_category(category)
+
+
 def _target_from_market(client: PolymarketClient, market: dict[str, Any]) -> LatencyTarget:
     condition_id = str(market.get("conditionId") or "")
     if not condition_id:
@@ -195,7 +211,7 @@ def _target_from_market(client: PolymarketClient, market: dict[str, Any]) -> Lat
         question=str(market.get("question") or market.get("slug") or condition_id),
         end_timestamp_ms=_iso_ms(market.get("endDate")),
         outcome_assets=outcome_assets,
-        fee_rate=taker_fee_rate_for_category(str(market.get("category") or "Crypto")),
+        fee_rate=_fee_rate(info, str(market.get("category") or "Crypto")),
         tick_size=tick_size,
     )
 
@@ -207,7 +223,11 @@ def _source_counts(capture: CaptureResult) -> dict[str, int]:
     return counts
 
 
-def _capture_summary(target: LatencyTarget, capture: CaptureResult, requested_shares: float) -> dict:
+def _capture_summary(
+    target: LatencyTarget,
+    capture: CaptureResult,
+    requested_shares: float,
+) -> dict[str, Any]:
     opportunities = analyze_latency_opportunities(
         target,
         capture,
@@ -302,11 +322,12 @@ def run_latency_lab(
             "direction": opportunity["direction"],
         }
         observation_key = hash_payload(key_payload)
-        if db.scalar(
+        exists = db.scalar(
             select(ResearchObservation.id).where(
                 ResearchObservation.observation_key == observation_key
             )
-        ) is not None:
+        )
+        if exists is not None:
             continue
         db.add(
             ResearchObservation(
@@ -380,15 +401,23 @@ def run_reference_research(
             settings=settings,
             config={"username": username, "category": _reference_category(username)},
         )
-        last_timestamp = max((int(row.get("timestamp") or 0) for row in positions), default=0)
-        observation_key = hash_payload(
-            {"username": username, "sample": len(positions), "last_timestamp": last_timestamp}
+        last_timestamp = max(
+            (int(row.get("timestamp") or 0) for row in positions),
+            default=0,
         )
-        if db.scalar(
+        observation_key = hash_payload(
+            {
+                "username": username,
+                "sample": len(positions),
+                "last_timestamp": last_timestamp,
+            }
+        )
+        exists = db.scalar(
             select(ResearchObservation.id).where(
                 ResearchObservation.observation_key == observation_key
             )
-        ) is None:
+        )
+        if exists is None:
             db.add(
                 ResearchObservation(
                     observation_key=observation_key,
@@ -437,8 +466,6 @@ def run_research_cycle(
     if isinstance(latency.get("watchdog"), dict):
         watchdog = latency["watchdog"]
         if watchdog.get("state") in {"GREEN", "YELLOW", "RED"}:
-            from app.watchdogs import WatchdogAssessment
-
             assessments.append(
                 WatchdogAssessment(
                     watchdog=str(watchdog.get("watchdog") or "LATENCY_FEED_DESYNC"),
