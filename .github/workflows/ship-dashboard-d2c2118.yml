@@ -1,0 +1,105 @@
+name: Ship Dashboard d2c2118
+
+on:
+  push:
+    branches:
+      - ops/deploy-dashboard-d2c2118
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sibyl-cloudflare-terminal
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact validated dashboard release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: d2c2118016106ea400b95d6b34287f0b05937e42
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/gateway/package-lock.json
+
+      - name: Resolve latest successful V4 evidence
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v4-operational.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+          source_sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
+          [[ -n "$run_id" && -n "$source_sha" ]]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify V4 evidence
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sibyl-v4-evidence
+          gh run download "$SOURCE_RUN_ID" \
+            --name "sibyl-research-v4-$SOURCE_RUN_ID" \
+            --dir /tmp/sibyl-v4-evidence
+          test -s /tmp/sibyl-v4-evidence/trial-summary.json
+          test -s /tmp/sibyl-v4-evidence/research-v3-summary.json
+          test -s /tmp/sibyl-v4-evidence/research-v4-summary.json
+          test -s /tmp/sibyl-v4-evidence/evidence-manifest-v4.json
+          test -s /tmp/sibyl-v4-evidence/SHA256SUMS
+          (cd /tmp/sibyl-v4-evidence && sha256sum -c SHA256SUMS --ignore-missing)
+
+      - name: Rebuild sanitized read-only snapshot
+        env:
+          PYTHONPATH: services/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf apps/dashboard/public/data
+          python -m app.cloudflare_snapshot \
+            --input-dir /tmp/sibyl-v4-evidence \
+            --output-dir apps/dashboard/public/data
+          test -s apps/dashboard/public/data/snapshot.json
+          grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
+          grep -q '"PAPER_SHADOW_ONLY"' apps/dashboard/public/data/snapshot.json
+          grep -q '"order_placement": false' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
+
+      - name: Install pinned gateway dependencies
+        working-directory: apps/gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Deploy redesigned public read-only terminal
+        working-directory: apps/gateway
+        run: npx --no-install wrangler deploy
+
+      - name: Record release
+        shell: bash
+        run: |
+          {
+            echo "### Sibyl Trace dashboard release"
+            echo "- Dashboard SHA: d2c2118016106ea400b95d6b34287f0b05937e42"
+            echo "- V4 evidence run: ${{ steps.source.outputs.run_id }}"
+            echo "- V4 evidence SHA: ${{ steps.source.outputs.source_sha }}"
+            echo "- Mode: public read-only PAPER V2 + Research V3 + V4 shadow"
+            echo "- LIVE: absent"
+          } >> "$GITHUB_STEP_SUMMARY"
