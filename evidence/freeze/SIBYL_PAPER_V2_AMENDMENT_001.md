@@ -11,4 +11,5 @@
 - LIVE/real-money capability: unchanged and absent.
 - Cost authorization: unchanged at USD 0.
 - Credentials/authentication: none added; the feed is public market-data only.
-- Validation requirement: refresh the protected-file hash manifest, pass exact-head CI, then require two consecutive state-preserving PAPER runs on canonical `main` with Binance public-feed observations before closing the amendment.
+- Protected baseline: refreshed after preregistration; `latency.py` remains protected rather than being exempted from the freeze guard.
+- Validation requirement: pass exact-head CI, then require two consecutive state-preserving PAPER runs on canonical `main` with Binance public-feed observations before closing the amendment.
