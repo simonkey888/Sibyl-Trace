@@ -34,6 +34,9 @@ jobs:
           cache-dependency-path: apps/gateway/package-lock.json
       - run: node --check apps/dashboard/public/app.js
       - run: node --check apps/dashboard/public/ai-panel.js
+      - run: node --check apps/dashboard/public/research-v3.js
+      - run: node --check apps/dashboard/public/research-v4.js
+      - run: node apps/dashboard/public/design-contract.test.mjs
       - working-directory: apps/gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
       - working-directory: apps/gateway
