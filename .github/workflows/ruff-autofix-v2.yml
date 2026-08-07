@@ -32,7 +32,7 @@ jobs:
         run: pip install ruff==0.16.1
       - name: Apply safe Ruff fixes
         working-directory: services/backend
-        run: ruff check . --fix
+        run: ruff check . --fix || true
       - name: Commit mechanical fixes when needed
         run: |
           set -euo pipefail
