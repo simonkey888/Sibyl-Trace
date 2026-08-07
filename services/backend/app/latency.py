@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -68,10 +68,9 @@ def now_ms() -> int:
 
 def _float(value: Any) -> float | None:
     try:
-        parsed = float(value)
+        return float(value)
     except (TypeError, ValueError):
         return None
-    return parsed
 
 
 def _iso_ms(value: Any) -> int | None:
@@ -186,12 +185,14 @@ async def _collect_binance(
 ) -> None:
     try:
         async with connect(BINANCE_BTC_WS, open_timeout=8, close_timeout=2) as socket:
-            while time.monotonic() < deadline and len([e for e in events if e.source == "BINANCE"]) < max_events:
+            count = 0
+            while time.monotonic() < deadline and count < max_events:
                 remaining = max(deadline - time.monotonic(), 0.05)
                 raw = await asyncio.wait_for(socket.recv(), timeout=min(remaining, 2.0))
                 event = parse_binance_message(json.loads(raw), now_ms())
                 if event is not None:
                     events.append(event)
+                    count += 1
     except TimeoutError:
         return
     except Exception as exc:
@@ -311,7 +312,10 @@ def detect_consensus_impulses(
     }
     if not all(by_source.values()):
         return []
-    timeline = sorted(by_source["BINANCE"] + by_source["COINBASE"], key=lambda e: e.receive_timestamp_ms)
+    timeline = sorted(
+        by_source["BINANCE"] + by_source["COINBASE"],
+        key=lambda event: event.receive_timestamp_ms,
+    )
     triggers: list[tuple[int, str, float]] = []
     last_trigger = -10**18
     for event in timeline:
@@ -322,16 +326,25 @@ def detect_consensus_impulses(
         }
         if any(value is None for value in current_events.values()):
             continue
-        current_values = list(current_events.values())
-        if max(value.receive_timestamp_ms for value in current_values if value) - min(
-            value.receive_timestamp_ms for value in current_values if value
-        ) > max_source_skew_ms:
+        current_values = [value for value in current_events.values() if value is not None]
+        source_skew = max(value.receive_timestamp_ms for value in current_values) - min(
+            value.receive_timestamp_ms for value in current_values
+        )
+        if source_skew > max_source_skew_ms:
             continue
         moves: list[float] = []
         for source, source_events in by_source.items():
             current = current_events[source]
-            previous_price = _latest_price_at_or_before(source_events, timestamp - lookback_ms)
-            if current is None or current.price is None or previous_price is None or previous_price <= 0:
+            previous_price = _latest_price_at_or_before(
+                source_events,
+                timestamp - lookback_ms,
+            )
+            if (
+                current is None
+                or current.price is None
+                or previous_price is None
+                or previous_price <= 0
+            ):
                 moves = []
                 break
             moves.append((current.price / previous_price - 1.0) * 10_000.0)
