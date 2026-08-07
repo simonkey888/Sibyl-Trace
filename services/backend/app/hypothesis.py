@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from statistics import fmean, pstdev
-from typing import Any, Iterable
+from typing import Any
 
 from app.evidence import hash_payload
 from app.research import payout_asymmetry
