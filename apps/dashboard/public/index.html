@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#07100f" />
-  <meta name="description" content="Sibyl Trace PAPER research terminal for prediction-market evidence, execution simulation and market microstructure." />
+  <meta name="description" content="Sibyl Trace PAPER research terminal for prediction-market evidence, truthful execution simulation and market microstructure." />
   <title>Sibyl Trace — Research Terminal</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -28,7 +28,7 @@
         <button class="nav-item" data-view="wallets"><span>02</span><b>Wallets</b></button>
         <button class="nav-item" data-view="latency"><span>03</span><b>Microstructure</b></button>
         <button class="nav-item" data-view="research"><span>04</span><b>Research</b></button>
-        <button class="nav-item" data-view="ledger"><span>05</span><b>Ledger</b></button>
+        <button class="nav-item" data-view="ledger"><span>05</span><b>Truth ledger</b></button>
       </nav>
 
       <div class="rail-status" aria-label="Safety state">
@@ -45,7 +45,7 @@
         <div class="topbar-copy">
           <p class="eyebrow">PREDICTION-MARKET EVIDENCE / READ-ONLY</p>
           <h1>Sibyl <span>Research Terminal</span></h1>
-          <p class="lede">A decision-grade view of PAPER performance, source quality, market microstructure and reproducible research evidence.</p>
+          <p class="lede">Canonical PAPER V5 performance uses executable order-book depth, per-market fees, arrival-book rechecks and explicit no-fill evidence. Legacy midpoint simulation remains visible only as history.</p>
         </div>
         <div class="top-status">
           <time id="utcClock">--:--:-- UTC</time>
@@ -57,29 +57,37 @@
         <div><span>EVIDENCE CHAIN</span><b id="evidenceValue">—</b></div>
         <div><span>RUN ID</span><b id="runValue">—</b></div>
         <div><span>FRESHNESS</span><b id="ageValue">—</b></div>
-        <div><span>RESEARCH</span><b id="watchdogValue">—</b></div>
+        <div><span>EXECUTION</span><b id="executionModelValue">—</b></div>
         <div><span>ACCOUNTING</span><b id="accountingValue">—</b></div>
         <div><span>REGION</span><b id="geoValue">—</b></div>
       </section>
 
       <section id="overview" class="view active" aria-labelledby="overviewTitle">
         <div class="view-heading">
-          <div><span class="kicker">PORTFOLIO / CURRENT STATE</span><h2 id="overviewTitle">What matters now</h2></div>
-          <p>Real market observations. Simulated execution. Every number remains inside the PAPER safety boundary.</p>
+          <div><span class="kicker">CANONICAL PAPER V5 / CURRENT STATE</span><h2 id="overviewTitle">What actually survived execution</h2></div>
+          <p>Signals are not wins. Only a simulated FAK fill against arrival L2 can become an open prediction, and only terminal market resolution can become WIN or LOSS.</p>
         </div>
 
         <div class="metric-grid">
           <article class="metric primary">
-            <span>PORTFOLIO EQUITY</span>
+            <span>V5 PORTFOLIO EQUITY</span>
             <strong id="equityValue">$0.00</strong>
             <small id="equityReturn">0.00% from initial</small>
           </article>
-          <article class="metric"><span>REALIZED PNL</span><strong id="realizedValue">$0.00</strong><small>settled only</small></article>
-          <article class="metric"><span>UNREALIZED PNL</span><strong id="unrealizedValue">$0.00</strong><small>marked positions</small></article>
-          <article class="metric"><span>DRAWDOWN</span><strong id="drawdownValue">0.00%</strong><small>limit 10.00%</small></article>
-          <article class="metric"><span>FILLS / SIGNALS</span><strong id="fillSignalValue">0 / 0</strong><small id="fillRateValue">0.00% fill rate</small></article>
-          <article class="metric"><span>SETTLEMENTS</span><strong id="settledValue">0</strong><small id="openPositionValue">0 open positions</small></article>
+          <article class="metric"><span>REALIZED PNL</span><strong id="realizedValue">$0.00</strong><small>V5 settled/exited only</small></article>
+          <article class="metric"><span>UNREALIZED PNL</span><strong id="unrealizedValue">$0.00</strong><small>executable liquidation mark</small></article>
+          <article class="metric"><span>DRAWDOWN</span><strong id="drawdownValue">0.00%</strong><small>V5 cohort</small></article>
+          <article class="metric"><span>FILLS / PREDICTIONS</span><strong id="fillSignalValue">0 / 0</strong><small id="fillRateValue">0.00% executable fill rate</small></article>
+          <article class="metric"><span>WIN / LOSS</span><strong id="settledValue">0 / 0</strong><small id="openPositionValue">Accuracy UNPROVEN</small></article>
         </div>
+
+        <article class="panel truth-banner" id="truthBanner">
+          <div class="panel-head">
+            <div><span class="kicker">TRUTH CONTRACT</span><h2 id="truthTitle">Waiting for PAPER V5 evidence</h2></div>
+            <span class="badge" id="truthState">NO V5</span>
+          </div>
+          <p id="truthCopy" class="note">Legacy V2 is not rewritten. Until a PASS V5 snapshot exists, historical midpoint-based performance is not canonical.</p>
+        </article>
 
         <div class="split split-wide">
           <article class="panel market-panel">
@@ -103,10 +111,10 @@
           <article class="panel health-panel">
             <div class="panel-head"><div><span class="kicker">SYSTEM HEALTH</span><h2>Fail-closed state</h2></div></div>
             <div class="health-list">
-              <div><span>Accounting</span><b id="healthAccounting">—</b></div>
+              <div><span>V5 accounting</span><b id="healthAccounting">—</b></div>
               <div><span>Latency feeds</span><b id="healthLatency">—</b></div>
               <div><span>Research maturity</span><b id="healthResearch">—</b></div>
-              <div><span>Paid APIs</span><b class="good">NONE</b></div>
+              <div><span>Midpoint fills</span><b id="midpointFillValue">—</b></div>
               <div><span>Real-money execution</span><b class="good">ABSENT</b></div>
             </div>
             <p class="note">Descriptive only. This terminal cannot sign, deposit, withdraw or place a LIVE order.</p>
@@ -119,17 +127,17 @@
             <div id="walletCards" class="card-stack"></div>
           </article>
           <article class="panel">
-            <div class="panel-head"><div><span class="kicker">LATEST PAPER EXECUTION</span><h2>Decision tape</h2></div><button class="jump" data-jump="ledger">View ledger →</button></div>
+            <div class="panel-head"><div><span class="kicker">LATEST V5 DECISIONS</span><h2>Execution tape</h2></div><button class="jump" data-jump="ledger">View truth ledger →</button></div>
             <div id="orderCards" class="card-stack"></div>
           </article>
         </div>
       </section>
 
       <section id="wallets" class="view" aria-labelledby="walletsTitle">
-        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2 id="walletsTitle">Source quality, without the leaderboard theater</h2></div><p>GLOBAL ranks source quality. EDGE measures PAPER execution copyability and remains unproven until its sample matures.</p></div>
+        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2 id="walletsTitle">Source quality is not Sibyl accuracy</h2></div><p>Wallet win rate describes the copied public source. Sibyl V5 accuracy is computed separately from resolved BUY entries that actually received a simulated fill.</p></div>
         <article class="panel table-panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Source</th><th>Short</th><th>Long</th><th>Global</th><th>Edge</th><th>Edge n</th><th>Win rate</th><th>Profit factor</th><th>Realized PnL</th></tr></thead>
+            <thead><tr><th>Source</th><th>Score</th><th>Closed n</th><th>Win rate</th><th>Profit factor</th><th>Source realized PnL</th></tr></thead>
             <tbody id="walletTable"></tbody>
           </table></div>
         </article>
@@ -150,7 +158,7 @@
       </section>
 
       <section id="research" class="view" aria-labelledby="researchTitle">
-        <div class="section-head"><div><span class="kicker">HYPOTHESIS LEDGER</span><h2 id="researchTitle">Evidence before narrative</h2></div><p>External trader claims are reconstructed from public evidence and remain separate from Sibyl's own PAPER performance.</p></div>
+        <div class="section-head"><div><span class="kicker">HYPOTHESIS LEDGER</span><h2 id="researchTitle">Evidence before narrative</h2></div><p>External trader claims are reconstructed from public evidence and remain separate from Sibyl's own V5 PAPER performance.</p></div>
         <div id="referenceGrid" class="reference-grid"></div>
         <article class="panel hypothesis-panel">
           <div class="panel-head"><div><span class="kicker">PREREGISTERED</span><h2>Hypothesis IDs</h2></div></div>
@@ -159,24 +167,24 @@
       </section>
 
       <section id="ledger" class="view" aria-labelledby="ledgerTitle">
-        <div class="section-head"><div><span class="kicker">PAPER LEDGER</span><h2 id="ledgerTitle">Every decision stays inspectable</h2></div><p>Rejected attempts remain visible. Settled PnL is separated from marked PnL.</p></div>
+        <div class="section-head"><div><span class="kicker">PAPER V5 TRUTH LEDGER</span><h2 id="ledgerTitle">Prediction → execution → resolution</h2></div><p>REJECTED and NO_FILL stay visible but never become wins or losses. OPEN means a filled BUY still awaits terminal resolution.</p></div>
         <article class="panel table-panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Source</th><th>Observed</th><th>Slippage</th><th>Filled USD</th><th>Status</th></tr></thead>
+            <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Source</th><th>Fill / effective</th><th>Fee</th><th>Filled</th><th>Status</th><th>Result</th></tr></thead>
             <tbody id="orderTable"></tbody>
           </table></div>
         </article>
         <article class="panel table-panel position-panel">
-          <div class="panel-head pad-head"><div><span class="kicker">OPEN POSITIONS</span><h2>Marked inventory</h2></div></div>
+          <div class="panel-head pad-head"><div><span class="kicker">OPEN V5 INVENTORY</span><h2>Executable liquidation marks</h2></div></div>
           <div class="table-scroll"><table>
-            <thead><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Average</th><th>Current</th><th>Realized</th></tr></thead>
+            <thead><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Cost/share</th><th>Liquidation/share</th><th>Mark value</th><th>Realized</th></tr></thead>
             <tbody id="positionTable"></tbody>
           </table></div>
         </article>
       </section>
 
       <footer>
-        <span>SIBYL TRACE / PAPER V2 + RESEARCH V3 + V4</span>
+        <span>SIBYL TRACE / PAPER V5 + LEGACY V2 + RESEARCH V3/V4</span>
         <span id="footerVersion">—</span>
         <span>READ-ONLY · NO LIVE · $0 AUTHORIZED</span>
       </footer>

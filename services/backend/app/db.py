@@ -21,7 +21,7 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
 
 
 def init_db() -> None:
-    from app import models, research_models, settlement_models  # noqa: F401
+    from app import models, models_v5, research_models, settlement_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 

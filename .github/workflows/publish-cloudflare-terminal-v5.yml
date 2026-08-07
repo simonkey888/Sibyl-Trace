@@ -1,8 +1,8 @@
-name: Publish Cloudflare Terminal V4
+name: Publish Cloudflare Terminal V5
 
 on:
   workflow_run:
-    workflows: ["Research Lab V4 Operational"]
+    workflows: ["GitHub PAPER V5 Truthful Execution"]
     types: [completed]
   workflow_dispatch:
 
@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish-v4:
-    name: publish validated V4 shadow plus latest V5 truth
+  publish-v5:
+    name: publish verified V5 truth plus research evidence
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
@@ -28,7 +28,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Resolve source Research V4 run
+      - name: Resolve exact V5 source
         id: source
         shell: bash
         run: |
@@ -37,7 +37,7 @@ jobs:
             run_id="${{ github.event.workflow_run.id }}"
             sha="${{ github.event.workflow_run.head_sha }}"
           else
-            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v4-operational.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-v5.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
             sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
           fi
           [[ -n "$run_id" && -n "$sha" ]]
@@ -55,7 +55,7 @@ jobs:
           done
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
-      - name: Check out exact canonical V4 source SHA
+      - name: Check out exact validated V5 source SHA
         if: steps.cf.outputs.enabled == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -76,45 +76,41 @@ jobs:
           cache: npm
           cache-dependency-path: apps/gateway/package-lock.json
 
-      - name: Download and verify exact V4 evidence
+      - name: Download and verify exact V5 evidence
         if: steps.cf.outputs.enabled == 'true'
         env:
           SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/sibyl-v4-evidence
-          gh run download "$SOURCE_RUN_ID" \
-            --name "sibyl-research-v4-$SOURCE_RUN_ID" \
-            --dir /tmp/sibyl-v4-evidence
-          test -s /tmp/sibyl-v4-evidence/trial-summary.json
-          test -s /tmp/sibyl-v4-evidence/research-v3-summary.json
-          test -s /tmp/sibyl-v4-evidence/research-v4-summary.json
-          test -s /tmp/sibyl-v4-evidence/SHA256SUMS
-          (cd /tmp/sibyl-v4-evidence && sha256sum -c SHA256SUMS --ignore-missing)
-
-      - name: Attach latest PASS V5 summary when available
-        if: steps.cf.outputs.enabled == 'true'
-        id: v5
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-v5.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)
-          if [[ -z "$run_id" ]]; then
-            echo "included=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           mkdir -p /tmp/sibyl-v5-evidence
-          gh run download "$run_id" --name "sibyl-paper-v5-$run_id" --dir /tmp/sibyl-v5-evidence
+          gh run download "$SOURCE_RUN_ID" --name "sibyl-paper-v5-$SOURCE_RUN_ID" --dir /tmp/sibyl-v5-evidence
           test -s /tmp/sibyl-v5-evidence/SHA256SUMS
           (cd /tmp/sibyl-v5-evidence && sha256sum -c SHA256SUMS --ignore-missing)
           test -s /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"status": "PASS"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"midpoint_fills": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          cp /tmp/sibyl-v5-evidence/paper-v5-summary.json /tmp/sibyl-v4-evidence/
-          echo "included=true" >> "$GITHUB_OUTPUT"
+          grep -q '"order_placement": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+
+      - name: Resolve and verify latest Research V4 anchor
+        if: steps.cf.outputs.enabled == 'true'
+        id: v4
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v4-operational.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+          [[ -n "$run_id" ]]
+          mkdir -p /tmp/sibyl-combined
+          gh run download "$run_id" --name "sibyl-research-v4-$run_id" --dir /tmp/sibyl-combined
+          test -s /tmp/sibyl-combined/SHA256SUMS
+          (cd /tmp/sibyl-combined && sha256sum -c SHA256SUMS --ignore-missing)
+          test -s /tmp/sibyl-combined/trial-summary.json
+          test -s /tmp/sibyl-combined/research-v3-summary.json
+          test -s /tmp/sibyl-combined/research-v4-summary.json
+          cp /tmp/sibyl-v5-evidence/paper-v5-summary.json /tmp/sibyl-combined/
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Build sanitized terminal snapshot
+      - name: Build sanitized canonical V5 snapshot
         if: steps.cf.outputs.enabled == 'true'
         env:
           PYTHONPATH: services/backend
@@ -122,14 +118,12 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf apps/dashboard/public/data
-          python -m app.cloudflare_snapshot --input-dir /tmp/sibyl-v4-evidence --output-dir apps/dashboard/public/data
+          python -m app.cloudflare_snapshot --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
+          grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
+          grep -q '"canonical_performance": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"midpoint_fills": false' apps/dashboard/public/data/snapshot.json
           grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
-          grep -q '"order_placement": false' apps/dashboard/public/data/snapshot.json
-          if [[ "${{ steps.v5.outputs.included }}" == "true" ]]; then
-            grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
-            grep -q '"midpoint_fills": false' apps/dashboard/public/data/snapshot.json
-          fi
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
 
@@ -138,21 +132,22 @@ jobs:
         working-directory: apps/gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Deploy public read-only terminal
+      - name: Deploy truthful public read-only terminal
         if: steps.cf.outputs.enabled == 'true'
         working-directory: apps/gateway
         run: npx --no-install wrangler deploy
 
-      - name: Publish summary
+      - name: Publish release summary
         if: steps.cf.outputs.enabled == 'true'
         shell: bash
         run: |
           {
-            echo "### Sibyl Trace Cloudflare Terminal"
-            echo "- Research V4 run: ${{ steps.source.outputs.run_id }}"
-            echo "- Source SHA: ${{ steps.source.outputs.sha }}"
-            echo "- Latest truthful V5 attached: ${{ steps.v5.outputs.included }}"
-            echo "- V5 run: ${{ steps.v5.outputs.run_id || 'none' }}"
-            echo "- Raw V4/V5 ledgers remain private artifacts"
+            echo "### Sibyl Trace Cloudflare Terminal V5"
+            echo "- Canonical V5 run: ${{ steps.source.outputs.run_id }}"
+            echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
+            echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
+            echo "- Public surface: sanitized summary only"
+            echo "- Raw prediction ledger: private artifact only"
+            echo "- Midpoint fills: disabled"
             echo "- LIVE: absent"
           } >> "$GITHUB_STEP_SUMMARY"

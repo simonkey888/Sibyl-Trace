@@ -31,8 +31,8 @@ function relativeAge(value) {
 
 function statusClass(value) {
   const normalized = String(value || "").toUpperCase();
-  if (["GREEN", "PASS", "CAPTURED", "COMPLETE", "FILLED", "PAPER"].includes(normalized)) return "good";
-  if (["RED", "FAIL", "FAILED", "ERROR", "REJECTED"].includes(normalized)) return "bad";
+  if (["GREEN", "PASS", "CAPTURED", "COMPLETE", "FILLED", "PAPER", "WIN", "FALSE"].includes(normalized)) return "good";
+  if (["RED", "FAIL", "FAILED", "ERROR", "REJECTED", "LOSS"].includes(normalized)) return "bad";
   return "warn";
 }
 
@@ -55,13 +55,11 @@ function renderWallets(wallets) {
       <div class="source-card">
         <div class="source-main">
           <strong>${escapeHtml(wallet.username || wallet.wallet || "Anonymous")}</strong>
-          <small>${escapeHtml(wallet.wallet || "—")} · n=${number(wallet.closed_count)}</small>
+          <small>${escapeHtml(wallet.wallet || "—")} · source n=${number(wallet.closed_count)}</small>
         </div>
         <div class="score-cluster">
-          <span><i>S</i><b>${score(wallet.short_score)}</b></span>
-          <span><i>L</i><b>${score(wallet.long_score)}</b></span>
-          <span><i>G</i><b>${score(wallet.global_score)}</b></span>
-          <span><i>E</i><b>${score(wallet.execution_edge_score)}</b></span>
+          <span><i>SCORE</i><b>${score(wallet.score ?? wallet.global_score)}</b></span>
+          <span><i>WR</i><b>${wallet.win_rate == null ? "—" : pct(wallet.win_rate, 1)}</b></span>
         </div>
       </div>`).join("")
     : '<div class="empty">No tracked wallets in this snapshot.</div>';
@@ -70,16 +68,20 @@ function renderWallets(wallets) {
     ? list.map((wallet) => `
       <tr>
         <td><strong>${escapeHtml(wallet.username || "Anonymous")}</strong><br><small class="mono">${escapeHtml(wallet.wallet || "—")}</small></td>
-        <td class="mono">${score(wallet.short_score)}</td>
-        <td class="mono">${score(wallet.long_score)}</td>
-        <td class="mono emphasis">${score(wallet.global_score)}</td>
-        <td class="mono ${Number(wallet.execution_edge_score || 0) > 50 ? "good" : "muted"}">${score(wallet.execution_edge_score)}</td>
-        <td>${number(wallet.execution_edge_sample_size)}</td>
-        <td>${pct(wallet.win_rate)}</td>
-        <td>${Number(wallet.profit_factor || 0).toFixed(2)}</td>
+        <td class="mono emphasis">${score(wallet.score ?? wallet.global_score)}</td>
+        <td>${number(wallet.closed_count)}</td>
+        <td>${wallet.win_rate == null ? "—" : pct(wallet.win_rate)}</td>
+        <td>${wallet.profit_factor == null ? "—" : Number(wallet.profit_factor).toFixed(2)}</td>
         <td class="${Number(wallet.realized_pnl || 0) >= 0 ? "good" : "bad"}">${money(wallet.realized_pnl)}</td>
       </tr>`).join("")
-    : '<tr><td colspan="9" class="empty-cell">No wallet scores available.</td></tr>';
+    : '<tr><td colspan="6" class="empty-cell">No wallet scores available.</td></tr>';
+}
+
+function resultText(order) {
+  const result = String(order.result || "").toUpperCase();
+  if (result && result !== "UNRESOLVED") return result;
+  if (String(order.resolution_status || "").toUpperCase() === "OPEN" && Number(order.filled_shares || 0) > 0) return "OPEN";
+  return "—";
 }
 
 function renderOrders(orders) {
@@ -89,23 +91,28 @@ function renderOrders(orders) {
       <div class="order-card">
         <span class="side ${String(order.side).toUpperCase() === "BUY" ? "buy" : "sell"}">${escapeHtml(order.side || "—")}</span>
         <div><strong>${escapeHtml(order.market || "Unknown market")}</strong><small>${escapeHtml(order.outcome || "—")} · ${escapeHtml(dateTime(order.created_at))}</small></div>
-        <div class="order-result"><b class="${statusClass(order.status)}">${escapeHtml(order.status || "—")}</b><small>${money(order.filled_usd)}</small></div>
+        <div class="order-result"><b class="${statusClass(resultText(order) !== "—" ? resultText(order) : order.status)}">${escapeHtml(resultText(order) !== "—" ? resultText(order) : order.status || "—")}</b><small>${money(order.filled_usd)}</small></div>
       </div>`).join("")
-    : '<div class="empty">No paper orders in this snapshot.</div>';
+    : '<div class="empty">No V5 decisions in this snapshot.</div>';
 
   $("orderTable").innerHTML = list.length
-    ? list.map((order) => `
+    ? list.map((order) => {
+      const fillPrice = order.effective_price ?? order.average_fill_price;
+      const result = resultText(order);
+      return `
       <tr>
         <td>${escapeHtml(dateTime(order.created_at))}</td>
         <td>${escapeHtml(order.market || "—")}<br><small>${escapeHtml(order.outcome || "—")}</small></td>
         <td><span class="side compact ${String(order.side).toUpperCase() === "BUY" ? "buy" : "sell"}">${escapeHtml(order.side || "—")}</span></td>
         <td class="mono">${order.source_price == null ? "—" : Number(order.source_price).toFixed(4)}</td>
-        <td class="mono">${order.observed_price == null ? "—" : Number(order.observed_price).toFixed(4)}</td>
-        <td class="mono">${order.slippage == null ? "—" : Number(order.slippage).toFixed(4)}</td>
-        <td>${money(order.filled_usd)}</td>
+        <td class="mono">${fillPrice == null ? "—" : Number(fillPrice).toFixed(4)}</td>
+        <td>${order.fee_usd == null ? "—" : money(order.fee_usd)}</td>
+        <td>${money(order.filled_usd)}${order.fill_fraction != null ? `<br><small>${pct(order.fill_fraction, 1)} FAK</small>` : ""}</td>
         <td><span class="state-tag ${statusClass(order.status)}">${escapeHtml(order.status || "—")}${order.reason ? ` · ${escapeHtml(order.reason)}` : ""}</span></td>
-      </tr>`).join("")
-    : '<tr><td colspan="8" class="empty-cell">No order evidence available.</td></tr>';
+        <td><span class="state-tag ${statusClass(result)}">${escapeHtml(result)}</span></td>
+      </tr>`;
+    }).join("")
+    : '<tr><td colspan="9" class="empty-cell">No V5 execution evidence available.</td></tr>';
 }
 
 function renderPositions(positions) {
@@ -118,9 +125,10 @@ function renderPositions(positions) {
         <td class="mono">${number(position.shares, 4)}</td>
         <td class="mono">${Number(position.average_price || 0).toFixed(4)}</td>
         <td class="mono">${Number(position.current_price || 0).toFixed(4)}</td>
+        <td>${money(position.mark_value_usd)}</td>
         <td class="${Number(position.realized_pnl || 0) >= 0 ? "good" : "bad"}">${money(position.realized_pnl)}</td>
       </tr>`).join("")
-    : '<tr><td colspan="6" class="empty-cell">No open positions.</td></tr>';
+    : '<tr><td colspan="7" class="empty-cell">No open V5 positions.</td></tr>';
 }
 
 function renderLatency(latency) {
@@ -193,12 +201,35 @@ function renderReferences(research) {
     : '<div class="empty">No preregistered hypotheses.</div>';
 }
 
+function renderTruth(v5) {
+  if (!v5) {
+    setText("truthTitle", "LEGACY V2 only — not canonical performance");
+    setText("truthState", "LEGACY");
+    $("truthState").className = "badge warn";
+    setText("truthCopy", "The available historical cohort used midpoint fills. It remains visible for provenance but is not promoted as execution-realistic performance.");
+    setText("midpointFillValue", "LEGACY");
+    $("midpointFillValue").className = "warn";
+    setText("executionModelValue", "LEGACY V2");
+    return;
+  }
+  const method = v5.methodology || {};
+  setText("truthTitle", "PAPER V5 is canonical");
+  setText("truthState", "PASS V5");
+  $("truthState").className = "badge good";
+  setText("truthCopy", "Midpoint fills are disabled. Orders consume arrival-book L2 as FAK, include per-market taker fees, allow partial/no-fill, and resolve WIN/LOSS only after terminal market evidence.");
+  setText("midpointFillValue", method.midpoint_fills === false ? "FALSE" : "INVALID");
+  $("midpointFillValue").className = method.midpoint_fills === false ? "good" : "bad";
+  setText("executionModelValue", method.execution_model || "V5");
+}
+
 function renderSnapshot(snapshot) {
   const trial = snapshot.trial || {};
-  const portfolio = trial.portfolio || {};
-  const totals = trial.totals || {};
+  const v5 = snapshot.paper_v5?.status === "PASS" ? snapshot.paper_v5 : null;
+  const canonical = v5 || trial;
+  const portfolio = canonical.portfolio || {};
+  const totals = canonical.totals || {};
   const system = trial.system || {};
-  const accounting = trial.accounting_watchdog || {};
+  const accounting = canonical.accounting_watchdog || trial.accounting_watchdog || {};
   const research = snapshot.research || {};
   const latency = snapshot.latency || research.latency || {};
   const source = snapshot.source || {};
@@ -207,40 +238,47 @@ function renderSnapshot(snapshot) {
   const initial = Number(portfolio.initial_bankroll || 0);
   const equity = Number(portfolio.equity || 0);
   const equityReturn = initial ? (equity - initial) / initial : 0;
-  const fillRate = Number(totals.signals || 0) ? Number(totals.filled_orders || 0) / Number(totals.signals) : 0;
+  const denominator = Number(v5 ? totals.predictions : totals.signals) || 0;
+  const filled = Number(totals.filled_orders || 0);
+  const fillRate = denominator ? filled / denominator : 0;
+  const wins = Number(v5?.totals?.wins || 0);
+  const losses = Number(v5?.totals?.losses || 0);
+  const accuracy = v5?.totals?.accuracy;
 
   setText("equityValue", money(equity));
   setText("equityReturn", `${equityReturn >= 0 ? "+" : ""}${pct(equityReturn)} from initial`);
   setText("realizedValue", money(portfolio.realized_pnl));
   setText("unrealizedValue", money(portfolio.unrealized_pnl));
   setText("drawdownValue", pct(portfolio.drawdown));
-  setText("fillSignalValue", `${number(totals.filled_orders)} / ${number(totals.signals)}`);
-  setText("fillRateValue", `${pct(fillRate)} fill rate`);
-  setText("settledValue", number(totals.settled_positions));
-  setText("openPositionValue", `${number(totals.open_positions)} open positions`);
+  setText("fillSignalValue", `${number(filled)} / ${number(denominator)}`);
+  setText("fillRateValue", `${pct(fillRate)} executable fill rate`);
+  setText("settledValue", v5 ? `${number(wins)} / ${number(losses)}` : "— / —");
+  setText("openPositionValue", v5
+    ? `${accuracy == null ? "Accuracy UNPROVEN" : `${pct(accuracy)} accuracy`} · ${number(totals.open_positions)} open`
+    : "V2 midpoint cohort — noncanonical");
 
-  setText("modeValue", trial.safety?.trading_mode || "PAPER");
+  setText("modeValue", canonical.safety?.trading_mode || "PAPER");
   setText("shaValue", String(source.github_sha || "—").slice(0, 8));
   setText("evidenceValue", source.evidence_generation || "—");
   setText("runValue", source.github_run_id || "—");
   setText("ageValue", relativeAge(snapshot.snapshot_at));
   setText("geoValue", String(system.geoblock || "UNKNOWN").toUpperCase());
-  setStatus("watchdogValue", research.watchdog_state || "YELLOW");
   setStatus("accountingValue", accounting.state || "UNKNOWN");
   setStatus("healthAccounting", accounting.state || "UNKNOWN");
   setStatus("healthLatency", latency.watchdog?.state || (latency.feed_errors?.length ? "RED" : "GREEN"));
-  setStatus("healthResearch", research.watchdog_state || "YELLOW");
-  setText("footerVersion", `${manifest.scoring_version || "—"} · ${manifest.risk_version || "—"}`);
+  setStatus("healthResearch", snapshot.research_v4?.edge_status || research.watchdog_state || "YELLOW");
+  setText("footerVersion", v5 ? `${v5.methodology?.execution_model || "V5"} · ${manifest.risk_version || "RISK"}` : `${manifest.scoring_version || "—"} · LEGACY V2`);
 
-  renderWallets(trial.selected_wallets);
-  renderOrders(trial.recent_orders);
-  renderPositions(trial.open_positions);
+  renderTruth(v5);
+  renderWallets(v5?.selected_wallets || trial.selected_wallets);
+  renderOrders(v5?.recent_orders || trial.recent_orders);
+  renderPositions(v5?.open_positions || trial.open_positions);
   renderLatency(latency);
   renderReferences(research);
 
   const pill = $("snapshotStatus");
-  pill.className = "status-pill good";
-  pill.querySelector("span").textContent = "SNAPSHOT ONLINE";
+  pill.className = v5 ? "status-pill good" : "status-pill warn";
+  pill.querySelector("span").textContent = v5 ? "V5 TRUTH ONLINE" : "LEGACY ONLY";
 }
 
 function renderFailure(message) {
@@ -259,7 +297,8 @@ async function loadSnapshot() {
     });
     if (!response.ok) throw new Error(`snapshot HTTP ${response.status}`);
     const snapshot = await response.json();
-    if (snapshot?.trial?.run?.status !== "PASS") throw new Error("latest snapshot is not PASS evidence");
+    if (snapshot?.trial?.run?.status !== "PASS") throw new Error("legacy evidence anchor is not PASS");
+    if (snapshot.paper_v5 && snapshot.paper_v5.status !== "PASS") throw new Error("published V5 is not PASS evidence");
     renderSnapshot(snapshot);
   } catch (error) {
     console.error(error);

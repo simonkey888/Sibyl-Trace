@@ -29,7 +29,7 @@ def _mask_wallet(value: str) -> str:
 
 def _sanitize_string(key: str, value: str) -> str:
     lowered = key.lower()
-    if lowered in {"wallet", "address", "proxywallet"}:
+    if lowered in {"wallet", "address", "proxywallet", "wallet_address"}:
         return _mask_wallet(value)
     if lowered == "username" and value.startswith("0x") and len(value) >= 42:
         return f"{_mask_wallet(value[:42])}{value[42:]}"
@@ -111,6 +111,37 @@ def _validate_v4(v4: dict[str, Any], v3: dict[str, Any]) -> None:
         raise ValueError("Research V4 snapshot violates shadow PAPER safety policy")
 
 
+def _validate_v5(v5: dict[str, Any]) -> None:
+    if not v5:
+        return
+    if (
+        v5.get("status") != "PASS"
+        or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
+    ):
+        raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")
+    safety = v5.get("safety") or {}
+    if (
+        safety.get("trading_mode") != "PAPER"
+        or safety.get("live_available") is not False
+        or safety.get("real_money") is not False
+        or safety.get("order_placement") is not False
+        or safety.get("private_keys") is not False
+        or safety.get("paid_apis") is not False
+        or float(safety.get("cost_authorized_usd", -1)) != 0
+    ):
+        raise ValueError("PAPER V5 snapshot violates PAPER/LIVE/$0 policy")
+    method = v5.get("methodology") or {}
+    if (
+        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V1"
+        or method.get("midpoint_fills") is not False
+        or method.get("arrival_book_refetch") is not True
+        or method.get("l2_depth_consumed") is not True
+        or method.get("partial_fills") is not True
+        or method.get("legacy_history_rewritten") is not False
+    ):
+        raise ValueError("PAPER V5 snapshot violates truthful-execution methodology")
+
+
 def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     trial = _load_json(input_dir / "trial-summary.json")
     research = _load_json(input_dir / "research-summary.json", required=False)
@@ -118,17 +149,18 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     manifest = _load_json(input_dir / "evidence-manifest.json", required=False)
     research_v3 = _load_json(input_dir / "research-v3-summary.json", required=False)
     research_v4 = _load_json(input_dir / "research-v4-summary.json", required=False)
+    paper_v5 = _load_json(input_dir / "paper-v5-summary.json", required=False)
 
     run = trial.get("run") or {}
     safety = trial.get("safety") or {}
     if run.get("status") != "PASS":
-        raise ValueError("only PASS PAPER evidence may be published")
+        raise ValueError("only PASS legacy PAPER evidence may anchor the public snapshot")
     if safety.get("trading_mode") != "PAPER" or safety.get("live_available") is not False:
-        raise ValueError("snapshot is not PAPER-only / LIVE-absent")
+        raise ValueError("legacy anchor is not PAPER-only / LIVE-absent")
 
     generation = str(trial.get("evidence_generation") or "")
     if generation != "SIBYL_PAPER_V2":
-        raise ValueError(f"unsupported evidence generation: {generation or 'missing'}")
+        raise ValueError(f"unsupported legacy evidence generation: {generation or 'missing'}")
 
     if manifest:
         cost = manifest.get("cost_policy") or {}
@@ -140,9 +172,16 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
 
     _validate_v3(research_v3, trial)
     _validate_v4(research_v4, research_v3)
+    _validate_v5(paper_v5)
 
     trial_public = dict(trial)
     trial_public.pop("research", None)
+    trial_public["methodology_label"] = "LEGACY_SIMULATION_MIDPOINT_V2"
+    trial_public["canonical_performance"] = not paper_v5
+    if paper_v5:
+        paper_v5 = dict(paper_v5)
+        paper_v5["canonical_performance"] = True
+
     manifest_public = {
         "baseline_sha": manifest.get("baseline_sha"),
         "tree_sha": manifest.get("tree_sha"),
@@ -156,16 +195,20 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
         "live_policy": manifest.get("live_policy"),
     }
 
-    schema_version = 3 if research_v4 else 2 if research_v3 else 1
+    schema_version = 4 if paper_v5 else 3 if research_v4 else 2 if research_v3 else 1
+    v5_run = paper_v5.get("run") if paper_v5 else {}
     snapshot = {
         "schema_version": schema_version,
-        "snapshot_at": run.get("completed_at"),
+        "snapshot_at": (v5_run or {}).get("completed_at") or run.get("completed_at"),
         "source": {
-            "github_run_id": run.get("github_run_id"),
-            "github_sha": run.get("github_sha"),
-            "evidence_generation": generation,
-            "profile": run.get("profile"),
+            "github_run_id": (v5_run or {}).get("github_run_id") or run.get("github_run_id"),
+            "github_sha": (v5_run or {}).get("github_sha") or run.get("github_sha"),
+            "evidence_generation": (
+                paper_v5.get("evidence_generation") if paper_v5 else generation
+            ),
+            "profile": "PAPER_V5_TRUTHFUL_EXECUTION" if paper_v5 else run.get("profile"),
         },
+        "paper_v5": paper_v5,
         "trial": trial_public,
         "research": research,
         "latency": latency,
