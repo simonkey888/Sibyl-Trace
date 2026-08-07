@@ -116,7 +116,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         return
     if (
         v5.get("status") != "PASS"
-        or v5.get("cohort_id") != "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07"
+        or v5.get("cohort_id") != "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
         or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
     ):
         raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")
@@ -133,7 +133,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         raise ValueError("PAPER V5 snapshot violates PAPER/LIVE/$0 policy")
     method = v5.get("methodology") or {}
     if (
-        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V1"
+        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
         or method.get("midpoint_fills") is not False
         or method.get("arrival_book_refetch") is not True
         or method.get("l2_depth_consumed") is not True
@@ -141,9 +141,14 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         or method.get("legacy_history_rewritten") is not False
         or method.get("immediate_post_fill_marking") is not True
         or method.get("end_cycle_mark_refresh") is not True
-        or method.get("closed_book_404_is_no_fill") is not True
-        or method.get("unknown_delayed_schedule_fail_closed") is not True
-        or method.get("crypto_delayed_market_ms") != 250
+        or method.get("market_state_404_classification") is not True
+        or method.get("active_tradable_404_is_data_failure") is not True
+        or method.get("synthetic_canonical_latency") is not False
+        or method.get("actual_request_gap_recorded") is not True
+        or method.get("fee_schedule_dynamic") is not True
+        or method.get("fee_rate_bps_crosscheck") is not True
+        or method.get("execution_evidence_hash") is not True
+        or method.get("summary_ledger_reconciliation") is not True
     ):
         raise ValueError("PAPER V5 snapshot violates truthful-execution methodology")
 

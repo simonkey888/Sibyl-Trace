@@ -84,8 +84,7 @@ class PolymarketClient:
             (
                 row
                 for row in rows
-                if isinstance(row, dict)
-                and str(row.get("userName") or "").casefold() == wanted
+                if isinstance(row, dict) and str(row.get("userName") or "").casefold() == wanted
             ),
             None,
         )
@@ -106,9 +105,7 @@ class PolymarketClient:
                 },
             )
             page = (
-                [item for item in data if isinstance(item, dict)]
-                if isinstance(data, list)
-                else []
+                [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
             )
             results.extend(page)
             if len(page) < page_limit:
@@ -226,6 +223,24 @@ class PolymarketClient:
         if not isinstance(data, dict) or str(data.get("asset_id") or "") != asset_id:
             raise PolymarketError("order book response did not match requested asset")
         return data
+
+    def market_by_condition(self, condition_id: str) -> dict:
+        data = self._get(
+            f"{self.settings.gamma_api_base}/markets",
+            {"condition_ids": [condition_id], "limit": 10},
+        )
+        rows = (
+            data
+            if isinstance(data, list)
+            else (data.get("markets") or [] if isinstance(data, dict) else [])
+        )
+        for market in rows:
+            if not isinstance(market, dict):
+                continue
+            current = str(market.get("conditionId") or market.get("condition_id") or "")
+            if current == condition_id:
+                return market
+        raise PolymarketError("Gamma market details did not match requested condition")
 
     def fee_rate_bps(self, asset_id: str) -> int:
         data = self._get(f"{self.settings.clob_api_base}/fee-rate", {"token_id": asset_id})
