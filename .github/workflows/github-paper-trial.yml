@@ -18,6 +18,8 @@ on:
         required: false
         type: boolean
         default: false
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: write
@@ -29,6 +31,9 @@ concurrency:
 jobs:
   paper-cycle:
     name: PAPER V2 research cycle
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.actor == 'simonkey888' && github.event.comment.body == '/sibyl-paper-v2-run')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -188,7 +193,7 @@ jobs:
           set -euo pipefail
           cd "$OUTPUT_DIR"
           files=(sibyl.db.gz trial-summary.json trial-summary.md)
-          for optional in latency-summary.json latency-summary.md research-summary.json evidence-manifest.json; do
+          for optional in latency-summary.json latency-summary.md research-summary.json evidence-manifest.json research-dashboard.html; do
             if [[ -s "$optional" ]]; then files+=("$optional"); fi
           done
           sha256sum "${files[@]}" > SHA256SUMS
@@ -214,6 +219,7 @@ jobs:
             trial-output/latency-summary.md
             trial-output/research-summary.json
             trial-output/evidence-manifest.json
+            trial-output/research-dashboard.html
             trial-output/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
@@ -241,7 +247,7 @@ jobs:
             "$OUTPUT_DIR/trial-summary.md"
             "$OUTPUT_DIR/SHA256SUMS"
           )
-          for optional in latency-summary.json latency-summary.md research-summary.json evidence-manifest.json; do
+          for optional in latency-summary.json latency-summary.md research-summary.json evidence-manifest.json research-dashboard.html; do
             if [[ -s "$OUTPUT_DIR/$optional" ]]; then assets+=("$OUTPUT_DIR/$optional"); fi
           done
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
