@@ -11,11 +11,11 @@ from typing import Any
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.evidence import build_manifest, protected_hashes
+from app.polymarket import PolymarketClient
 from app.repository import current_portfolio
 from app.research_cycle import checkpoint, run_research_cycle
 from app.trial import run_cycle as run_legacy_cycle
 from app.watchdogs import accounting_watchdog
-from app.polymarket import PolymarketClient
 
 
 BASELINE_SHA = "e4676c8d494a9d83f42749a0b85eac2288de5a54"
@@ -72,7 +72,7 @@ def _render_research_markdown(research: dict[str, Any], accounting: dict[str, An
     lines = [
         "# Sibyl Trace — PAPER Research V2",
         "",
-        f"**Evidence generation:** `SIBYL_PAPER_V2`  ",
+        "**Evidence generation:** `SIBYL_PAPER_V2`  ",
         f"**Research status:** `{research.get('status', 'UNKNOWN')}`  ",
         f"**Watchdog:** `{research.get('watchdog_state', 'YELLOW')}`  ",
         f"**Accounting:** `{accounting.get('state', 'UNKNOWN')}`",
@@ -125,14 +125,25 @@ def run(output_dir: Path) -> int:
     client = PolymarketClient(settings)
     research_error: str | None = None
     research: dict[str, Any] = {"status": "SKIPPED"}
-    accounting_payload: dict[str, Any]
+    accounting_payload: dict[str, Any] = {
+        "watchdog": "ACCOUNTING_RECONCILIATION_FAILURE",
+        "state": "RED",
+        "message": "Accounting reconciliation did not complete",
+        "payload": {},
+    }
     try:
         with SessionLocal() as db:
             legacy_report = _read_json(output_dir / "trial-summary.json")
-            checkpoint(db, run_id, "SETTLEMENT", legacy_report.get("cycle", {}).get("positions_settled", 0))
-            checkpoint(db, run_id, "SCAN", legacy_report.get("cycle", {}).get("selected_wallets", 0))
+            cycle = legacy_report.get("cycle", {})
+            checkpoint(
+                db,
+                run_id,
+                "SETTLEMENT",
+                cycle.get("positions_settled", 0),
+            )
+            checkpoint(db, run_id, "SCAN", cycle.get("selected_wallets", 0))
             checkpoint(db, run_id, "SCORE", legacy_report.get("selected_wallets", []))
-            checkpoint(db, run_id, "INGEST", legacy_report.get("cycle", {}).get("signals_processed", 0))
+            checkpoint(db, run_id, "INGEST", cycle.get("signals_processed", 0))
             checkpoint(db, run_id, "COPY_PAPER", legacy_report.get("totals", {}))
 
             try:
@@ -178,18 +189,26 @@ def run(output_dir: Path) -> int:
                 )
                 legacy_report["run"]["status"] = "DEGRADED"
             _write_json(output_dir / "trial-summary.json", legacy_report)
-            checkpoint(db, run_id, "REPORT", {"schema_version": 3, "research": research.get("status")})
+            checkpoint(
+                db,
+                run_id,
+                "REPORT",
+                {"schema_version": 3, "research": research.get("status")},
+            )
     finally:
         client.close()
 
     latency = research.get("latency", {}) if isinstance(research, dict) else {}
     _write_json(output_dir / "latency-summary.json", latency)
     (output_dir / "latency-summary.md").write_text(
-        _render_research_markdown(research, accounting_payload), encoding="utf-8"
+        _render_research_markdown(research, accounting_payload),
+        encoding="utf-8",
     )
     _write_json(output_dir / "research-summary.json", research)
 
-    repo_root = Path(os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().parents[3])
+    repo_root = Path(
+        os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().parents[3]
+    )
     manifest = build_manifest(
         baseline_sha=BASELINE_SHA,
         tree_sha=_tree_sha(repo_root),
