@@ -116,7 +116,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         return
     if (
         v5.get("status") != "PASS"
-        or v5.get("cohort_id") != "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
+        or v5.get("cohort_id") != "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07"
         or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
     ):
         raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")
@@ -133,7 +133,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         raise ValueError("PAPER V5 snapshot violates PAPER/LIVE/$0 policy")
     method = v5.get("methodology") or {}
     if (
-        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
+        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V3_SLUG_IDENTITY"
         or method.get("midpoint_fills") is not False
         or method.get("arrival_book_refetch") is not True
         or method.get("l2_depth_consumed") is not True
@@ -149,8 +149,16 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         or method.get("fee_rate_bps_crosscheck") is not True
         or method.get("execution_evidence_hash") is not True
         or method.get("summary_ledger_reconciliation") is not True
+        or method.get("unknown_official_delay_fail_closed") is not True
+        or method.get("market_identity_exact") is not True
+        or method.get("delayed_market_arrival_delay_ms") is not None
+        or method.get("regular_arrival_delay_ms") is not None
     ):
         raise ValueError("PAPER V5 snapshot violates truthful-execution methodology")
+    reconciliation = v5.get("evidence_reconciliation") or {}
+    health = v5.get("execution_health") or {}
+    if reconciliation.get("state") != "PASS" or health.get("state") == "RED":
+        raise ValueError("PAPER V5 snapshot has unreconciled or RED execution evidence")
 
 
 def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:

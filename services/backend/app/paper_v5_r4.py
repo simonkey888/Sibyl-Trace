@@ -7,6 +7,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,8 +31,8 @@ from app.paper_v5_r3 import _mark_position_from_book, _status_code
 from app.polymarket import PolymarketError
 from app.repository import audit, get_state
 
-COHORT_ID = "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
-EXECUTION_MODEL = "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
+COHORT_ID = "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07"
+EXECUTION_MODEL = "L2_TAKER_FAK_ARRIVAL_BOOK_V3_SLUG_IDENTITY"
 
 
 def _canonical_hash(value: Any) -> str:
@@ -39,23 +40,17 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _market_by_condition(client: Any, condition_id: str) -> dict[str, Any]:
-    data = client._get(
-        f"{client.settings.gamma_api_base}/markets",
-        {"condition_ids": [condition_id], "limit": 10},
-    )
-    rows = (
-        data
-        if isinstance(data, list)
-        else (data.get("markets") or [] if isinstance(data, dict) else [])
-    )
-    for market in rows:
-        if not isinstance(market, dict):
-            continue
-        current = str(market.get("conditionId") or market.get("condition_id") or "")
-        if current == condition_id:
-            return market
-    raise PolymarketError("Gamma market details did not match requested condition")
+def _market_by_condition(client: Any, condition_id: str, market_slug: str) -> dict[str, Any]:
+    slug = str(market_slug or "").strip()
+    if not slug:
+        raise PolymarketError("market_slug_unavailable")
+    data = client._get(f"{client.settings.gamma_api_base}/markets/slug/{quote(slug, safe='-')}")
+    if not isinstance(data, dict):
+        raise PolymarketError("Gamma market slug response was not an object")
+    current = str(data.get("conditionId") or data.get("condition_id") or "")
+    if current != condition_id:
+        raise PolymarketError("Gamma slug market conditionId mismatch")
+    return data
 
 
 def _market_state(market: dict[str, Any]) -> dict[str, Any]:
@@ -172,6 +167,28 @@ def _record_evidence(
 
 
 class PaperEngineV5R4(legacy.PaperEngineV5):
+    @staticmethod
+    def _execution_kwargs_without_synthetic_latency(kwargs: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(kwargs)
+        rules = cleaned.get("rules")
+        if rules is not None:
+            cleaned["rules"] = replace(rules, order_delay_ms=0)
+        return cleaned
+
+    def _reject(
+        self,
+        db: Session,
+        prediction: PaperV5Prediction,
+        reason: str,
+        **kwargs: Any,
+    ) -> None:
+        super()._reject(
+            db,
+            prediction,
+            reason,
+            **self._execution_kwargs_without_synthetic_latency(kwargs),
+        )
+
     def _no_fill(
         self,
         db: Session,
@@ -183,7 +200,14 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
         prediction.decision_reason = reason
         prediction.resolution_status = "NOT_APPLICABLE"
         prediction.result = "NO_FILL"
-        db.add(legacy._execution_row(prediction, status="NO_FILL", reason=reason, **kwargs))
+        db.add(
+            legacy._execution_row(
+                prediction,
+                status="NO_FILL",
+                reason=reason,
+                **self._execution_kwargs_without_synthetic_latency(kwargs),
+            )
+        )
         audit(db, "paper_v5_no_fill", reason, prediction_id=prediction.id)
         db.commit()
 
@@ -193,6 +217,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
         asset_id = str(activity.get("asset") or "")
         side = str(activity.get("side") or "").upper()
         condition_id = str(activity.get("conditionId") or "")
+        market_slug = str(activity.get("slug") or "").strip()
         if (
             not timestamp
             or not tx_hash
@@ -255,7 +280,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
             return True
 
         try:
-            market = _market_by_condition(self.client, condition_id)
+            market = _market_by_condition(self.client, condition_id, market_slug)
             if not _is_trade_ready(market):
                 self._no_fill(db, prediction, "market_not_trade_ready")
                 _record_evidence(db, prediction, market)
@@ -281,7 +306,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
         except Exception as exc:
             if _status_code(exc) == 404:
                 try:
-                    latest_market = _market_by_condition(self.client, condition_id)
+                    latest_market = _market_by_condition(self.client, condition_id, market_slug)
                 except Exception:
                     latest_market = market
                 if _is_trade_ready(latest_market):
@@ -393,7 +418,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
             }
             if _status_code(exc) == 404:
                 try:
-                    latest_market = _market_by_condition(self.client, condition_id)
+                    latest_market = _market_by_condition(self.client, condition_id, market_slug)
                 except Exception:
                     latest_market = market
                 if _is_trade_ready(latest_market):
@@ -645,8 +670,26 @@ def _apply_r4_report(
         {
             "execution_model": EXECUTION_MODEL,
             "official_seconds_delay_source": "Gamma market.secondsDelay",
+            "delayed_market_arrival_delay_basis": (
+                "Gamma market.secondsDelay; per-market exchange-declared seconds"
+            ),
+            "delayed_market_arrival_delay_ms": None,
+            "regular_arrival_delay_basis": (
+                "immediate public-book refetch; actual_gap_ms measured"
+            ),
+            "regular_arrival_delay_ms": None,
             "synthetic_canonical_latency": False,
+            "simulated_latency_field_semantics": (
+                "always zero in R4.1; official exchange delay is stored separately"
+            ),
             "actual_request_gap_recorded": True,
+            "immediate_post_fill_marking": True,
+            "end_cycle_mark_refresh": True,
+            "unknown_official_delay_fail_closed": True,
+            "market_identity_source": (
+                "Data API activity.slug -> Gamma /markets/slug/{slug} + exact conditionId"
+            ),
+            "market_identity_exact": True,
             "market_state_404_classification": True,
             "active_tradable_404_is_data_failure": True,
             "fee_schedule_dynamic": True,
@@ -712,7 +755,7 @@ def run(output_dir: Path) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Sibyl Trace PAPER V5 R4 audit-reconciled")
+    parser = argparse.ArgumentParser(description="Run Sibyl Trace PAPER V5 R4.1 truth-closed")
     parser.add_argument("--output-dir", type=Path, default=Path("paper-v5-output"))
     args = parser.parse_args()
     raise SystemExit(run(args.output_dir))
