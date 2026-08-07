@@ -16,7 +16,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Apply R4.1 patch
-        run: python scripts/r4_1_truth_patch.py
+        run: |
+          python scripts/r4_1_truth_patch.py
+          python scripts/r4_1_test_fix.py
       - name: Verify full backend and freeze
         run: |
           python -m pip install -q -e 'services/backend[dev]'
