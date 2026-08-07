@@ -17,7 +17,6 @@ from app.research_cycle import checkpoint, run_research_cycle
 from app.trial import run_cycle as run_legacy_cycle
 from app.watchdogs import accounting_watchdog
 
-
 BASELINE_SHA = "e4676c8d494a9d83f42749a0b85eac2288de5a54"
 PROTECTED_PATHS = [
     ".github/workflows/github-paper-trial.yml",

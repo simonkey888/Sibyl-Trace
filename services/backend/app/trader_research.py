@@ -8,7 +8,6 @@ from typing import Any
 
 from app.research import payout_asymmetry, weather_price_bucket
 
-
 _LOCATION_PATTERNS = (
     re.compile(r"\bin\s+([A-Z][A-Za-z .'-]+?)(?:\s+on\b|\?|$)"),
     re.compile(r"\b([A-Z][A-Za-z .'-]+?)\s+(?:temperature|weather)\b", re.IGNORECASE),

@@ -10,7 +10,6 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
-
 BINANCE_BTC_WS = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
 COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
 POLYMARKET_MARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"

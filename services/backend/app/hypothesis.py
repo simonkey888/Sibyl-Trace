@@ -9,7 +9,6 @@ from typing import Any
 from app.evidence import hash_payload
 from app.research import payout_asymmetry
 
-
 PROTECTED_CONFIG_KEYS = frozenset(
     {
         "live_trading_enabled",
