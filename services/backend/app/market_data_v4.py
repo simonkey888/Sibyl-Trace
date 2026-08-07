@@ -62,36 +62,24 @@ def _snapshot_levels(payload: dict[str, Any]) -> tuple[TapeLevel, ...]:
     return tuple(output)
 
 
-def normalize_polymarket_v4(
-    payload: Any,
-    *,
-    received_ms: int,
-    sequence_start: int,
-) -> tuple[list[TapeEvent], int]:
-    sequence = sequence_start
+def normalize_polymarket_v4(payload: Any, *, received_ms: int) -> list[TapeEvent]:
     if isinstance(payload, list):
         output: list[TapeEvent] = []
         for item in payload:
-            events, sequence = normalize_polymarket_v4(
-                item,
-                received_ms=received_ms,
-                sequence_start=sequence,
-            )
-            output.extend(events)
-        return output, sequence
+            output.extend(normalize_polymarket_v4(item, received_ms=received_ms))
+        return output
     if not isinstance(payload, dict):
-        return [], sequence
+        return []
 
     event_type = str(payload.get("event_type") or "")
     timestamp = _int(payload.get("timestamp"))
     if event_type == "book":
         asset_id = str(payload.get("asset_id") or "")
         if not asset_id:
-            return [], sequence
+            return []
         levels = _snapshot_levels(payload)
         if not levels:
-            return [], sequence
-        sequence += 1
+            return []
         return [
             TapeEvent(
                 schema_version=1,
@@ -100,16 +88,16 @@ def normalize_polymarket_v4(
                 kind="SNAPSHOT",
                 source_timestamp_ms=timestamp,
                 receive_timestamp_ms=received_ms,
-                sequence=sequence,
+                sequence=None,
                 levels=levels,
             )
-        ], sequence
+        ]
 
     if event_type == "price_change":
         output = []
         changes = payload.get("price_changes")
         if not isinstance(changes, list):
-            return output, sequence
+            return output
         for change in changes:
             if not isinstance(change, dict):
                 continue
@@ -118,7 +106,6 @@ def normalize_polymarket_v4(
             level = _level(side, change) if side in {"BUY", "SELL"} else None
             if not asset_id or level is None:
                 continue
-            sequence += 1
             output.append(
                 TapeEvent(
                     schema_version=1,
@@ -127,11 +114,11 @@ def normalize_polymarket_v4(
                     kind="DELTA",
                     source_timestamp_ms=timestamp,
                     receive_timestamp_ms=received_ms,
-                    sequence=sequence,
+                    sequence=None,
                     levels=(level,),
                 )
             )
-        return output, sequence
+        return output
 
     if event_type == "last_trade_price":
         asset_id = str(payload.get("asset_id") or "")
@@ -145,8 +132,7 @@ def normalize_polymarket_v4(
             or not 0 < price < 1
             or size <= 0
         ):
-            return [], sequence
-        sequence += 1
+            return []
         return [
             TapeEvent(
                 schema_version=1,
@@ -155,13 +141,13 @@ def normalize_polymarket_v4(
                 kind="TRADE",
                 source_timestamp_ms=timestamp,
                 receive_timestamp_ms=received_ms,
-                sequence=sequence,
+                sequence=None,
                 trade_price=price,
                 trade_size=size,
                 aggressor_side=side if side in {"BUY", "SELL"} else None,
             )
-        ], sequence
-    return [], sequence
+        ]
+    return []
 
 
 async def capture_polymarket_l2(
@@ -183,7 +169,6 @@ async def capture_polymarket_l2(
     events: list[TapeEvent] = []
     raw_records: list[dict[str, Any]] = []
     errors: list[str] = []
-    sequence = 0
     deadline = time.monotonic() + duration_seconds
     try:
         async with connect(POLYMARKET_MARKET_WS, open_timeout=8, close_timeout=2) as socket:
@@ -201,12 +186,7 @@ async def capture_polymarket_l2(
                 received = now_ms()
                 payload = json.loads(raw)
                 raw_records.append({"receive_timestamp_ms": received, "payload": payload})
-                normalized, sequence = normalize_polymarket_v4(
-                    payload,
-                    received_ms=received,
-                    sequence_start=sequence,
-                )
-                events.extend(normalized)
+                events.extend(normalize_polymarket_v4(payload, received_ms=received))
                 messages += 1
     except TimeoutError:
         pass
