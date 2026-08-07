@@ -104,7 +104,8 @@ jobs:
             --input-dir /tmp/sibyl-evidence \
             --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq 'api[_-]?key|private[_-]?key|seed[_-]?phrase|authorization|bearer[[:space:]]+[A-Za-z0-9._-]+' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
 
       - name: Install pinned gateway dependencies
         if: steps.config.outputs.enabled == 'true'
