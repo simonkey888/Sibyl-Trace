@@ -5,7 +5,6 @@ from pydantic import ValidationError
 from app.api import verify_admin, verify_gateway
 from app.config import Settings
 
-
 STRONG_ADMIN = "a" * 32
 STRONG_GATEWAY = "g" * 32
 
