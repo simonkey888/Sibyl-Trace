@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -53,8 +53,8 @@ class ResearchObservation(Base):
     asset_id: Mapped[str | None] = mapped_column(String(90), index=True)
     category: Mapped[str | None] = mapped_column(String(48), index=True)
     location: Mapped[str | None] = mapped_column(String(120), index=True)
-    source_timestamp_ms: Mapped[int | None] = mapped_column(Integer)
-    receive_timestamp_ms: Mapped[int] = mapped_column(Integer, index=True)
+    source_timestamp_ms: Mapped[int | None] = mapped_column(BigInteger)
+    receive_timestamp_ms: Mapped[int] = mapped_column(BigInteger, index=True)
     market_price: Mapped[float | None] = mapped_column(Float)
     model_probability: Mapped[float | None] = mapped_column(Float)
     gross_edge: Mapped[float | None] = mapped_column(Float)
