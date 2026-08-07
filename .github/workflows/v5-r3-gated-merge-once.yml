@@ -1,0 +1,58 @@
+name: V5 R3 Gated Merge Once
+
+on:
+  push:
+    branches: [fix/paper-v5-r3-report-contract]
+    paths: [".github/workflows/v5-r3-gated-merge-once.yml"]
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  gate-and-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require exact clean diff and green CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          pr=20
+          sha=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+
+          mapfile -t files < <(gh pr diff "$pr" --repo "$repo" --name-only | sort -u)
+          expected=(
+            services/backend/app/cloudflare_snapshot.py
+            services/backend/app/paper_v5_r3.py
+            services/backend/tests/test_cloudflare_snapshot_v5.py
+            services/backend/tests/test_paper_v5_r3.py
+          )
+          printf '%s\n' "${expected[@]}" | sort -u > /tmp/expected
+          printf '%s\n' "${files[@]}" > /tmp/actual
+          diff -u /tmp/expected /tmp/actual
+
+          for attempt in $(seq 1 60); do
+            json=$(gh api "/repos/$repo/commits/$sha/check-runs?per_page=100")
+            ok=true
+            for name in backend dashboard safety container; do
+              conclusion=$(jq -r --arg n "$name" '[.check_runs[] | select(.name==$n)] | last | .conclusion // ""' <<<"$json")
+              status=$(jq -r --arg n "$name" '[.check_runs[] | select(.name==$n)] | last | .status // ""' <<<"$json")
+              echo "$name status=$status conclusion=$conclusion"
+              if [[ "$status" != "completed" || "$conclusion" != "success" ]]; then ok=false; fi
+            done
+            if [[ "$ok" == "true" ]]; then break; fi
+            if [[ "$attempt" == "60" ]]; then echo "CI gate did not become green"; exit 1; fi
+            sleep 10
+          done
+
+          current=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid)
+          [[ "$current" == "$sha" ]]
+          gh pr merge "$pr" --repo "$repo" --merge --match-head-commit "$sha" \
+            --subject "Merge pull request #20: PAPER V5 R3 report truth contract" \
+            --body "Require machine-verifiable R3 methodology flags before public canonical publication."
