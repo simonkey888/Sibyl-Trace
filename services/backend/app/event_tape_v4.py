@@ -81,8 +81,7 @@ def stable_tape_order(events: tuple[TapeEvent, ...]) -> tuple[TapeEvent, ...]:
             key=lambda event: (
                 event.receive_timestamp_ms,
                 event.source_timestamp_ms or -1,
-                event.sequence or -1,
-                event.kind,
+                event.sequence if event.sequence is not None else -1,
             ),
         )
     )
