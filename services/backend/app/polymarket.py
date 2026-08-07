@@ -12,7 +12,7 @@ class PolymarketError(RuntimeError):
 
 TAKER_FEE_RATES = {
     "crypto": 0.07,
-    "sports": 0.05,
+    "sports": 0.03,
     "finance": 0.04,
     "politics": 0.04,
     "economics": 0.05,

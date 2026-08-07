@@ -91,7 +91,7 @@ def test_btc_market_discovery_uses_documented_time_window_and_filters() -> None:
 
 def test_current_public_fee_table_is_explicit_by_category() -> None:
     assert taker_fee_rate_for_category("Crypto") == pytest.approx(0.07)
-    assert taker_fee_rate_for_category("Sports") == pytest.approx(0.05)
+    assert taker_fee_rate_for_category("Sports") == pytest.approx(0.03)
     assert taker_fee_rate_for_category("Weather") == pytest.approx(0.05)
     assert taker_fee_rate_for_category("Geopolitics") == 0
     assert taker_fee_rate_for_category(None) == pytest.approx(0.05)
