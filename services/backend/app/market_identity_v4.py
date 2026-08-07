@@ -44,8 +44,10 @@ def _norm(value: str | None) -> str | None:
 
 
 def title_similarity(left: str, right: str) -> float:
-    left_tokens = set(_norm(left).split()) if _norm(left) else set()
-    right_tokens = set(_norm(right).split()) if _norm(right) else set()
+    left_normalized = _norm(left)
+    right_normalized = _norm(right)
+    left_tokens = set(left_normalized.split()) if left_normalized else set()
+    right_tokens = set(right_normalized.split()) if right_normalized else set()
     union = left_tokens | right_tokens
     return len(left_tokens & right_tokens) / len(union) if union else 0.0
 
@@ -77,10 +79,14 @@ def compare_contracts(left: MarketContract, right: MarketContract) -> IdentityDe
     if left_exceptions != right_exceptions:
         mismatches.append("exceptions")
 
-    resolution_mismatch = any(
-        field in mismatches
-        for field in ("cutoff_iso", "timezone", "resolution_source", "resolution_rule", "exceptions")
+    resolution_fields = (
+        "cutoff_iso",
+        "timezone",
+        "resolution_source",
+        "resolution_rule",
+        "exceptions",
     )
+    resolution_mismatch = any(field in mismatches for field in resolution_fields)
     semantic_mismatch = any(
         field in mismatches for field in ("underlying", "event", "outcome", "strike")
     )
