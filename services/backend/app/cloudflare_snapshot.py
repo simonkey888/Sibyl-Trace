@@ -116,7 +116,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         return
     if (
         v5.get("status") != "PASS"
-        or v5.get("cohort_id") != "PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07"
+        or v5.get("cohort_id") != "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07"
         or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
     ):
         raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")
@@ -204,9 +204,7 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
         "source": {
             "github_run_id": (v5_run or {}).get("github_run_id") or run.get("github_run_id"),
             "github_sha": (v5_run or {}).get("github_sha") or run.get("github_sha"),
-            "evidence_generation": (
-                paper_v5.get("evidence_generation") if paper_v5 else generation
-            ),
+            "evidence_generation": paper_v5.get("evidence_generation") if paper_v5 else generation,
             "profile": "PAPER_V5_TRUTHFUL_EXECUTION" if paper_v5 else run.get("profile"),
         },
         "paper_v5": paper_v5,
@@ -232,9 +230,7 @@ def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Build sanitized Cloudflare PAPER dashboard snapshot"
-    )
+    parser = argparse.ArgumentParser(description="Build sanitized Cloudflare PAPER dashboard snapshot")
     parser.add_argument("--input-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
