@@ -1,0 +1,180 @@
+name: Research Lab V3
+
+on:
+  workflow_run:
+    workflows: ["GitHub PAPER Trial"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: sibyl-github-paper-trial
+  cancel-in-progress: false
+
+jobs:
+  research-v3:
+    name: Additive microstructure and replay research
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      STATE_DIR: ${{ github.workspace }}/.trial-state
+      OUTPUT_DIR: ${{ github.workspace }}/research-v3-output
+      RELEASE_TAG: github-paper-state-v1
+      DATABASE_URL: sqlite:///${{ github.workspace }}/.trial-state/sibyl.db
+      APP_ENV: github-trial
+      TRADING_MODE: PAPER
+      PAPER_TRADING_ENABLED: "true"
+      LIVE_TRADING_ENABLED: "false"
+      COST_AUTHORIZED_USD: "0"
+      AI_ANALYSIS_ENABLED: "false"
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Resolve exact PASS PAPER V2 source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            run_id="${{ github.event.workflow_run.id }}"
+            sha="${{ github.event.workflow_run.head_sha }}"
+          else
+            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-trial.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
+          fi
+          [[ -n "$run_id" && -n "$sha" ]]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact canonical source SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/backend/pyproject.toml
+
+      - name: Install existing backend dependencies
+        working-directory: services/backend
+        run: pip install -e .
+
+      - name: Restore latest rolling PAPER database without reset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
+          gh release download "$RELEASE_TAG" \
+            --pattern "sibyl.db.gz" \
+            --pattern "SHA256SUMS" \
+            --dir "$STATE_DIR" \
+            --clobber
+          test -s "$STATE_DIR/sibyl.db.gz"
+          test -s "$STATE_DIR/SHA256SUMS"
+          expected=$(awk 'NF {print $1; exit}' "$STATE_DIR/SHA256SUMS" | tr '[:upper:]' '[:lower:]')
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          actual=$(sha256sum "$STATE_DIR/sibyl.db.gz" | awk '{print $1}')
+          test "$actual" = "$expected"
+          gzip -t "$STATE_DIR/sibyl.db.gz"
+          gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
+          rm -f "$STATE_DIR/sibyl.db.gz" "$STATE_DIR/SHA256SUMS"
+          echo "Rolling PAPER database restored and verified; reset is structurally unavailable here."
+
+      - name: Download and verify exact PAPER V2 audit artifact
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --name "sibyl-paper-v2-$SOURCE_RUN_ID" \
+            --dir "$OUTPUT_DIR"
+          test -s "$OUTPUT_DIR/trial-summary.json"
+          test -s "$OUTPUT_DIR/SHA256SUMS"
+          (cd "$OUTPUT_DIR" && sha256sum -c SHA256SUMS --ignore-missing)
+          rm -f "$OUTPUT_DIR/SHA256SUMS"
+
+      - name: Execute bounded additive Research Lab V3
+        working-directory: services/backend
+        env:
+          APP_VERSION: ${{ steps.source.outputs.sha }}
+          GITHUB_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_V2_RUN_ID: ${{ steps.source.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=20s 7m \
+            python -m app.research_v3 --input-dir "$OUTPUT_DIR" --output-dir "$OUTPUT_DIR"
+
+      - name: Package updated additive state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$STATE_DIR/sibyl.db"
+          gzip -c "$STATE_DIR/sibyl.db" > "$OUTPUT_DIR/sibyl.db.gz"
+          gzip -t "$OUTPUT_DIR/sibyl.db.gz"
+
+      - name: Hash database and all audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OUTPUT_DIR"
+          sha256sum sibyl.db.gz > SHA256SUMS
+          for file in \
+            trial-summary.json trial-summary.md latency-summary.json latency-summary.md \
+            research-summary.json evidence-manifest.json research-dashboard.html \
+            research-v3-summary.json research-v3-summary.md research-journal-v3.jsonl.gz \
+            evidence-manifest-v3.json; do
+            if [[ -s "$file" ]]; then sha256sum "$file" >> SHA256SUMS; fi
+          done
+
+      - name: Publish Research V3 summary
+        shell: bash
+        run: cat "$OUTPUT_DIR/research-v3-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined V2 + V3 audit artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sibyl-research-v3-${{ github.run_id }}
+          path: |
+            research-v3-output/trial-summary.json
+            research-v3-output/trial-summary.md
+            research-v3-output/latency-summary.json
+            research-v3-output/latency-summary.md
+            research-v3-output/research-summary.json
+            research-v3-output/evidence-manifest.json
+            research-v3-output/research-dashboard.html
+            research-v3-output/research-v3-summary.json
+            research-v3-output/research-v3-summary.md
+            research-v3-output/research-journal-v3.jsonl.gz
+            research-v3-output/evidence-manifest-v3.json
+            research-v3-output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+
+      - name: Advance rolling private state additively
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+            -f sha="${{ steps.source.outputs.sha }}" \
+            -F force=true
+          gh release upload "$RELEASE_TAG" \
+            "$OUTPUT_DIR/sibyl.db.gz" \
+            "$OUTPUT_DIR/SHA256SUMS" \
+            "$OUTPUT_DIR/research-v3-summary.json" \
+            "$OUTPUT_DIR/research-v3-summary.md" \
+            "$OUTPUT_DIR/research-journal-v3.jsonl.gz" \
+            "$OUTPUT_DIR/evidence-manifest-v3.json" \
+            --clobber

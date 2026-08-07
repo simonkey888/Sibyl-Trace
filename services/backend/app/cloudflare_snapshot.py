@@ -64,11 +64,34 @@ def _load_json(path: Path, *, required: bool = True) -> dict[str, Any]:
     return payload
 
 
+def _validate_v3(v3: dict[str, Any], trial: dict[str, Any]) -> None:
+    if not v3:
+        return
+    if v3.get("status") != "PASS" or v3.get("evidence_generation") != "SIBYL_RESEARCH_V3":
+        raise ValueError("Research V3 snapshot is not PASS evidence")
+    safety = v3.get("safety") or {}
+    if (
+        safety.get("trading_mode") != "PAPER"
+        or safety.get("live_available") is not False
+        or safety.get("real_money") is not False
+        or float(safety.get("cost_authorized_usd", -1)) != 0
+        or safety.get("paid_apis") is not False
+    ):
+        raise ValueError("Research V3 snapshot violates PAPER/LIVE/$0 policy")
+    source_v2 = v3.get("source_v2") or {}
+    trial_run = trial.get("run") or {}
+    if str(source_v2.get("github_run_id") or "") != str(trial_run.get("github_run_id") or ""):
+        raise ValueError("Research V3 does not match the embedded PAPER V2 source run")
+    if str(source_v2.get("github_sha") or "") != str(trial_run.get("github_sha") or ""):
+        raise ValueError("Research V3 does not match the embedded PAPER V2 source SHA")
+
+
 def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     trial = _load_json(input_dir / "trial-summary.json")
     research = _load_json(input_dir / "research-summary.json", required=False)
     latency = _load_json(input_dir / "latency-summary.json", required=False)
     manifest = _load_json(input_dir / "evidence-manifest.json", required=False)
+    research_v3 = _load_json(input_dir / "research-v3-summary.json", required=False)
 
     run = trial.get("run") or {}
     safety = trial.get("safety") or {}
@@ -89,6 +112,8 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
         if live.get("available") is not False or live.get("real_money") is not False:
             raise ValueError("snapshot violates LIVE-absent policy")
 
+    _validate_v3(research_v3, trial)
+
     trial_public = dict(trial)
     trial_public.pop("research", None)
     manifest_public = {
@@ -105,7 +130,7 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     }
 
     snapshot = {
-        "schema_version": 1,
+        "schema_version": 2 if research_v3 else 1,
         "snapshot_at": run.get("completed_at"),
         "source": {
             "github_run_id": run.get("github_run_id"),
@@ -116,6 +141,7 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
         "trial": trial_public,
         "research": research,
         "latency": latency,
+        "research_v3": research_v3,
         "manifest": manifest_public,
     }
     return sanitize_public(snapshot)

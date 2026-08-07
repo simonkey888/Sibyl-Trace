@@ -2,7 +2,7 @@ name: Publish Cloudflare Terminal
 
 on:
   workflow_run:
-    workflows: ["GitHub PAPER Trial"]
+    workflows: ["Research Lab V3"]
     types: [completed]
   workflow_dispatch:
 
@@ -26,7 +26,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Resolve source run
+      - name: Resolve source Research V3 run
         id: source
         shell: bash
         run: |
@@ -35,7 +35,7 @@ jobs:
             echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
             echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
           else
-            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-trial.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v3.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
             sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
             [[ -n "$run_id" && -n "$sha" ]]
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
@@ -74,18 +74,19 @@ jobs:
           cache: npm
           cache-dependency-path: apps/gateway/package-lock.json
 
-      - name: Download exact PAPER evidence
+      - name: Download exact combined V2 + V3 evidence
         if: steps.config.outputs.enabled == 'true'
-        shell: bash
         env:
           SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/sibyl-evidence
           gh run download "$SOURCE_RUN_ID" \
-            --name "sibyl-paper-v2-$SOURCE_RUN_ID" \
+            --name "sibyl-research-v3-$SOURCE_RUN_ID" \
             --dir /tmp/sibyl-evidence
           test -s /tmp/sibyl-evidence/trial-summary.json
+          test -s /tmp/sibyl-evidence/research-v3-summary.json
           test -s /tmp/sibyl-evidence/SHA256SUMS
           (cd /tmp/sibyl-evidence && sha256sum -c SHA256SUMS --ignore-missing)
 
@@ -101,8 +102,9 @@ jobs:
             --input-dir /tmp/sibyl-evidence \
             --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
+          grep -q '"research_v3"' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
 
       - name: Install pinned gateway dependencies
         if: steps.config.outputs.enabled == 'true'
@@ -120,9 +122,9 @@ jobs:
         run: |
           {
             echo "### Sibyl Trace Cloudflare Terminal"
-            echo "- Source PAPER run: ${{ steps.source.outputs.run_id }}"
+            echo "- Source Research V3 run: ${{ steps.source.outputs.run_id }}"
             echo "- Source SHA: ${{ steps.source.outputs.sha }}"
-            echo "- Mode: public read-only sanitized PAPER snapshot"
+            echo "- Mode: public read-only sanitized PAPER V2 + Research V3 snapshot"
             echo "- API/control routes: disabled"
             echo "- LIVE: absent"
             echo "- Paid APIs: none"
