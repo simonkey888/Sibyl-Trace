@@ -110,10 +110,7 @@ def current_portfolio_v5(db: Session, initial_bankroll: float) -> dict[str, floa
     cash = initial_bankroll + execution_cash + settlement_proceeds
     unrealized = exposure - cost_basis
     equity = cash + exposure
-    peak = (
-        db.scalar(select(func.max(PaperV5PortfolioSnapshot.equity)))
-        or initial_bankroll
-    )
+    peak = db.scalar(select(func.max(PaperV5PortfolioSnapshot.equity))) or initial_bankroll
     drawdown = max((float(peak) - equity) / float(peak), 0.0) if peak else 0.0
     day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     prior_close = db.scalar(
@@ -171,11 +168,7 @@ def _execution_row(
     effective = fill.effective_price if fill else None
     slippage = None
     if effective is not None and source_price is not None:
-        slippage = (
-            effective - source_price
-            if prediction.side == "BUY"
-            else source_price - effective
-        )
+        slippage = effective - source_price if prediction.side == "BUY" else source_price - effective
     return PaperV5Execution(
         prediction_id=prediction.id,
         order_type="FAK",
@@ -210,9 +203,7 @@ class PaperEngineV5:
     def __init__(self, settings: Settings, client: PolymarketClient):
         self.settings = settings
         self.client = client
-        self.policy = RiskPolicy(
-            maximum_signal_age_seconds=settings.risk_max_signal_age_seconds
-        )
+        self.policy = RiskPolicy(maximum_signal_age_seconds=settings.risk_max_signal_age_seconds)
 
     def _reject(
         self,
@@ -223,14 +214,10 @@ class PaperEngineV5:
     ) -> None:
         prediction.decision = "REJECTED"
         prediction.decision_reason = reason
+        prediction.resolution_status = "NOT_APPLICABLE"
+        prediction.result = "REJECTED"
         db.add(_execution_row(prediction, status="REJECTED", reason=reason, **kwargs))
-        audit(
-            db,
-            "paper_v5_rejected",
-            reason,
-            severity="WARN",
-            prediction_id=prediction.id,
-        )
+        audit(db, "paper_v5_rejected", reason, severity="WARN", prediction_id=prediction.id)
         db.commit()
 
     def process(self, db: Session, wallet: Wallet, activity: dict[str, Any]) -> bool:
@@ -247,10 +234,7 @@ class PaperEngineV5:
 
         source_price = float(activity.get("price") or 0)
         source_size = float(activity.get("size") or 0)
-        source_usdc = max(
-            float(activity.get("usdcSize") or 0),
-            source_size * source_price,
-        )
+        source_usdc = max(float(activity.get("usdcSize") or 0), source_size * source_price)
         prediction = PaperV5Prediction(
             source_key=source_key,
             wallet_address=wallet.address,
@@ -301,13 +285,7 @@ class PaperEngineV5:
             self._reject(db, prediction, f"market_data_unavailable:{type(exc).__name__}")
             return True
         if observed is None:
-            self._reject(
-                db,
-                prediction,
-                "empty_executable_book",
-                decision_book=decision_book,
-                rules=rules,
-            )
+            self._reject(db, prediction, "empty_executable_book", decision_book=decision_book, rules=rules)
             return True
 
         request = RiskRequest(
@@ -387,6 +365,8 @@ class PaperEngineV5:
         if fill.status == "NO_FILL":
             prediction.decision = "NO_FILL"
             prediction.decision_reason = fill.reason
+            prediction.resolution_status = "NOT_APPLICABLE"
+            prediction.result = "NO_FILL"
             db.commit()
             return True
 
@@ -416,6 +396,8 @@ class PaperEngineV5:
             position.shares = max(before - fill.filled_shares, 0.0)
             position.cost_basis_usd = max(position.cost_basis_usd - allocated_cost, 0.0)
             position.realized_pnl += fill.net_cash_delta - allocated_cost
+            prediction.resolution_status = "NOT_APPLICABLE"
+            prediction.result = "EXIT"
         position.updated_at = utcnow()
         prediction.decision = fill.status
         prediction.decision_reason = "arrival_book_fak"
@@ -485,9 +467,9 @@ def mark_positions_v5(db: Session, client: PolymarketClient) -> tuple[int, list[
                 worst_price=max(rules.tick_size, 0.001),
                 requested_shares=position.shares,
             )
-            liquidation_value = max(fill.net_cash_delta, 0.0) if fill.status != "NO_FILL" else 0.0
-            position.mark_value_usd = liquidation_value
-            position.mark_price = liquidation_value / position.shares if position.shares > 0 else 0.0
+            value = max(fill.net_cash_delta, 0.0) if fill.status != "NO_FILL" else 0.0
+            position.mark_value_usd = value
+            position.mark_price = value / position.shares if position.shares > 0 else 0.0
             position.updated_at = utcnow()
             updated += 1
         except Exception as exc:
@@ -502,7 +484,10 @@ def mark_positions_v5(db: Session, client: PolymarketClient) -> tuple[int, list[
 def settle_v5(db: Session, client: PolymarketClient) -> tuple[int, int, list[str]]:
     unresolved = list(
         db.scalars(
-            select(PaperV5Prediction).where(PaperV5Prediction.resolution_status == "OPEN")
+            select(PaperV5Prediction).where(
+                PaperV5Prediction.side == "BUY",
+                PaperV5Prediction.resolution_status == "OPEN",
+            )
         ).all()
     )
     positions = list(db.scalars(select(PaperV5Position).where(PaperV5Position.shares > 0)).all())
@@ -542,11 +527,7 @@ def settle_v5(db: Session, client: PolymarketClient) -> tuple[int, int, list[str
         prediction.resolution_status = "RESOLVED"
         prediction.resolution_price = price
         prediction.resolved_at = now
-        prediction.result = (
-            "WIN" if price == 1.0 else "LOSS"
-            if prediction.side == "BUY"
-            else "EXIT"
-        )
+        prediction.result = "WIN" if price == 1.0 else "LOSS"
         resolved_predictions += 1
 
     for position in positions:
@@ -554,9 +535,7 @@ def settle_v5(db: Session, client: PolymarketClient) -> tuple[int, int, list[str
         if market is None:
             continue
         price = _resolved_price(market, position.asset_id)
-        if price is None:
-            continue
-        if db.get(PaperV5Settlement, position.asset_id) is not None:
+        if price is None or db.get(PaperV5Settlement, position.asset_id) is not None:
             continue
         shares = max(position.shares, 0.0)
         cost_basis = max(position.cost_basis_usd, 0.0)
@@ -605,48 +584,50 @@ def _recent_rows(db: Session, limit: int = 30) -> list[dict[str, Any]]:
         .order_by(desc(PaperV5Prediction.id))
         .limit(limit)
     ).all()
-    return [
-        {
-            "id": prediction.id,
-            "created_at": prediction.created_at.isoformat(),
-            "market": prediction.market_title,
-            "outcome": prediction.outcome,
-            "side": prediction.side,
-            "source_price": round(prediction.source_price, 6),
-            "observed_price": (
-                round(execution.decision_best_price, 6)
-                if execution.decision_best_price is not None
-                else None
-            ),
-            "average_fill_price": (
-                round(execution.average_fill_price, 6)
-                if execution.average_fill_price is not None
-                else None
-            ),
-            "effective_price": (
-                round(execution.effective_price, 6)
-                if execution.effective_price is not None
-                else None
-            ),
-            "slippage": round(execution.slippage, 6) if execution.slippage is not None else None,
-            "filled_usd": round(execution.gross_notional, 4),
-            "filled_shares": round(execution.filled_shares, 6),
-            "fee_usd": round(execution.fee_usd, 5),
-            "fill_fraction": round(execution.fill_fraction, 6),
-            "levels_consumed": execution.levels_consumed,
-            "status": execution.status,
-            "reason": execution.reason or prediction.decision_reason,
-            "result": prediction.result,
-            "resolution_status": prediction.resolution_status,
-            "resolution_price": prediction.resolution_price,
-            "transaction_hash": prediction.transaction_hash,
-            "source_payload_hash": prediction.source_payload_hash,
-            "decision_book_hash": execution.decision_book_hash,
-            "arrival_book_hash": execution.arrival_book_hash,
-            "simulated_latency_ms": execution.simulated_latency_ms,
-        }
-        for prediction, execution in rows
-    ]
+    output: list[dict[str, Any]] = []
+    for prediction, execution in rows:
+        output.append(
+            {
+                "id": prediction.id,
+                "created_at": prediction.created_at.isoformat(),
+                "market": prediction.market_title,
+                "outcome": prediction.outcome,
+                "side": prediction.side,
+                "source_price": round(prediction.source_price, 6),
+                "observed_price": (
+                    round(execution.decision_best_price, 6)
+                    if execution.decision_best_price is not None
+                    else None
+                ),
+                "average_fill_price": (
+                    round(execution.average_fill_price, 6)
+                    if execution.average_fill_price is not None
+                    else None
+                ),
+                "effective_price": (
+                    round(execution.effective_price, 6)
+                    if execution.effective_price is not None
+                    else None
+                ),
+                "slippage": round(execution.slippage, 6) if execution.slippage is not None else None,
+                "filled_usd": round(execution.gross_notional, 4),
+                "filled_shares": round(execution.filled_shares, 6),
+                "fee_usd": round(execution.fee_usd, 5),
+                "fill_fraction": round(execution.fill_fraction, 6),
+                "levels_consumed": execution.levels_consumed,
+                "status": execution.status,
+                "reason": execution.reason or prediction.decision_reason,
+                "result": prediction.result,
+                "resolution_status": prediction.resolution_status,
+                "resolution_price": prediction.resolution_price,
+                "transaction_hash": prediction.transaction_hash,
+                "source_payload_hash": prediction.source_payload_hash,
+                "decision_book_hash": execution.decision_book_hash,
+                "arrival_book_hash": execution.arrival_book_hash,
+                "simulated_latency_ms": execution.simulated_latency_ms,
+            }
+        )
+    return output
 
 
 def build_report(
@@ -671,12 +652,8 @@ def build_report(
         unrealized_pnl=portfolio["unrealized_pnl"],
         tolerance=0.02,
     )
-    wins = int(
-        db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "WIN")) or 0
-    )
-    losses = int(
-        db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "LOSS")) or 0
-    )
+    wins = int(db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "WIN")) or 0)
+    losses = int(db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "LOSS")) or 0)
     filled = int(
         db.scalar(
             select(func.count()).select_from(PaperV5Execution).where(
@@ -685,15 +662,9 @@ def build_report(
         )
         or 0
     )
-    partial = int(
-        db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "PARTIAL_FILLED")) or 0
-    )
-    no_fill = int(
-        db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "NO_FILL")) or 0
-    )
-    rejected = int(
-        db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "REJECTED")) or 0
-    )
+    partial = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "PARTIAL_FILLED")) or 0)
+    no_fill = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "NO_FILL")) or 0)
+    rejected = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "REJECTED")) or 0)
     positions = list(
         db.scalars(
             select(PaperV5Position)
@@ -710,18 +681,19 @@ def build_report(
         ).all()
     )
     completed_at = utcnow()
-    is_pass = not errors and accounting.state != "RED"
     accuracy = wins / (wins + losses) if wins + losses else None
-    snapshot = PaperV5PortfolioSnapshot(
-        cash=portfolio["cash"],
-        exposure=portfolio["exposure"],
-        equity=portfolio["equity"],
-        realized_pnl=portfolio["realized_pnl"],
-        unrealized_pnl=portfolio["unrealized_pnl"],
-        drawdown=portfolio["drawdown"],
-        accounting_ok=accounting.state != "RED",
+    is_pass = not errors and accounting.state != "RED"
+    db.add(
+        PaperV5PortfolioSnapshot(
+            cash=portfolio["cash"],
+            exposure=portfolio["exposure"],
+            equity=portfolio["equity"],
+            realized_pnl=portfolio["realized_pnl"],
+            unrealized_pnl=portfolio["unrealized_pnl"],
+            drawdown=portfolio["drawdown"],
+            accounting_ok=accounting.state != "RED",
+        )
     )
-    db.add(snapshot)
     db.commit()
     return {
         "schema_version": 5,
@@ -796,11 +768,7 @@ def build_report(
                 "market": position.market_title,
                 "outcome": position.outcome,
                 "shares": round(position.shares, 6),
-                "average_price": (
-                    round(position.cost_basis_usd / position.shares, 6)
-                    if position.shares > 0
-                    else 0
-                ),
+                "average_price": round(position.cost_basis_usd / position.shares, 6) if position.shares > 0 else 0,
                 "current_price": round(position.mark_price, 6),
                 "mark_value_usd": round(position.mark_value_usd, 4),
                 "realized_pnl": round(position.realized_pnl, 4),
@@ -812,10 +780,7 @@ def build_report(
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _write_ledger(db: Session, path: Path) -> None:
@@ -971,17 +936,12 @@ def run(output_dir: Path) -> int:
                 errors=errors,
             )
             _write_json(output_dir / "paper-v5-summary.json", report)
-            (output_dir / "paper-v5-summary.md").write_text(
-                _render_markdown(report), encoding="utf-8"
-            )
+            (output_dir / "paper-v5-summary.md").write_text(_render_markdown(report), encoding="utf-8")
             _write_ledger(db, output_dir / "prediction-ledger-v5.jsonl")
     finally:
         client.close()
 
-    files = [
-        output_dir / "paper-v5-summary.json",
-        output_dir / "prediction-ledger-v5.jsonl",
-    ]
+    files = [output_dir / "paper-v5-summary.json", output_dir / "prediction-ledger-v5.jsonl"]
     manifest = {
         "schema_version": 5,
         "evidence_generation": EVIDENCE_GENERATION,
