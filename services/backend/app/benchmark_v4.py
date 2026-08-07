@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from app.evidence import hash_payload
 from app.event_tape_v4 import TapeEvent, reconstruct_l2, stable_tape_order
+from app.evidence import hash_payload
 
 
 @dataclass(frozen=True)
