@@ -168,7 +168,9 @@ def _execution_row(
     effective = fill.effective_price if fill else None
     slippage = None
     if effective is not None and source_price is not None:
-        slippage = effective - source_price if prediction.side == "BUY" else source_price - effective
+        slippage = (
+            effective - source_price if prediction.side == "BUY" else source_price - effective
+        )
     return PaperV5Execution(
         prediction_id=prediction.id,
         order_type="FAK",
@@ -226,10 +228,18 @@ class PaperEngineV5:
         asset_id = str(activity.get("asset") or "")
         side = str(activity.get("side") or "").upper()
         condition_id = str(activity.get("conditionId") or "")
-        if not timestamp or not tx_hash or not asset_id or not condition_id or side not in {"BUY", "SELL"}:
+        if (
+            not timestamp
+            or not tx_hash
+            or not asset_id
+            or not condition_id
+            or side not in {"BUY", "SELL"}
+        ):
             return False
         source_key, payload_hash = _source_identity(wallet.address, activity)
-        if db.scalar(select(PaperV5Prediction.id).where(PaperV5Prediction.source_key == source_key)):
+        if db.scalar(
+            select(PaperV5Prediction.id).where(PaperV5Prediction.source_key == source_key)
+        ):
             return False
 
         source_price = float(activity.get("price") or 0)
@@ -257,7 +267,10 @@ class PaperEngineV5:
         if get_state(db, "mode", self.settings.trading_mode) != "PAPER":
             self._reject(db, prediction, "system_not_in_paper_mode")
             return True
-        if get_state(db, "paused", "false") == "true" or get_state(db, "kill_switch", "false") == "true":
+        if (
+            get_state(db, "paused", "false") == "true"
+            or get_state(db, "kill_switch", "false") == "true"
+        ):
             self._reject(db, prediction, "system_not_accepting_orders")
             return True
 
@@ -285,7 +298,9 @@ class PaperEngineV5:
             self._reject(db, prediction, f"market_data_unavailable:{type(exc).__name__}")
             return True
         if observed is None:
-            self._reject(db, prediction, "empty_executable_book", decision_book=decision_book, rules=rules)
+            self._reject(
+                db, prediction, "empty_executable_book", decision_book=decision_book, rules=rules
+            )
             return True
 
         request = RiskRequest(
@@ -427,7 +442,9 @@ def ingest_activity_v5(
     for wallet in wallets:
         start = wallet.last_activity_at or int(time.time()) - settings.activity_lookback_seconds
         try:
-            activities = client.activity(wallet.address, start=start, limit=settings.activity_fetch_limit)
+            activities = client.activity(
+                wallet.address, start=start, limit=settings.activity_fetch_limit
+            )
         except Exception as exc:
             errors.append(f"activity:{wallet.address}:{type(exc).__name__}:{str(exc)[:160]}")
             continue
@@ -609,7 +626,9 @@ def _recent_rows(db: Session, limit: int = 30) -> list[dict[str, Any]]:
                     if execution.effective_price is not None
                     else None
                 ),
-                "slippage": round(execution.slippage, 6) if execution.slippage is not None else None,
+                "slippage": round(execution.slippage, 6)
+                if execution.slippage is not None
+                else None,
                 "filled_usd": round(execution.gross_notional, 4),
                 "filled_shares": round(execution.filled_shares, 6),
                 "fee_usd": round(execution.fee_usd, 5),
@@ -652,19 +671,54 @@ def build_report(
         unrealized_pnl=portfolio["unrealized_pnl"],
         tolerance=0.02,
     )
-    wins = int(db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "WIN")) or 0)
-    losses = int(db.scalar(select(func.count()).select_from(PaperV5Prediction).where(PaperV5Prediction.result == "LOSS")) or 0)
-    filled = int(
+    wins = int(
         db.scalar(
-            select(func.count()).select_from(PaperV5Execution).where(
-                PaperV5Execution.status.in_(["FILLED", "PARTIAL_FILLED"])
-            )
+            select(func.count())
+            .select_from(PaperV5Prediction)
+            .where(PaperV5Prediction.result == "WIN")
         )
         or 0
     )
-    partial = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "PARTIAL_FILLED")) or 0)
-    no_fill = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "NO_FILL")) or 0)
-    rejected = int(db.scalar(select(func.count()).select_from(PaperV5Execution).where(PaperV5Execution.status == "REJECTED")) or 0)
+    losses = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Prediction)
+            .where(PaperV5Prediction.result == "LOSS")
+        )
+        or 0
+    )
+    filled = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.status.in_(["FILLED", "PARTIAL_FILLED"]))
+        )
+        or 0
+    )
+    partial = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.status == "PARTIAL_FILLED")
+        )
+        or 0
+    )
+    no_fill = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.status == "NO_FILL")
+        )
+        or 0
+    )
+    rejected = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.status == "REJECTED")
+        )
+        or 0
+    )
     positions = list(
         db.scalars(
             select(PaperV5Position)
@@ -726,10 +780,12 @@ def build_report(
             "no_fill_is_valid_evidence": True,
             "fee_schedule_source": "CLOB getClobMarketInfo fd",
             "fee_formula": "shares * rate * p * (1-p); rounded to 5 decimals",
-            "regular_arrival_delay_ms": 350,
+            "regular_arrival_delay_ms": 0,
+            "regular_arrival_delay_basis": "immediate public-book refetch; no synthetic delay",
             "delayed_market_arrival_delay_ms": 1000,
-            "marking": "net executable liquidation value against current bids; unfilled residual valued at zero",
-            "accuracy_denominator": "resolved BUY predictions with non-zero simulated FAK fill only",
+            "delayed_market_arrival_delay_basis": "CLOB itode flag",
+            "marking": "net executable liquidation value; unfilled residual = zero",
+            "accuracy_denominator": "resolved filled BUY predictions only",
             "sell_signals_scored_as_directional_predictions": False,
             "legacy_history_rewritten": False,
             "legacy_v2_label": LEGACY_LABEL,
@@ -768,7 +824,9 @@ def build_report(
                 "market": position.market_title,
                 "outcome": position.outcome,
                 "shares": round(position.shares, 6),
-                "average_price": round(position.cost_basis_usd / position.shares, 6) if position.shares > 0 else 0,
+                "average_price": round(position.cost_basis_usd / position.shares, 6)
+                if position.shares > 0
+                else 0,
                 "current_price": round(position.mark_price, 6),
                 "mark_value_usd": round(position.mark_value_usd, 4),
                 "realized_pnl": round(position.realized_pnl, 4),
@@ -780,7 +838,9 @@ def build_report(
 
 
 def _write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 def _write_ledger(db: Session, path: Path) -> None:
@@ -835,7 +895,9 @@ def _write_ledger(db: Session, path: Path) -> None:
                     "status": prediction.resolution_status,
                     "price": prediction.resolution_price,
                     "result": prediction.result,
-                    "resolved_at": prediction.resolved_at.isoformat() if prediction.resolved_at else None,
+                    "resolved_at": prediction.resolved_at.isoformat()
+                    if prediction.resolved_at
+                    else None,
                 },
             }
             handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
@@ -936,7 +998,9 @@ def run(output_dir: Path) -> int:
                 errors=errors,
             )
             _write_json(output_dir / "paper-v5-summary.json", report)
-            (output_dir / "paper-v5-summary.md").write_text(_render_markdown(report), encoding="utf-8")
+            (output_dir / "paper-v5-summary.md").write_text(
+                _render_markdown(report), encoding="utf-8"
+            )
             _write_ledger(db, output_dir / "prediction-ledger-v5.jsonl")
     finally:
         client.close()
