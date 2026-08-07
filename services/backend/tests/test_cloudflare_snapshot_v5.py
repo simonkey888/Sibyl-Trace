@@ -53,6 +53,11 @@ def truthful_v5():
             "l2_depth_consumed": True,
             "partial_fills": True,
             "legacy_history_rewritten": False,
+            "immediate_post_fill_marking": True,
+            "end_cycle_mark_refresh": True,
+            "closed_book_404_is_no_fill": True,
+            "unknown_delayed_schedule_fail_closed": True,
+            "crypto_delayed_market_ms": 250,
         },
         "portfolio": {"initial_bankroll": 300, "equity": 300},
         "totals": {"predictions": 0, "wins": 0, "losses": 0, "accuracy": None},
@@ -94,4 +99,13 @@ def test_public_snapshot_rejects_v5_with_live_or_order_placement(tmp_path) -> No
     v5["safety"]["order_placement"] = True
     write_json(tmp_path / "paper-v5-summary.json", v5)
     with pytest.raises(ValueError, match="PAPER/LIVE/\\$0 policy"):
+        build_cloudflare_snapshot(tmp_path)
+
+
+def test_public_snapshot_rejects_v5_without_r3_mark_contract(tmp_path) -> None:
+    write_json(tmp_path / "trial-summary.json", legacy_trial())
+    v5 = truthful_v5()
+    v5["methodology"]["immediate_post_fill_marking"] = False
+    write_json(tmp_path / "paper-v5-summary.json", v5)
+    with pytest.raises(ValueError, match="truthful-execution methodology"):
         build_cloudflare_snapshot(tmp_path)
