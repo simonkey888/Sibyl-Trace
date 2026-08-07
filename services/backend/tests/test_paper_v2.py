@@ -7,9 +7,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import paper_v2
 from app.config import Settings
 from app.db import Base
-from app import paper_v2
 
 
 def test_session_factory():
