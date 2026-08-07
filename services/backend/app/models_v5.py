@@ -121,3 +121,23 @@ class PaperV5PortfolioSnapshot(Base):
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )
+
+
+class PaperV5ExecutionEvidence(Base):
+    __tablename__ = "paper_v5_execution_evidence"
+
+    prediction_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market_metadata_hash: Mapped[str] = mapped_column(String(64))
+    execution_evidence_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    decision_received_at_ms: Mapped[int | None] = mapped_column(Integer)
+    arrival_received_at_ms: Mapped[int | None] = mapped_column(Integer)
+    actual_gap_ms: Mapped[int | None] = mapped_column(Integer)
+    official_seconds_delay: Mapped[float] = mapped_column(Float, default=0)
+    fee_rate_bps_crosscheck: Mapped[int | None] = mapped_column(Integer)
+    market_active: Mapped[bool | None] = mapped_column(Boolean)
+    market_closed: Mapped[bool | None] = mapped_column(Boolean)
+    accepting_orders: Mapped[bool | None] = mapped_column(Boolean)
+    enable_order_book: Mapped[bool | None] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

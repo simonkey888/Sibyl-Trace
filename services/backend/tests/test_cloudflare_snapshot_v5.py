@@ -29,7 +29,7 @@ def legacy_trial():
 def truthful_v5():
     return {
         "schema_version": 5,
-        "cohort_id": "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07",
+        "cohort_id": "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07",
         "evidence_generation": "SIBYL_PAPER_V5_EXECUTION_REALISTIC",
         "status": "PASS",
         "run": {
@@ -47,7 +47,7 @@ def truthful_v5():
             "cost_authorized_usd": 0,
         },
         "methodology": {
-            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V1",
+            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED",
             "midpoint_fills": False,
             "arrival_book_refetch": True,
             "l2_depth_consumed": True,
@@ -55,9 +55,14 @@ def truthful_v5():
             "legacy_history_rewritten": False,
             "immediate_post_fill_marking": True,
             "end_cycle_mark_refresh": True,
-            "closed_book_404_is_no_fill": True,
-            "unknown_delayed_schedule_fail_closed": True,
-            "crypto_delayed_market_ms": 250,
+            "market_state_404_classification": True,
+            "active_tradable_404_is_data_failure": True,
+            "synthetic_canonical_latency": False,
+            "actual_request_gap_recorded": True,
+            "fee_schedule_dynamic": True,
+            "fee_rate_bps_crosscheck": True,
+            "execution_evidence_hash": True,
+            "summary_ledger_reconciliation": True,
         },
         "portfolio": {"initial_bankroll": 300, "equity": 300},
         "totals": {"predictions": 0, "wins": 0, "losses": 0, "accuracy": None},
