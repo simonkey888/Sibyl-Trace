@@ -70,6 +70,8 @@ def truthful_v5():
             "post_delay_market_state_revalidation": True,
             "shadow_self_impact": True,
             "shadow_self_impact_live_claim": False,
+            "public_book_hash_bridge_persisted": True,
+            "execution_evidence_hash_includes_book_provenance": True,
             "copy_decay_metrics_in_ledger": True,
             "fee_provenance_in_ledger": True,
             "delayed_market_arrival_delay_ms": None,
@@ -97,6 +99,7 @@ def test_public_snapshot_prefers_v5_and_labels_v2_legacy(tmp_path) -> None:
     assert snapshot["paper_v5"]["methodology"]["midpoint_fills"] is False
     assert snapshot["paper_v5"]["methodology"]["post_delay_market_state_revalidation"] is True
     assert snapshot["paper_v5"]["methodology"]["shadow_self_impact"] is True
+    assert snapshot["paper_v5"]["methodology"]["public_book_hash_bridge_persisted"] is True
     assert snapshot["trial"]["canonical_performance"] is False
     assert snapshot["trial"]["methodology_label"] == "LEGACY_SIMULATION_MIDPOINT_V2"
     assert snapshot["paper_v5"]["selected_wallets"][0]["wallet"].endswith("…1111")
@@ -133,6 +136,15 @@ def test_public_snapshot_rejects_v5_without_r42_truth_corrections(tmp_path) -> N
     write_json(tmp_path / "trial-summary.json", legacy_trial())
     v5 = truthful_v5()
     v5["methodology"]["post_delay_market_state_revalidation"] = False
+    write_json(tmp_path / "paper-v5-summary.json", v5)
+    with pytest.raises(ValueError, match="truthful-execution methodology"):
+        build_cloudflare_snapshot(tmp_path)
+
+
+def test_public_snapshot_rejects_v5_without_public_book_hash_bridge(tmp_path) -> None:
+    write_json(tmp_path / "trial-summary.json", legacy_trial())
+    v5 = truthful_v5()
+    v5["methodology"]["public_book_hash_bridge_persisted"] = False
     write_json(tmp_path / "paper-v5-summary.json", v5)
     with pytest.raises(ValueError, match="truthful-execution methodology"):
         build_cloudflare_snapshot(tmp_path)
