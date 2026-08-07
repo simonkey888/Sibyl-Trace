@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -97,9 +98,9 @@ def test_capped_sell_records_actual_proceeds_not_requested_notional() -> None:
         portfolio = current_portfolio(db, 300)
         position = db.get(PaperPosition, "asset")
 
-    assert actual == 0.50
-    assert position is not None and position.shares == 0
-    assert position.realized_pnl == -0.10
-    assert portfolio["cash"] == 299.90
-    assert portfolio["equity"] == 299.90
-    assert portfolio["realized_pnl"] == -0.10
+    assert actual == pytest.approx(0.50, abs=1e-9)
+    assert position is not None and position.shares == pytest.approx(0.0, abs=1e-9)
+    assert position.realized_pnl == pytest.approx(-0.10, abs=1e-9)
+    assert portfolio["cash"] == pytest.approx(299.90, abs=1e-9)
+    assert portfolio["equity"] == pytest.approx(299.90, abs=1e-9)
+    assert portfolio["realized_pnl"] == pytest.approx(-0.10, abs=1e-9)
