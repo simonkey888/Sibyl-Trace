@@ -11,9 +11,6 @@ concurrency:
   group: temporary-audit-verification
   cancel-in-progress: false
 
-env:
-  CANDIDATE_SHA: 01469245d59fcd52369aab8692f16967f5230bf8
-
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -23,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
+          ref: 01469245d59fcd52369aab8692f16967f5230bf8
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -39,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
+          ref: 01469245d59fcd52369aab8692f16967f5230bf8
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
@@ -57,11 +54,11 @@ jobs:
   container:
     runs-on: ubuntu-latest
     env:
-      APP_VERSION: ci-${{ env.CANDIDATE_SHA }}
+      APP_VERSION: ci-01469245d59fcd52369aab8692f16967f5230bf8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ env.CANDIDATE_SHA }}
+          ref: 01469245d59fcd52369aab8692f16967f5230bf8
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Validate shell and Compose configuration
         run: |
