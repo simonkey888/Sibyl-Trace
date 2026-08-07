@@ -28,8 +28,15 @@ jobs:
           ]
 
           def get(url):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "sibyl-trace/probe-2026-08-07",
+                      "Accept": "application/json",
+                  },
+              )
               try:
-                  with urllib.request.urlopen(url, timeout=20) as response:
+                  with urllib.request.urlopen(request, timeout=20) as response:
                       return response.status, json.loads(response.read().decode())
               except HTTPError as exc:
                   body = exc.read().decode(errors="replace")[:500]
@@ -42,8 +49,6 @@ jobs:
               if isinstance(info, dict):
                   print("INFO_KEYS", sorted(info.keys()))
                   print("INFO_RULES", json.dumps({key: info.get(key) for key in ("mos", "mts", "itode", "fd", "tbf", "mbf", "gst", "oas")}, sort_keys=True))
-              else:
-                  print("INFO_TYPE", type(info).__name__)
               status, fee = get(f"https://clob.polymarket.com/fee-rate/{token}")
               print("FEE_STATUS", status, "FEE", json.dumps(fee, sort_keys=True))
               status, book = get(f"https://clob.polymarket.com/book?token_id={token}")
@@ -51,6 +56,4 @@ jobs:
               if isinstance(book, dict):
                   print("BOOK_META", json.dumps({key: book.get(key) for key in ("asset_id", "market", "timestamp", "hash", "min_order_size", "tick_size", "last_trade_price")}, sort_keys=True))
                   print("BOOK_DEPTH", len(book.get("bids") or []), len(book.get("asks") or []))
-              else:
-                  print("BOOK_TYPE", type(book).__name__)
           PY
