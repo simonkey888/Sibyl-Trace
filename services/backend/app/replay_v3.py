@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict
-from typing import Iterable
 
 from app.market_data_v3 import V3Event
 from app.microstructure_v3 import QueuePrint, simulate_queue_fill
@@ -85,7 +85,7 @@ def replay_capture(events: tuple[V3Event, ...]) -> dict:
     violations: list[str] = []
     if any(
         current.receive_timestamp_ms < previous.receive_timestamp_ms
-        for previous, current in zip(ordered, ordered[1:])
+        for previous, current in zip(ordered, ordered[1:], strict=False)
     ):
         violations.append("receive_timestamp_regression")
 

@@ -123,7 +123,7 @@ def _asset_volatility(events: tuple[V3Event, ...], asset_id: str) -> float:
     ]
     returns = [
         log(current / previous)
-        for previous, current in zip(mids, mids[1:])
+        for previous, current in zip(mids, mids[1:], strict=False)
         if previous > 0 and current > 0
     ]
     return pstdev(returns) if len(returns) >= 2 else 0.0

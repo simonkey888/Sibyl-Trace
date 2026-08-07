@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import log
 from statistics import pstdev
-from typing import Iterable
 
 from app.market_data_v3 import V3Event
 
@@ -41,7 +41,10 @@ def _realized_vol_bps(events: list[V3Event]) -> float | None:
     prices = [event.price for event in events if event.price is not None and event.price > 0]
     if len(prices) < 3:
         return None
-    log_returns = [log(current / previous) for previous, current in zip(prices, prices[1:])]
+    log_returns = [
+        log(current / previous)
+        for previous, current in zip(prices, prices[1:], strict=False)
+    ]
     return pstdev(log_returns) * 10_000.0 if len(log_returns) >= 2 else None
 
 
@@ -83,7 +86,7 @@ def _latest_poly_books(events: Iterable[V3Event]) -> dict[str, dict[str, float |
         mids = histories.get(asset_id, [])
         log_returns = [
             log(current / previous)
-            for previous, current in zip(mids, mids[1:])
+            for previous, current in zip(mids, mids[1:], strict=False)
             if previous > 0 and current > 0
         ]
         volatility = pstdev(log_returns) if len(log_returns) >= 2 else None
