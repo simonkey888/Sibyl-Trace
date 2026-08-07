@@ -9,10 +9,13 @@ on:
       - "services/backend/app/execution_v5.py"
       - "services/backend/app/paper_v5.py"
       - "services/backend/app/paper_v5_r3.py"
+      - "services/backend/app/paper_v5_r4.py"
+      - "services/backend/app/polymarket.py"
       - "services/backend/app/db.py"
       - "services/backend/tests/test_execution_v5.py"
       - "services/backend/tests/test_paper_v5.py"
       - "services/backend/tests/test_paper_v5_r3.py"
+      - "services/backend/tests/test_paper_v5_r4.py"
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
@@ -38,7 +41,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.paper-v5-state
       OUTPUT_DIR: ${{ github.workspace }}/paper-v5-output
-      RELEASE_TAG: github-paper-v5-state-v3
+      RELEASE_TAG: github-paper-v5-state-v4
       DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-state/sibyl-v5.db
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
@@ -81,11 +84,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
           if [[ "$RESET_STATE" == "true" ]]; then
-            echo "Explicit clean V5 cohort requested."
+            echo "Explicit clean R4 cohort requested."
             exit 0
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "No R3 V5 state exists yet; starting clean."
+            echo "No R4 V5 state exists yet; starting clean."
             exit 0
           fi
           gh release download "$RELEASE_TAG" \
@@ -102,7 +105,7 @@ jobs:
           gzip -t "$STATE_DIR/sibyl-v5.db.gz"
           gzip -dc "$STATE_DIR/sibyl-v5.db.gz" > "$STATE_DIR/sibyl-v5.db"
           rm -f "$STATE_DIR/sibyl-v5.db.gz" "$STATE_DIR/SHA256SUMS"
-          echo "Verified R3 V5 state restored."
+          echo "Verified R4 V5 state restored."
 
       - name: Verify import and truth contract
         working-directory: services/backend
@@ -110,22 +113,20 @@ jobs:
         run: |
           set -euo pipefail
           python -m compileall -q app
-          ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py
-          grep -q 'L2_TAKER_FAK_ARRIVAL_BOOK_V1' app/paper_v5.py
-          grep -q 'legacy_history_rewritten.*False' app/paper_v5.py
-          grep -q 'PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07' app/paper_v5_r3.py
-          grep -q '_mark_position_from_book' app/paper_v5_r3.py
-          grep -q 'decision_book_not_found' app/paper_v5_r3.py
+          ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py app/paper_v5_r4.py
+          grep -q 'PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07' app/paper_v5_r4.py
+          grep -q 'Gamma market.secondsDelay' app/paper_v5_r4.py
+          grep -q 'synthetic_canonical_latency.*False' app/paper_v5_r4.py
+          grep -q 'active_market_book_404' app/paper_v5_r4.py
+          grep -q 'execution_evidence_hash' app/paper_v5_r4.py
+          grep -q 'summary_ledger_reconciliation' app/paper_v5_r4.py
           grep -q 'systemic_market_data_adapter_failure' app/paper_v5.py
-          grep -q 'order_delay_ms=250' app/execution_v5.py
-          grep -q 'unsupported_delayed_market_schedule' app/execution_v5.py
-          grep -q 'exponent != 1' app/execution_v5.py
 
       - name: Execute bounded PAPER V5 cycle
         id: cycle
         continue-on-error: true
         working-directory: services/backend
-        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5_r3 --output-dir "$OUTPUT_DIR"
+        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5_r4 --output-dir "$OUTPUT_DIR"
 
       - name: Package diagnostic state and evidence
         if: always()
@@ -140,12 +141,46 @@ jobs:
           test -s "$OUTPUT_DIR/paper-v5-summary.md"
           test -f "$OUTPUT_DIR/prediction-ledger-v5.jsonl"
           test -s "$OUTPUT_DIR/evidence-manifest-v5.json"
-          grep -q '"cohort_id": "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"cohort_id": "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"midpoint_fills": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"legacy_history_rewritten": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"order_placement": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"live_available": false' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"synthetic_canonical_latency": false' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
+
+      - name: Reconcile summary ledger and execution evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          root = Path(os.environ["OUTPUT_DIR"])
+          summary = json.loads((root / "paper-v5-summary.json").read_text())
+          rows = [json.loads(line) for line in (root / "prediction-ledger-v5.jsonl").read_text().splitlines() if line.strip()]
+          totals = summary["totals"]
+          assert summary["evidence_reconciliation"]["state"] == "PASS"
+          assert len(rows) == totals["executions"] == totals["predictions"]
+          counts = Counter(row["execution"]["status"] for row in rows)
+          assert counts["FILLED"] + counts["PARTIAL_FILLED"] == totals["filled_orders"]
+          assert counts["NO_FILL"] == totals["no_fills"]
+          assert counts["REJECTED"] == totals["rejected"]
+          for row in rows:
+              if row["execution"]["status"] in {"FILLED", "PARTIAL_FILLED"}:
+                  evidence = row.get("execution_evidence") or {}
+                  assert len(evidence.get("execution_evidence_hash") or "") == 64
+                  assert evidence.get("decision_received_at_ms") is not None
+                  assert evidence.get("arrival_received_at_ms") is not None
+                  assert evidence.get("actual_gap_ms") is not None
+          cycle = summary["cycle"]
+          assert cycle["signals_processed"] == cycle["new_predictions_created"] == cycle["new_executions_created"]
+          PY
 
       - name: Hash exact V5 evidence
         if: always()
@@ -185,8 +220,8 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --title "Sibyl Trace rolling PAPER V5 R3 state" \
-              --notes "Private truthful-execution R3 PAPER state. No keys, no LIVE, zero authorized cost." \
+              --title "Sibyl Trace rolling PAPER V5 R4 state" \
+              --notes "Private audit-reconciled R4 PAPER state. No keys, no LIVE, zero authorized cost." \
               --prerelease
           else
             gh api --method PATCH \
@@ -205,5 +240,5 @@ jobs:
       - name: Fail closed on degraded V5 cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "V5 R3 evidence was retained for audit, but canonical rolling state was NOT advanced."
+          echo "V5 R4 evidence was retained for audit, but canonical rolling state was NOT advanced."
           exit 1
