@@ -10,6 +10,8 @@ on:
       - "services/backend/app/journal_v3.py"
       - "docs/MASTER_ORDER_RESEARCH_LAB_V4.md"
       - ".github/workflows/research-lab-v4.yml"
+      - ".github/workflows/research-lab-v4-operational.yml"
+      - ".github/workflows/publish-cloudflare-terminal-v4.yml"
 
 permissions:
   contents: read
@@ -31,13 +33,7 @@ jobs:
         run: pip install -e '.[dev]'
       - name: Run V4 focused tests
         working-directory: services/backend
-        run: >-
-          pytest
-          tests/test_event_tape_v4.py
-          tests/test_temporal_features_v4.py
-          tests/test_market_parity_v4.py
-          tests/test_benchmark_forecast_v4.py
-          tests/test_journal_v4.py
+        run: pytest tests/*v4.py
       - name: Generate deterministic V4 shadow evidence
         working-directory: services/backend
         run: python -m app.v4_smoke --output ../../research-v4-smoke.json
