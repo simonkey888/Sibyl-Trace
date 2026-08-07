@@ -64,7 +64,9 @@ def signed_volume(events: Iterable[V3Event]) -> float:
     return total
 
 
-def cvd_velocity_acceleration(events: list[V3Event], *, window_ms: int = 60_000) -> dict[str, float]:
+def cvd_velocity_acceleration(
+    events: list[V3Event], *, window_ms: int = 60_000
+) -> dict[str, float]:
     if not events:
         return {"velocity": 0.0, "acceleration": 0.0}
     end = events[-1].receive_timestamp_ms
@@ -94,7 +96,10 @@ def realized_volatility_bps(events: list[V3Event], *, window_ms: int = 60_000) -
     ]
     if len(prices) < 3:
         return None
-    returns = [log(current / previous) for previous, current in zip(prices, prices[1:])]
+    returns = [
+        log(current / previous)
+        for previous, current in zip(prices, prices[1:], strict=False)
+    ]
     return pstdev(returns) * 10_000.0 if len(returns) >= 2 else None
 
 
