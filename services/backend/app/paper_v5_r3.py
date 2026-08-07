@@ -42,11 +42,7 @@ def _mark_position_from_book(position: PaperV5Position, book: dict[str, Any], ru
         worst_price=max(rules.tick_size, 0.001),
         requested_shares=position.shares,
     )
-    value = (
-        max(liquidation.net_cash_delta, 0.0)
-        if liquidation.status != "NO_FILL"
-        else 0.0
-    )
+    value = max(liquidation.net_cash_delta, 0.0) if liquidation.status != "NO_FILL" else 0.0
     position.mark_value_usd = value
     position.mark_price = value / position.shares if position.shares > 0 else 0.0
 
