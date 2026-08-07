@@ -38,12 +38,12 @@ jobs:
       - name: Commit lockfile when changed
         run: |
           set -euo pipefail
-          if git diff --quiet -- apps/gateway/package-lock.json; then
+          git add apps/gateway/package-lock.json
+          if git diff --cached --quiet; then
             echo "package-lock.json already reproducible."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/gateway/package-lock.json
           git commit -m "chore: lock gateway dependencies"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
