@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: fix/paper-v5-r4-1-report-publish-truth
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@a26af69be951213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Apply R4.1 patch
@@ -27,13 +27,14 @@ jobs:
           ruff check --fix app/paper_v5_r4.py app/cloudflare_snapshot.py tests/test_paper_v5_r4.py tests/test_cloudflare_snapshot_v5.py
           ruff check .
           pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+          rm -f .coverage
           cd ../..
           python scripts/freeze_manifest.py --check
-      - name: Commit R4.1
+      - name: Commit R4.1 source only
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/github-paper-v5.yml services/backend
+          git add services/backend/app/paper_v5_r4.py services/backend/app/cloudflare_snapshot.py services/backend/tests/test_paper_v5_r4.py services/backend/tests/test_cloudflare_snapshot_v5.py
           git diff --cached --check
           git commit -m 'fix(v5): close R4.1 reporting and market identity truth'
           git push origin HEAD:fix/paper-v5-r4-1-report-publish-truth
