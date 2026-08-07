@@ -4,7 +4,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
 from app.db import Base
-from app.models import PaperOrder, PaperPosition
+from app.models import AuditEvent, PaperOrder, PaperPosition
 from app.repository import current_portfolio
 from app.settlement import settle_closed_positions
 from app.settlement_models import PaperSettlement
@@ -101,3 +101,55 @@ def test_nonterminal_closed_price_is_deferred() -> None:
     assert settled == 0
     assert position is not None
     assert position.shares == 10
+
+
+def test_reopened_settled_asset_reconciles_without_losing_cash() -> None:
+    with session() as db:
+        add_open_position(db)
+        settings = Settings()
+        assert settle_closed_positions(db, ClosedMarketClient(), settings) == 1
+
+        position = db.get(PaperPosition, "asset")
+        assert position is not None
+        position.shares = 2
+        position.average_price = 0.5
+        position.current_price = 0.5
+        db.add(
+            PaperOrder(
+                signal_id=2,
+                asset_id="asset",
+                condition_id="condition",
+                market_title="Resolved market",
+                outcome="YES",
+                side="BUY",
+                requested_usd=1,
+                filled_usd=1,
+                source_price=0.5,
+                observed_price=0.5,
+                fill_price=0.5,
+                slippage=0,
+                status="FILLED",
+            )
+        )
+        db.commit()
+
+        assert settle_closed_positions(db, ClosedMarketClient(), settings) == 1
+        settlement = db.get(PaperSettlement, "asset")
+        portfolio = current_portfolio(db, settings.initial_bankroll_usd)
+        event = (
+            db.query(AuditEvent)
+            .filter_by(event_type="paper_position_reopened_after_settlement")
+            .one()
+        )
+
+    assert settlement is not None
+    assert settlement.shares == 12
+    assert settlement.cost_basis == 5
+    assert settlement.proceeds == 12
+    assert settlement.realized_pnl == 7
+    assert position.shares == 0
+    assert position.realized_pnl == 7
+    assert portfolio["cash"] == 307
+    assert portfolio["equity"] == 307
+    assert portfolio["realized_pnl"] == 7
+    assert event.severity == "WARN"
