@@ -50,3 +50,22 @@ test("defaults JSON responses to no-store", () => {
   const response = withSecurityHeaders(Response.json({ ok: true }));
   assert.equal(response.headers.get("Cache-Control"), "no-store");
 });
+
+test("overrides public cache policy on private JSON", () => {
+  const response = withSecurityHeaders(
+    Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=31536000" } }),
+  );
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
+
+test("overrides public cache policy on private HTML", () => {
+  const response = withSecurityHeaders(
+    new Response("<html></html>", {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000",
+      },
+    }),
+  );
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
