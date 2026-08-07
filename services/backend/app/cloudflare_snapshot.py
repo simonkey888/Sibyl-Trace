@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-DENIED_KEY_FRAGMENTS = (
+DENIED_KEYS = {
     "authorization",
     "api_key",
     "apikey",
@@ -17,8 +17,8 @@ DENIED_KEY_FRAGMENTS = (
     "password",
     "cookie",
     "secret",
-    "bearer",
-)
+    "bearer_token",
+}
 
 
 def _mask_wallet(value: str) -> str:
@@ -41,7 +41,7 @@ def sanitize_public(value: Any, path: str = "root") -> Any:
         clean: dict[str, Any] = {}
         for key, item in value.items():
             lowered = str(key).lower()
-            if any(fragment in lowered for fragment in DENIED_KEY_FRAGMENTS):
+            if lowered in DENIED_KEYS:
                 raise ValueError(f"refusing to publish sensitive-looking key at {path}.{key}")
             if isinstance(item, str):
                 clean[str(key)] = _sanitize_string(str(key), item)
