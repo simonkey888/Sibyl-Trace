@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any
 
 
