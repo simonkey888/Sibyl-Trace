@@ -1,0 +1,210 @@
+name: R3 Final E2E Once
+
+on:
+  push:
+    branches: [verify/r3-final-e2e]
+    paths: [".github/workflows/r3-final-e2e-once.yml"]
+
+permissions:
+  actions: write
+  checks: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORKER_URL: https://sibyl-trace.simondalmasso44.workers.dev
+    steps:
+      - name: Wait for clean PR 20 merge and post-merge CI
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for attempt in $(seq 1 60); do
+            state=$(gh pr view 20 --repo "$repo" --json state --jq .state)
+            merged=$(gh pr view 20 --repo "$repo" --json mergedAt --jq '.mergedAt // ""')
+            if [[ "$state" == "MERGED" && -n "$merged" ]]; then break; fi
+            sleep 10
+          done
+          sha=$(gh pr view 20 --repo "$repo" --json mergeCommit --jq '.mergeCommit.oid')
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+          for attempt in $(seq 1 60); do
+            json=$(gh api "/repos/$repo/commits/$sha/check-runs?per_page=100")
+            ok=true
+            for name in backend dashboard safety container; do
+              status=$(jq -r --arg n "$name" '[.check_runs[] | select(.name==$n)] | last | .status // ""' <<<"$json")
+              conclusion=$(jq -r --arg n "$name" '[.check_runs[] | select(.name==$n)] | last | .conclusion // ""' <<<"$json")
+              echo "$name status=$status conclusion=$conclusion"
+              if [[ "$status" != "completed" || "$conclusion" != "success" ]]; then ok=false; fi
+            done
+            if [[ "$ok" == "true" ]]; then break; fi
+            if [[ "$attempt" == "60" ]]; then exit 1; fi
+            sleep 10
+          done
+
+      - name: Wait for exact R3 PAPER run
+        id: v5
+        shell: bash
+        env:
+          MERGE_SHA: ${{ steps.merge.outputs.sha }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for attempt in $(seq 1 90); do
+            run_id=$(gh api "/repos/$repo/actions/workflows/github-paper-v5.yml/runs?branch=main&per_page=30" \
+              --jq ".workflow_runs[] | select(.head_sha==\"$MERGE_SHA\") | .id" | head -1)
+            if [[ -n "$run_id" ]]; then
+              status=$(gh api "/repos/$repo/actions/runs/$run_id" --jq .status)
+              conclusion=$(gh api "/repos/$repo/actions/runs/$run_id" --jq '.conclusion // ""')
+              echo "V5 run=$run_id status=$status conclusion=$conclusion"
+              if [[ "$status" == "completed" ]]; then
+                [[ "$conclusion" == "success" ]]
+                break
+              fi
+            fi
+            if [[ "$attempt" == "90" ]]; then exit 1; fi
+            sleep 10
+          done
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact artifact and truth contract
+        id: audit
+        shell: bash
+        env:
+          V5_RUN_ID: ${{ steps.v5.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v5
+          gh run download "$V5_RUN_ID" --name "sibyl-paper-v5-$V5_RUN_ID" --dir /tmp/v5
+          test -s /tmp/v5/SHA256SUMS
+          (cd /tmp/v5 && sha256sum -c SHA256SUMS --ignore-missing)
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          root = Path('/tmp/v5')
+          summary = json.loads((root/'paper-v5-summary.json').read_text())
+          assert summary['status'] == 'PASS'
+          assert summary['cohort_id'] == 'PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07'
+          method = summary['methodology']
+          expected = {
+              'midpoint_fills': False,
+              'immediate_post_fill_marking': True,
+              'end_cycle_mark_refresh': True,
+              'closed_book_404_is_no_fill': True,
+              'unknown_delayed_schedule_fail_closed': True,
+              'crypto_delayed_market_ms': 250,
+          }
+          for key, value in expected.items():
+              assert method.get(key) == value, (key, method.get(key), value)
+          assert summary['safety']['order_placement'] is False
+          assert summary['safety']['live_available'] is False
+          assert summary['accounting_watchdog']['state'] != 'RED'
+          assert summary['execution_health']['state'] != 'RED'
+
+          rows=[]
+          with (root/'prediction-ledger-v5.jsonl').open() as handle:
+              for line in handle:
+                  if line.strip(): rows.append(json.loads(line))
+          statuses=Counter(row['execution']['status'] for row in rows)
+          results=Counter(row['prediction']['result'] for row in rows)
+          daily_loss=sum(1 for row in rows if row['execution'].get('reason') == 'daily_loss_limit')
+          decision_books=sum(1 for row in rows if row['execution'].get('decision_book_hash'))
+          arrival_books=sum(1 for row in rows if row['execution'].get('arrival_book_hash'))
+          audit={
+              'run_id': summary['run']['github_run_id'],
+              'sha': summary['run']['github_sha'],
+              'cohort_id': summary['cohort_id'],
+              'portfolio': summary['portfolio'],
+              'totals': summary['totals'],
+              'execution_health': summary['execution_health'],
+              'execution_statuses': dict(statuses),
+              'results': dict(results),
+              'daily_loss_limit_rows': daily_loss,
+              'decision_books': decision_books,
+              'arrival_books': arrival_books,
+          }
+          (root/'final-audit.json').write_text(json.dumps(audit, indent=2, sort_keys=True)+'\n')
+          print(json.dumps(audit, sort_keys=True))
+          PY
+
+      - name: Dispatch canonical Cloudflare V5 publisher
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run publish-cloudflare-terminal-v5.yml --ref main
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Cloudflare publisher success
+        id: publish
+        shell: bash
+        env:
+          BEFORE: ${{ steps.dispatch.outputs.before }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          for attempt in $(seq 1 60); do
+            run_id=$(gh api "/repos/$repo/actions/workflows/publish-cloudflare-terminal-v5.yml/runs?event=workflow_dispatch&per_page=20" \
+              --jq ".workflow_runs[] | select(.created_at >= \"$BEFORE\") | .id" | head -1)
+            if [[ -n "$run_id" ]]; then
+              status=$(gh api "/repos/$repo/actions/runs/$run_id" --jq .status)
+              conclusion=$(gh api "/repos/$repo/actions/runs/$run_id" --jq '.conclusion // ""')
+              echo "publisher=$run_id status=$status conclusion=$conclusion"
+              if [[ "$status" == "completed" ]]; then
+                [[ "$conclusion" == "success" ]]
+                break
+              fi
+            fi
+            if [[ "$attempt" == "60" ]]; then exit 1; fi
+            sleep 10
+          done
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public Cloudflare R3 snapshot over HTTP
+        shell: bash
+        env:
+          V5_RUN_ID: ${{ steps.v5.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 20 \
+              -H 'cache-control: no-cache' \
+              "$WORKER_URL/data/snapshot.json?t=$(date +%s)" > /tmp/public.json; then
+              if jq -e \
+                --arg run "$V5_RUN_ID" \
+                '.paper_v5.status == "PASS" and
+                 .paper_v5.cohort_id == "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07" and
+                 .paper_v5.canonical_performance == true and
+                 .paper_v5.methodology.midpoint_fills == false and
+                 .paper_v5.methodology.immediate_post_fill_marking == true and
+                 .paper_v5.methodology.closed_book_404_is_no_fill == true and
+                 .paper_v5.methodology.unknown_delayed_schedule_fail_closed == true and
+                 (.source.github_run_id|tostring) == $run' /tmp/public.json >/dev/null; then
+                echo "Public R3 snapshot verified."
+                exit 0
+              fi
+            fi
+            sleep 5
+          done
+          echo "Public R3 snapshot did not converge" >&2
+          cat /tmp/public.json || true
+          exit 1
+
+      - name: Post final audit evidence
+        env:
+          PUBLISH_RUN: ${{ steps.publish.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(jq -c . /tmp/v5/final-audit.json)
+          gh pr comment 20 --body "FINAL_R3_E2E_PASS publish_run=$PUBLISH_RUN audit=$body"
