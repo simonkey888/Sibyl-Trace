@@ -1,5 +1,13 @@
 from pathlib import Path
 
+p = Path("services/backend/app/paper_v5_r4.py")
+text = p.read_text()
+old = '''            if position is None or position.shares <= 0:\n                self._reject(db, prediction, "no_paper_position_to_sell")\n                _record_evidence(\n                    db,\n                    prediction,\n                    market,\n                    decision_book=decision_book,\n                    decision_received_at_ms=decision_received_ms,\n                    fee_rate_bps_crosscheck=fee_bps,\n                )\n                return True\n'''
+new = '''            if position is None or position.shares <= 0:\n                self._reject(\n                    db,\n                    prediction,\n                    "no_paper_position_to_sell",\n                    decision_book=decision_book,\n                    decision_best_price=observed,\n                    worst_price=limit,\n                    rules=rules,\n                )\n                _record_evidence(\n                    db,\n                    prediction,\n                    market,\n                    decision_book=decision_book,\n                    decision_received_at_ms=decision_received_ms,\n                    fee_rate_bps_crosscheck=fee_bps,\n                )\n                return True\n'''
+if old not in text:
+    raise SystemExit("sell-without-position evidence anchor missing")
+p.write_text(text.replace(old, new))
+
 p = Path("services/backend/tests/test_paper_v5_r4.py")
 text = p.read_text()
 extra = r'''
@@ -34,6 +42,7 @@ def test_sell_without_position_is_rejected_after_real_decision_book():
         assert execution.status == "REJECTED"
         assert execution.reason == "no_paper_position_to_sell"
         assert execution.decision_book_hash == "r4-book-1"
+        assert execution.decision_best_price == pytest.approx(0.49)
         assert evidence is not None
         assert evidence.decision_received_at_ms is not None
         assert evidence.arrival_received_at_ms is None
