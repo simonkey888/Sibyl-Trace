@@ -5,8 +5,8 @@
     "paid_apis": false
   },
   "evidence_generation": "SIBYL_PAPER_V2",
-  "frozen_source_sha": "1c3cfc41102b2bf1f80f4036e8547abdeb0d729e",
-  "frozen_source_tree_sha": "5fed37f2f4883a60238684eced41515ee3110438",
+  "frozen_source_sha": "f6f001e9627d507709b0051a3c2e1a923b4b35d9",
+  "frozen_source_tree_sha": "dee1341acf7005faea593a7787ceddd39415eb24",
   "live_policy": {
     "available": false,
     "real_money": false
@@ -30,7 +30,7 @@
     "services/backend/app/domain.py": "c9379e67e6351c4c375b9a51a54b7ab575489f590af3a5ac0e832cd992c440e6",
     "services/backend/app/evidence.py": "0fcb6c1fd5f4ec6a5a3534e465ca715ac3e8a6d117c29cd64b5cc8603e3a270d",
     "services/backend/app/hypothesis.py": "6143bea983c727aec04f3dd89111eda6475bffabbe8ea3d36483ae49decd9fda",
-    "services/backend/app/paper.py": "5a385614d9ad9e0095f2c60028fc0884d40cee58676eaff9db5264825442c25a",
+    "services/backend/app/paper.py": "f65ba17aef0022b2d7d69586c575c65608055326a2cdc49ac622d1cdc8fc50bf",
     "services/backend/app/research_cycle.py": "a41a46912b12dddbd30dc795a0f2b54a249896f4935c9986f6c9bd5a35302c76",
     "services/backend/app/scoring.py": "db6f15db93c23da4059f31699fda2d97dbb462c64c15963f36de75b2e3951f50",
     "services/backend/app/settlement.py": "2e44b2236136379154b171595c0aa42bbfd1084bf23d65995561043f622077c3",
