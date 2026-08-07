@@ -1,0 +1,33 @@
+name: V5 R3 Clean Branch Once
+
+on:
+  push:
+    branches: [fix/paper-v5-r3-report-contract]
+    paths: [".github/workflows/v5-r3-clean-branch-once.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/paper-v5-r3-report-contract
+          fetch-depth: 0
+      - name: Build clean branch from canonical main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git diff --binary origin/main...HEAD -- services/backend > /tmp/r3-report.patch
+          test -s /tmp/r3-report.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --detach origin/main
+          git switch -c fix/paper-v5-r3-report-contract-clean
+          git apply --index /tmp/r3-report.patch
+          git diff --cached --check
+          git commit -m "fix(v5): make R3 methodology machine-verifiable"
+          git push origin HEAD:fix/paper-v5-r3-report-contract-clean
