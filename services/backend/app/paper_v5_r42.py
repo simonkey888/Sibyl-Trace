@@ -12,11 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import paper_v5_r4 as r4
-from app.models import Wallet
+from app.models import AuditEvent, Wallet
 from app.models_v5 import PaperV5Execution, PaperV5ExecutionEvidence, PaperV5Prediction
 
 COHORT_ID = "PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07"
 EXECUTION_MODEL = "L2_TAKER_FAK_ARRIVAL_BOOK_V4_POST_DELAY_REVALIDATION_SHADOW_IMPACT"
+PROVENANCE_EVENT = "paper_v5_r42_book_provenance"
 
 _apply_r41_report = r4._apply_r4_report
 _write_ledger_r41 = r4._write_ledger_r4
@@ -24,6 +25,15 @@ _write_ledger_r41 = r4._write_ledger_r4
 
 def _price_key(value: Any) -> str:
     return format(Decimal(str(value)).normalize(), "f")
+
+
+def _book_hashes(book: dict[str, Any] | None) -> tuple[str | None, str | None, bool]:
+    if not isinstance(book, dict):
+        return None, None, False
+    execution_hash = str(book.get("hash") or "") or None
+    source_hash = str(book.get("source_hash") or "") or None
+    public_hash = source_hash or execution_hash
+    return public_hash, execution_hash, bool(source_hash)
 
 
 class _R42BookUnavailable(Exception):
@@ -219,6 +229,55 @@ class PaperEngineV5R42(r4.PaperEngineV5R4):
         db.add(evidence)
         db.commit()
 
+    def _persist_book_provenance(
+        self, db: Session, prediction: PaperV5Prediction
+    ) -> dict[str, Any]:
+        decision_public, decision_execution, decision_shadow = _book_hashes(
+            self._truth_client.decision_book
+        )
+        arrival_public, arrival_execution, arrival_shadow = _book_hashes(
+            self._truth_client.arrival_book
+        )
+        if not any((decision_public, decision_execution, arrival_public, arrival_execution)):
+            return {}
+        payload = {
+            "prediction_id": prediction.id,
+            "decision_public_book_hash": decision_public,
+            "decision_execution_book_hash": decision_execution,
+            "decision_shadow_adjusted": decision_shadow,
+            "arrival_public_book_hash": arrival_public,
+            "arrival_execution_book_hash": arrival_execution,
+            "arrival_shadow_adjusted": arrival_shadow,
+        }
+        r4.audit(
+            db,
+            PROVENANCE_EVENT,
+            "Persist public-to-shadow order-book hash bridge",
+            **payload,
+        )
+        db.commit()
+        return payload
+
+    def _bridge_execution_evidence_hash(
+        self,
+        db: Session,
+        prediction: PaperV5Prediction,
+        provenance: dict[str, Any],
+    ) -> None:
+        if not provenance:
+            return
+        evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
+        if evidence is None:
+            return
+        evidence.execution_evidence_hash = r4._canonical_hash(
+            {
+                "r4_1_execution_evidence_hash": evidence.execution_evidence_hash,
+                "book_provenance": provenance,
+            }
+        )
+        db.add(evidence)
+        db.commit()
+
     def process(self, db: Session, wallet: Wallet, activity: dict[str, Any]) -> bool:
         condition_id = str(activity.get("conditionId") or "")
         market_slug = str(activity.get("slug") or "").strip()
@@ -239,6 +298,8 @@ class PaperEngineV5R42(r4.PaperEngineV5R4):
                 )
             )
             self._refresh_revalidated_evidence(db, prediction)
+            provenance = self._persist_book_provenance(db, prediction)
+            self._bridge_execution_evidence_hash(db, prediction, provenance)
             if execution is not None:
                 self._truth_client.record_fill(prediction.asset_id, prediction.side, execution)
             return handled
@@ -252,8 +313,27 @@ def _directional_decay(side: str, later: float | None, source: float) -> float |
     return later - source if side == "BUY" else source - later
 
 
+def _book_provenance_by_prediction(db: Session) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    events = db.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.event_type == PROVENANCE_EVENT)
+        .order_by(AuditEvent.id)
+    ).all()
+    for event in events:
+        try:
+            payload = json.loads(event.payload_json)
+            prediction_id = int(payload.get("prediction_id") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if prediction_id > 0:
+            out[prediction_id] = payload
+    return out
+
+
 def _write_ledger_r42(original_writer: Any, db: Session, path: Path) -> None:
     _write_ledger_r41(original_writer, db, path)
+    provenance_by_prediction = _book_provenance_by_prediction(db)
     rewritten: list[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(raw)
@@ -285,9 +365,14 @@ def _write_ledger_r42(original_writer: Any, db: Session, path: Path) -> None:
             "fee_exponent": execution.get("fee_exponent"),
             "fee_rate_bps_crosscheck": evidence.get("fee_rate_bps_crosscheck"),
         }
-        row["shadow_self_impact_applied"] = any(
-            str(execution.get(key) or "").startswith("shadow-")
-            for key in ("decision_book_hash", "arrival_book_hash")
+        provenance = provenance_by_prediction.get(int(row.get("prediction_id") or 0))
+        row["book_provenance"] = provenance
+        row["shadow_self_impact_applied"] = bool(
+            provenance
+            and (
+                provenance.get("decision_shadow_adjusted") is True
+                or provenance.get("arrival_shadow_adjusted") is True
+            )
         )
         rewritten.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
     path.write_text("\n".join(rewritten) + ("\n" if rewritten else ""), encoding="utf-8")
@@ -309,6 +394,11 @@ def _apply_r42_report(
                 "run-local conservative no-replenishment depletion by asset/side/price"
             ),
             "shadow_self_impact_live_claim": False,
+            "public_book_hash_bridge_persisted": True,
+            "execution_evidence_hash_includes_book_provenance": True,
+            "book_provenance_storage": (
+                "AuditEvent paper_v5_r42_book_provenance plus immutable ledger"
+            ),
             "copy_decay_metrics_in_ledger": True,
             "fee_provenance_in_ledger": True,
             "simulated_latency_field_semantics": (
