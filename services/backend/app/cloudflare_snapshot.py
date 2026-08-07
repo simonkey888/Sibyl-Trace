@@ -139,6 +139,11 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         or method.get("l2_depth_consumed") is not True
         or method.get("partial_fills") is not True
         or method.get("legacy_history_rewritten") is not False
+        or method.get("immediate_post_fill_marking") is not True
+        or method.get("end_cycle_mark_refresh") is not True
+        or method.get("closed_book_404_is_no_fill") is not True
+        or method.get("unknown_delayed_schedule_fail_closed") is not True
+        or method.get("crypto_delayed_market_ms") != 250
     ):
         raise ValueError("PAPER V5 snapshot violates truthful-execution methodology")
 

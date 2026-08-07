@@ -314,10 +314,45 @@ class PaperEngineV5R3(legacy.PaperEngineV5):
         return True
 
 
+def _apply_r3_methodology(report: dict[str, Any]) -> dict[str, Any]:
+    methodology = report.setdefault("methodology", {})
+    methodology.update(
+        {
+            "immediate_post_fill_marking": True,
+            "end_cycle_mark_refresh": True,
+            "closed_book_404_is_no_fill": True,
+            "unknown_delayed_schedule_fail_closed": True,
+            "crypto_delayed_market_ms": 250,
+            "marking": (
+                "immediate post-fill plus end-cycle net executable liquidation "
+                "value; unfilled residual = zero"
+            ),
+            "delayed_market_arrival_delay_basis": (
+                "250ms only for observed itode=true fee_rate=0.07; "
+                "unsupported delayed schedules fail closed"
+            ),
+        }
+    )
+    return report
+
+
 def run(output_dir: Path) -> int:
+    original_cohort = legacy.COHORT_ID
+    original_engine = legacy.PaperEngineV5
+    original_build_report = legacy.build_report
+
+    def build_report_r3(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return _apply_r3_methodology(original_build_report(*args, **kwargs))
+
     legacy.COHORT_ID = COHORT_ID
     legacy.PaperEngineV5 = PaperEngineV5R3
-    return legacy.run(output_dir)
+    legacy.build_report = build_report_r3
+    try:
+        return legacy.run(output_dir)
+    finally:
+        legacy.COHORT_ID = original_cohort
+        legacy.PaperEngineV5 = original_engine
+        legacy.build_report = original_build_report
 
 
 def main() -> None:

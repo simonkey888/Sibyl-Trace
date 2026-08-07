@@ -13,7 +13,7 @@ from app.execution_v5 import market_rules_from_clob_info
 from app.models import Wallet
 from app.models_v5 import PaperV5Execution, PaperV5Prediction
 from app.paper_v5 import current_portfolio_v5, execution_health_v5
-from app.paper_v5_r3 import COHORT_ID, PaperEngineV5R3
+from app.paper_v5_r3 import COHORT_ID, PaperEngineV5R3, _apply_r3_methodology
 from app.repository import initialize_state
 
 
@@ -179,3 +179,15 @@ def test_unknown_delayed_market_schedule_fails_closed() -> None:
         }
     )
     assert crypto.order_delay_ms == 250
+
+
+def test_r3_methodology_reports_exact_behavior() -> None:
+    report = _apply_r3_methodology({"methodology": {"midpoint_fills": False}})
+    method = report["methodology"]
+    assert method["midpoint_fills"] is False
+    assert method["immediate_post_fill_marking"] is True
+    assert method["end_cycle_mark_refresh"] is True
+    assert method["closed_book_404_is_no_fill"] is True
+    assert method["unknown_delayed_schedule_fail_closed"] is True
+    assert method["crypto_delayed_market_ms"] == 250
+    assert "immediate post-fill" in method["marking"]
