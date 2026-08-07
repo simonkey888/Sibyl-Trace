@@ -1,0 +1,49 @@
+name: npm lockfile V2
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/gateway/package.json"
+      - "apps/gateway/package-lock.json"
+      - ".github/workflows/npm-lock-v2.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: npm-lock-v2-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lock:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Generate reproducible npm lockfile
+        working-directory: apps/gateway
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify lock resolution
+        working-directory: apps/gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Commit lockfile when changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/gateway/package-lock.json; then
+            echo "package-lock.json already reproducible."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/gateway/package-lock.json
+          git commit -m "chore: lock gateway dependencies"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
