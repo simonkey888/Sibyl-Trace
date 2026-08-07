@@ -24,6 +24,21 @@ class ResearchExperiment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ResearchHypothesis(Base):
+    __tablename__ = "research_hypotheses"
+
+    hypothesis_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    parent_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    thesis: Mapped[str] = mapped_column(Text)
+    config_json: Mapped[str] = mapped_column(Text)
+    preregistration_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="PREREGISTERED", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ResearchObservation(Base):
     __tablename__ = "research_observations"
     __table_args__ = (
