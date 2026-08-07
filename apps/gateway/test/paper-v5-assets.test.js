@@ -24,7 +24,7 @@ test("dashboard selects PASS paper_v5 before legacy trial performance", () => {
   assert.match(app, /midpoint_fills === false/);
   assert.match(app, /V5 TRUTH ONLINE/);
   assert.match(app, /LEGACY ONLY/);
-  assert.match(app, /resolved BUY entries/i);
+  assert.match(html, /resolved BUY entries/i);
 });
 
 
