@@ -367,12 +367,9 @@ def _write_ledger_r42(original_writer: Any, db: Session, path: Path) -> None:
         }
         provenance = provenance_by_prediction.get(int(row.get("prediction_id") or 0))
         row["book_provenance"] = provenance
-        row["shadow_self_impact_applied"] = bool(
-            provenance
-            and (
-                provenance.get("decision_shadow_adjusted") is True
-                or provenance.get("arrival_shadow_adjusted") is True
-            )
+        row["shadow_self_impact_applied"] = any(
+            str(execution.get(key) or "").startswith("shadow-")
+            for key in ("decision_book_hash", "arrival_book_hash")
         )
         rewritten.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
     path.write_text("\n".join(rewritten) + ("\n" if rewritten else ""), encoding="utf-8")
