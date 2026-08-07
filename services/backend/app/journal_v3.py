@@ -33,6 +33,17 @@ def _payload(event: V3Event, run_id: str) -> dict[str, Any]:
     }
 
 
+def downsample_bucket_key(event: V3Event, *, bucket_ms: int) -> tuple[str, str, str, int]:
+    if bucket_ms <= 0:
+        raise ValueError("bucket_ms must be positive")
+    return (
+        event.source,
+        event.asset_id or "",
+        event.event_type,
+        event.receive_timestamp_ms // bucket_ms,
+    )
+
+
 def persist_downsampled_capture(
     db: Session,
     *,
@@ -44,14 +55,12 @@ def persist_downsampled_capture(
 ) -> int:
     if bucket_ms <= 0:
         raise ValueError("bucket_ms must be positive")
-    buckets: dict[tuple[str, str, int], V3Event] = {}
+    buckets: dict[tuple[str, str, str, int], V3Event] = {}
     for event in events:
-        asset = event.asset_id or ""
-        bucket = event.receive_timestamp_ms // bucket_ms
-        buckets[(event.source, asset, bucket)] = event
+        buckets[downsample_bucket_key(event, bucket_ms=bucket_ms)] = event
 
     inserted = 0
-    for (source, asset, bucket), event in sorted(buckets.items()):
+    for (source, asset, event_type, bucket), event in sorted(buckets.items()):
         payload = _payload(event, run_id)
         key = hash_payload(
             {
@@ -59,7 +68,7 @@ def persist_downsampled_capture(
                 "source": source,
                 "asset_id": asset,
                 "bucket": bucket,
-                "event_type": event.event_type,
+                "event_type": event_type,
             }
         )
         exists = db.scalar(
