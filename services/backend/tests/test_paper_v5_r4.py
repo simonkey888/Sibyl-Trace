@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,9 @@ from app.paper_v5_r4 import (
     _rules_from_official_metadata,
     _status_counts,
     _write_ledger_r4,
+)
+from app.paper_v5_r4 import (
+    run as run_r4,
 )
 from app.repository import initialize_state
 
@@ -433,3 +437,37 @@ def test_sell_without_position_rejects_before_market_io():
         assert execution.reason == "no_paper_position_to_sell"
         assert execution.decision_book_hash is None
         assert evidence is None
+
+
+def test_run_wrapper_installs_and_restores_r4_contract(monkeypatch, tmp_path):
+    local = factory()
+    original_cohort = legacy.COHORT_ID
+    original_engine = legacy.PaperEngineV5
+    original_build = legacy.build_report
+    original_writer = legacy._write_ledger
+    original_model = legacy.EXECUTION_MODEL
+    observed = {}
+
+    monkeypatch.setattr(legacy, "init_db", lambda: None)
+    monkeypatch.setattr(legacy, "SessionLocal", local)
+
+    def fake_run(output_dir: Path):
+        observed["output_dir"] = output_dir
+        observed["cohort"] = legacy.COHORT_ID
+        observed["engine"] = legacy.PaperEngineV5
+        observed["model"] = legacy.EXECUTION_MODEL
+        assert legacy.build_report is not original_build
+        assert legacy._write_ledger is not original_writer
+        return 0
+
+    monkeypatch.setattr(legacy, "run", fake_run)
+    assert run_r4(tmp_path) == 0
+    assert observed["output_dir"] == tmp_path
+    assert observed["cohort"] == "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
+    assert observed["engine"] is PaperEngineV5R4
+    assert observed["model"] == "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
+    assert original_cohort == legacy.COHORT_ID
+    assert legacy.PaperEngineV5 is original_engine
+    assert legacy.build_report is original_build
+    assert legacy._write_ledger is original_writer
+    assert original_model == legacy.EXECUTION_MODEL
