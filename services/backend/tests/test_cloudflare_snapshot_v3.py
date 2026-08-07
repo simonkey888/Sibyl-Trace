@@ -91,5 +91,5 @@ def test_cloudflare_snapshot_refuses_v3_live_or_cost_drift(tmp_path: Path) -> No
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["safety"]["cost_authorized_usd"] = 1
     _write(path, payload)
-    with pytest.raises(ValueError, match="PAPER/LIVE/\$0"):
+    with pytest.raises(ValueError, match=r"PAPER/LIVE/\$0"):
         build_cloudflare_snapshot(tmp_path)
