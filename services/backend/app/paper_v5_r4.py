@@ -374,17 +374,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
         )
         requested_shares = 0.0
         if side == "SELL":
-            if position is None or position.shares <= 0:
-                self._reject(db, prediction, "no_paper_position_to_sell")
-                _record_evidence(
-                    db,
-                    prediction,
-                    market,
-                    decision_book=decision_book,
-                    decision_received_at_ms=decision_received_ms,
-                    fee_rate_bps_crosscheck=fee_bps,
-                )
-                return True
+            # SELL-without-position is rejected by RiskPolicy.preflight before market I/O.
             requested_shares = min(position.shares, decision.amount_usd / observed)
 
         if rules.order_delay_ms:
