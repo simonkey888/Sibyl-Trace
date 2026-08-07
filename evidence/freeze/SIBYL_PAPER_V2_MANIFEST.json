@@ -5,8 +5,8 @@
     "paid_apis": false
   },
   "evidence_generation": "SIBYL_PAPER_V2",
-  "frozen_source_sha": "6d2b91cfbbc85dd0e719ce68084a85ee6a2b436c",
-  "frozen_source_tree_sha": "ecc75c88b57dc7bdc13231a8c959d9310a006bf7",
+  "frozen_source_sha": "2da95bd115eb3d412dd5d0e557897d1f8126825f",
+  "frozen_source_tree_sha": "604edde65bd98e08efd79b601c3d0bc07c6aed90",
   "live_policy": {
     "available": false,
     "real_money": false
@@ -30,7 +30,7 @@
     "services/backend/app/domain.py": "c9379e67e6351c4c375b9a51a54b7ab575489f590af3a5ac0e832cd992c440e6",
     "services/backend/app/evidence.py": "0fcb6c1fd5f4ec6a5a3534e465ca715ac3e8a6d117c29cd64b5cc8603e3a270d",
     "services/backend/app/hypothesis.py": "6143bea983c727aec04f3dd89111eda6475bffabbe8ea3d36483ae49decd9fda",
-    "services/backend/app/latency.py": "b1230515e9b5315570268e3d60bac1f12ea196a1318f127eb8ec77a8c21901a6",
+    "services/backend/app/latency.py": "bc246b32589a2139ff1bec573ad922c91269eec9ff98c463755e60d3918f4871",
     "services/backend/app/paper.py": "f65ba17aef0022b2d7d69586c575c65608055326a2cdc49ac622d1cdc8fc50bf",
     "services/backend/app/polymarket.py": "649035fa3c49f711b7bc422cce933aa67b06dd589dd272015162218ab86daf28",
     "services/backend/app/research.py": "1637c034c68e8121bad100012bf129f8f31092c1eb09f7785f0abb05afd2fc19",
