@@ -27,6 +27,7 @@ from app.models_v5 import (
     PaperV5Prediction,
 )
 from app.paper_v5_r3 import _mark_position_from_book, _status_code
+from app.polymarket import PolymarketError
 from app.repository import audit, get_state
 
 COHORT_ID = "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
@@ -36,6 +37,25 @@ EXECUTION_MODEL = "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
 def _canonical_hash(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _market_by_condition(client: Any, condition_id: str) -> dict[str, Any]:
+    data = client._get(
+        f"{client.settings.gamma_api_base}/markets",
+        {"condition_ids": [condition_id], "limit": 10},
+    )
+    rows = (
+        data
+        if isinstance(data, list)
+        else (data.get("markets") or [] if isinstance(data, dict) else [])
+    )
+    for market in rows:
+        if not isinstance(market, dict):
+            continue
+        current = str(market.get("conditionId") or market.get("condition_id") or "")
+        if current == condition_id:
+            return market
+    raise PolymarketError("Gamma market details did not match requested condition")
 
 
 def _market_state(market: dict[str, Any]) -> dict[str, Any]:
@@ -235,7 +255,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
             return True
 
         try:
-            market = self.client.market_by_condition(condition_id)
+            market = _market_by_condition(self.client, condition_id)
             if not _is_trade_ready(market):
                 self._no_fill(db, prediction, "market_not_trade_ready")
                 _record_evidence(db, prediction, market)
@@ -261,7 +281,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
         except Exception as exc:
             if _status_code(exc) == 404:
                 try:
-                    latest_market = self.client.market_by_condition(condition_id)
+                    latest_market = _market_by_condition(self.client, condition_id)
                 except Exception:
                     latest_market = market
                 if _is_trade_ready(latest_market):
@@ -383,7 +403,7 @@ class PaperEngineV5R4(legacy.PaperEngineV5):
             }
             if _status_code(exc) == 404:
                 try:
-                    latest_market = self.client.market_by_condition(condition_id)
+                    latest_market = _market_by_condition(self.client, condition_id)
                 except Exception:
                     latest_market = market
                 if _is_trade_ready(latest_market):
