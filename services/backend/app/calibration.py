@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import log, sqrt
 from statistics import fmean
-from typing import Iterable
 
 
 @dataclass(frozen=True)
