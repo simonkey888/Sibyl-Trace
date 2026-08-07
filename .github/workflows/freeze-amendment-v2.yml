@@ -1,0 +1,29 @@
+name: PAPER V2 freeze amendment
+
+on:
+  push:
+    branches: [fix/binance-market-data-only-ws]
+    paths:
+      - ".github/workflows/freeze-amendment-v2.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/binance-market-data-only-ws
+      - name: Refresh protected baseline after preregistered transport amendment
+        run: |
+          set -euo pipefail
+          python scripts/freeze_manifest.py --write
+          git rm .github/workflows/freeze-amendment-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add evidence/freeze/SIBYL_PAPER_V2_MANIFEST.json
+          git commit -m "chore: freeze Binance transport amendment"
+          git push origin HEAD:fix/binance-market-data-only-ws
