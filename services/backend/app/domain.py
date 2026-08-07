@@ -83,7 +83,7 @@ class RiskRequest:
     wallet_score: float
     signal_age_seconds: int
     source_price: float
-    observed_price: float
+    observed_price: float | None
     source_usdc: float
 
 
@@ -106,7 +106,11 @@ class RiskPolicy:
     copy_fraction: float = 0.10
     minimum_order_usd: float = 1.0
 
-    def evaluate(self, request: RiskRequest, portfolio: PortfolioState) -> RiskDecision:
+    def preflight(
+        self,
+        request: RiskRequest,
+        portfolio: PortfolioState,
+    ) -> RiskDecision | None:
         side = request.side.upper()
         if side not in {"BUY", "SELL"}:
             return RiskDecision(False, 0.0, "unsupported_side")
@@ -117,18 +121,31 @@ class RiskPolicy:
             or request.signal_age_seconds > self.maximum_signal_age_seconds
         ):
             return RiskDecision(False, 0.0, "stale_signal")
-        if not 0 < request.source_price < 1 or not 0 < request.observed_price < 1:
+        if not 0 < request.source_price < 1:
             return RiskDecision(False, 0.0, "invalid_price")
-        if abs(request.observed_price - request.source_price) > self.maximum_absolute_slippage:
-            return RiskDecision(False, 0.0, "slippage_limit")
         if portfolio.daily_pnl <= -(portfolio.equity * self.maximum_daily_loss_fraction):
             return RiskDecision(False, 0.0, "daily_loss_limit")
         if portfolio.drawdown >= self.maximum_drawdown_fraction:
             return RiskDecision(False, 0.0, "drawdown_limit")
+        if side == "SELL" and portfolio.asset_shares <= 0:
+            return RiskDecision(False, 0.0, "no_paper_position_to_sell")
+        return None
 
-        if side == "SELL":
-            if portfolio.asset_shares <= 0:
-                return RiskDecision(False, 0.0, "no_paper_position_to_sell")
+    def evaluate(self, request: RiskRequest, portfolio: PortfolioState) -> RiskDecision:
+        preflight = self.preflight(request, portfolio)
+        if preflight is not None:
+            return preflight
+
+        observed_price = request.observed_price
+        if observed_price is None or not 0 < observed_price < 1:
+            return RiskDecision(False, 0.0, "invalid_price")
+        if (
+            abs(observed_price - request.source_price)
+            > self.maximum_absolute_slippage + 1e-9
+        ):
+            return RiskDecision(False, 0.0, "slippage_limit")
+
+        if request.side.upper() == "SELL":
             amount = min(request.source_usdc * self.copy_fraction, portfolio.asset_exposure)
             if amount < self.minimum_order_usd:
                 return RiskDecision(False, 0.0, "insufficient_paper_position")

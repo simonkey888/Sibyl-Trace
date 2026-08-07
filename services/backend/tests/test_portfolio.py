@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -6,9 +6,9 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
 from app.db import Base
-from app.models import PaperOrder, PaperPosition, PortfolioSnapshot, Wallet
+from app.models import AuditEvent, PaperOrder, PaperPosition, PortfolioSnapshot, SystemState, Wallet
 from app.paper import refresh_position_prices
-from app.repository import current_portfolio
+from app.repository import current_portfolio, initialize_state
 from app.scanner import scan_wallets
 
 
@@ -22,7 +22,39 @@ def session() -> Session:
     return Session(engine)
 
 
-def test_daily_pnl_uses_first_utc_snapshot() -> None:
+def add_position_and_buy(db: Session) -> None:
+    db.add(
+        PaperPosition(
+            asset_id="asset",
+            condition_id="condition",
+            market_title="Market",
+            outcome="YES",
+            shares=20,
+            average_price=0.5,
+            current_price=0.6,
+            realized_pnl=0,
+        )
+    )
+    db.add(
+        PaperOrder(
+            signal_id=1,
+            asset_id="asset",
+            condition_id="condition",
+            market_title="Market",
+            outcome="YES",
+            side="BUY",
+            requested_usd=10,
+            filled_usd=10,
+            source_price=0.5,
+            observed_price=0.5,
+            fill_price=0.5,
+            slippage=0,
+            status="FILLED",
+        )
+    )
+
+
+def test_daily_pnl_uses_initial_bankroll_without_prior_close() -> None:
     with session() as db:
         db.add(
             PortfolioSnapshot(
@@ -35,39 +67,47 @@ def test_daily_pnl_uses_first_utc_snapshot() -> None:
                 captured_at=datetime.now(UTC),
             )
         )
-        db.add(
-            PaperPosition(
-                asset_id="asset",
-                condition_id="condition",
-                market_title="Market",
-                outcome="YES",
-                shares=20,
-                average_price=0.5,
-                current_price=0.6,
-                realized_pnl=0,
-            )
-        )
-        db.add(
-            PaperOrder(
-                signal_id=1,
-                asset_id="asset",
-                condition_id="condition",
-                market_title="Market",
-                outcome="YES",
-                side="BUY",
-                requested_usd=10,
-                filled_usd=10,
-                source_price=0.5,
-                observed_price=0.5,
-                fill_price=0.5,
-                slippage=0,
-                status="FILLED",
-            )
-        )
+        add_position_and_buy(db)
         db.commit()
         portfolio = current_portfolio(db, 300)
         assert portfolio["equity"] == 302
         assert portfolio["daily_pnl"] == 2
+
+
+def test_daily_pnl_uses_last_snapshot_before_utc_day() -> None:
+    with session() as db:
+        now = datetime.now(UTC)
+        prior_day = (now - timedelta(days=1)).replace(hour=23, minute=59)
+        db.add(
+            PortfolioSnapshot(
+                cash=295,
+                exposure=0,
+                equity=295,
+                realized_pnl=-5,
+                unrealized_pnl=0,
+                drawdown=0.02,
+                captured_at=prior_day,
+            )
+        )
+        add_position_and_buy(db)
+        db.commit()
+        portfolio = current_portfolio(db, 300)
+        assert portfolio["equity"] == 302
+        assert portfolio["daily_pnl"] == 7
+
+
+def test_initialize_state_reconciles_stale_paper_mode_to_read_only() -> None:
+    with session() as db:
+        db.add(SystemState(key="mode", value="PAPER"))
+        db.commit()
+        initialize_state(db, Settings())
+        mode = db.get(SystemState, "mode")
+        event = db.query(AuditEvent).filter_by(event_type="runtime_mode_reconciled").one()
+
+    assert mode is not None
+    assert mode.value == "READ_ONLY"
+    assert "PAPER" in event.message
+    assert "READ_ONLY" in event.message
 
 
 class PriceClient:

@@ -60,7 +60,7 @@ class PolymarketClient:
             return []
 
         results: list[dict] = []
-        seen: set[tuple[str, str, str, int]] = set()
+        seen: set[tuple[str, str, str, int, str, str]] = set()
         page_size = min(500, target)
         for offset in range(0, target, page_size):
             current_limit = min(page_size, target - offset)
@@ -83,6 +83,8 @@ class PolymarketClient:
                     str(item.get("asset") or ""),
                     str(item.get("side") or ""),
                     int(item.get("timestamp") or 0),
+                    str(item.get("price") or ""),
+                    str(item.get("size") or ""),
                 )
                 if key in seen:
                     continue
@@ -98,6 +100,26 @@ class PolymarketClient:
             {"limit": min(max(limit, 1), 100), "offset": 0},
         )
         return data if isinstance(data, list) else []
+
+    def closed_markets(self, condition_ids: list[str]) -> list[dict]:
+        unique = list(dict.fromkeys(value for value in condition_ids if value))[:100]
+        if not unique:
+            return []
+        data = self._get(
+            f"{self.settings.gamma_api_base}/markets",
+            {
+                "condition_ids": unique,
+                "closed": "true",
+                "limit": len(unique),
+            },
+        )
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            markets = data.get("markets")
+            if isinstance(markets, list):
+                return [item for item in markets if isinstance(item, dict)]
+        return []
 
     def midpoint(self, asset_id: str) -> float:
         data = self._get(f"{self.settings.clob_api_base}/midpoint", {"token_id": asset_id})

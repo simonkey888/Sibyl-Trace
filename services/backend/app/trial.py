@@ -14,11 +14,20 @@ from sqlalchemy.orm import Session
 from app.ai import OpenAIAnalyst
 from app.config import Settings, get_settings
 from app.db import SessionLocal, init_db
-from app.models import AIAnalysis, PaperOrder, PaperPosition, Signal, Wallet
+from app.models import (
+    AIAnalysis,
+    PaperOrder,
+    PaperPosition,
+    Signal,
+    Wallet,
+    WalletScoreProfile,
+)
 from app.paper import PaperEngine, ingest_wallet_activity, refresh_position_prices
 from app.polymarket import PolymarketClient
 from app.repository import audit, current_portfolio, get_state, initialize_state, set_state
 from app.scanner import scan_wallets
+from app.settlement import settle_closed_positions
+from app.settlement_models import PaperSettlement
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("sibyl.github_trial")
@@ -68,6 +77,7 @@ def build_report(
     started_at: datetime,
     completed_at: datetime,
     selected_count: int,
+    settled_count: int,
     marked_count: int,
     processed_count: int,
     ai_created: bool,
@@ -82,6 +92,16 @@ def build_report(
             .limit(settings.tracked_wallet_limit)
         )
     )
+    profiles = {
+        profile.wallet_address: profile
+        for profile in db.scalars(
+            select(WalletScoreProfile).where(
+                WalletScoreProfile.wallet_address.in_(
+                    [wallet.address for wallet in wallets]
+                )
+            )
+        ).all()
+    }
     positions = list(
         db.scalars(
             select(PaperPosition)
@@ -110,7 +130,7 @@ def build_report(
     )
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run": {
             "status": "PASS" if not errors else "DEGRADED",
             "profile": "GITHUB_DELAYED_PAPER",
@@ -128,6 +148,12 @@ def build_report(
             "signal_age_limit_seconds": settings.risk_max_signal_age_seconds,
             "activity_lookback_seconds": settings.activity_lookback_seconds,
         },
+        "score_contract": {
+            "short": "most recent 50 closed positions",
+            "long": "up to 200 closed positions",
+            "global": "60% SHORT + 40% LONG",
+            "edge": "confidence-weighted PAPER execution copyability; not outcome alpha",
+        },
         "system": {
             "geoblock": get_state(db, "geoblock", "unknown"),
             "paused": get_state(db, "paused", "false") == "true",
@@ -137,6 +163,7 @@ def build_report(
         },
         "cycle": {
             "selected_wallets": selected_count,
+            "positions_settled": settled_count,
             "positions_marked": marked_count,
             "signals_processed": processed_count,
             "ai_report_created": ai_created,
@@ -148,6 +175,7 @@ def build_report(
             "filled_orders": filled,
             "rejected_orders": rejected,
             "open_positions": len(positions),
+            "settled_positions": _count(db, PaperSettlement),
         },
         "portfolio": portfolio,
         "selected_wallets": [
@@ -155,6 +183,36 @@ def build_report(
                 "wallet": short_wallet(wallet.address),
                 "username": wallet.username,
                 "score": round(wallet.score, 2),
+                "short_score": (
+                    round(profiles[wallet.address].short_score, 2)
+                    if wallet.address in profiles
+                    else None
+                ),
+                "long_score": (
+                    round(profiles[wallet.address].long_score, 2)
+                    if wallet.address in profiles
+                    else None
+                ),
+                "global_score": (
+                    round(profiles[wallet.address].global_score, 2)
+                    if wallet.address in profiles
+                    else round(wallet.score, 2)
+                ),
+                "execution_edge_score": (
+                    round(profiles[wallet.address].execution_edge_score, 2)
+                    if wallet.address in profiles
+                    else None
+                ),
+                "execution_edge_sample_size": (
+                    profiles[wallet.address].execution_edge_sample_size
+                    if wallet.address in profiles
+                    else 0
+                ),
+                "average_execution_edge": (
+                    round(profiles[wallet.address].average_execution_edge, 6)
+                    if wallet.address in profiles
+                    else None
+                ),
                 "win_rate": round(wallet.win_rate, 6),
                 "profit_factor": round(wallet.profit_factor, 4),
                 "realized_pnl": round(wallet.realized_pnl, 4),
@@ -242,21 +300,22 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Current cycle",
         "",
-        "| Selected | Marked | Signals | AI report |",
-        "|---:|---:|---:|:---:|",
+        "| Selected | Settled | Marked | Signals | AI report |",
+        "|---:|---:|---:|---:|:---:|",
         (
-            f"| {cycle['selected_wallets']} | {cycle['positions_marked']} | "
-            f"{cycle['signals_processed']} | {str(cycle['ai_report_created']).lower()} |"
+            f"| {cycle['selected_wallets']} | {cycle['positions_settled']} | "
+            f"{cycle['positions_marked']} | {cycle['signals_processed']} | "
+            f"{str(cycle['ai_report_created']).lower()} |"
         ),
         "",
         "## Accumulated state",
         "",
-        "| Wallets | Signals | Orders | Filled | Rejected | Open positions |",
-        "|---:|---:|---:|---:|---:|---:|",
+        "| Wallets | Signals | Orders | Filled | Rejected | Open | Settled |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
         (
             f"| {totals['wallets']} | {totals['signals']} | {totals['orders']} | "
             f"{totals['filled_orders']} | {totals['rejected_orders']} | "
-            f"{totals['open_positions']} |"
+            f"{totals['open_positions']} | {totals['settled_positions']} |"
         ),
         "",
         "## Selected wallets",
@@ -266,16 +325,22 @@ def render_markdown(report: dict[str, Any]) -> str:
     if wallets:
         lines.extend(
             [
-                "| Wallet | Score | Win rate | Profit factor | Closed | Concentration |",
-                "|---|---:|---:|---:|---:|---:|",
+                "| Wallet | SHORT | LONG | GLOBAL | EDGE | Edge n | Win rate |",
+                "|---|---:|---:|---:|---:|---:|---:|",
             ]
         )
         for wallet in wallets:
+            short_score = wallet["short_score"]
+            long_score = wallet["long_score"]
+            edge_score = wallet["execution_edge_score"]
             lines.append(
                 f"| {_cell(wallet['username'] or wallet['wallet'])} | "
-                f"{wallet['score']:.2f} | {wallet['win_rate'] * 100:.2f}% | "
-                f"{wallet['profit_factor']:.2f} | {wallet['closed_count']} | "
-                f"{wallet['concentration'] * 100:.2f}% |"
+                f"{short_score if short_score is not None else '—'} | "
+                f"{long_score if long_score is not None else '—'} | "
+                f"{wallet['global_score']:.2f} | "
+                f"{edge_score if edge_score is not None else '—'} | "
+                f"{wallet['execution_edge_sample_size']} | "
+                f"{wallet['win_rate'] * 100:.2f}% |"
             )
     else:
         lines.append("_No wallet qualified in this cycle._")
@@ -338,6 +403,7 @@ def run_cycle(output_dir: Path) -> int:
     started_at = utcnow()
     errors: list[dict[str, str]] = []
     selected_count = 0
+    settled_count = 0
     marked_count = 0
     processed_count = 0
     ai_created = False
@@ -363,6 +429,15 @@ def run_cycle(output_dir: Path) -> int:
             )
             if selected is not None:
                 selected_count = len(selected)
+
+            settled = _phase(
+                db,
+                "position_settlement",
+                lambda: settle_closed_positions(db, client, settings),
+                errors,
+            )
+            if settled is not None:
+                settled_count = int(settled)
 
             marked = _phase(
                 db,
@@ -400,6 +475,7 @@ def run_cycle(output_dir: Path) -> int:
                 severity="WARN" if errors else "INFO",
                 status="DEGRADED" if errors else "PASS",
                 selected=selected_count,
+                settled=settled_count,
                 marked=marked_count,
                 processed=processed_count,
             )
@@ -410,6 +486,7 @@ def run_cycle(output_dir: Path) -> int:
                 started_at=started_at,
                 completed_at=completed_at,
                 selected_count=selected_count,
+                settled_count=settled_count,
                 marked_count=marked_count,
                 processed_count=processed_count,
                 ai_created=ai_created,
@@ -432,7 +509,7 @@ def main() -> int:
     except Exception as exc:
         completed_at = utcnow()
         report = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run": {
                 "status": "FAILED",
                 "profile": "GITHUB_DELAYED_PAPER",
@@ -456,9 +533,11 @@ def main() -> int:
                 "signal_age_limit_seconds": 0,
                 "activity_lookback_seconds": 0,
             },
+            "score_contract": {},
             "system": {},
             "cycle": {
                 "selected_wallets": 0,
+                "positions_settled": 0,
                 "positions_marked": 0,
                 "signals_processed": 0,
                 "ai_report_created": False,
@@ -470,6 +549,7 @@ def main() -> int:
                 "filled_orders": 0,
                 "rejected_orders": 0,
                 "open_positions": 0,
+                "settled_positions": 0,
             },
             "portfolio": {
                 "equity": 0,

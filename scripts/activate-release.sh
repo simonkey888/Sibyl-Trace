@@ -33,7 +33,7 @@ rollback() {
 cd "$RELEASE"
 APP_VERSION="$RELEASE_SHA" docker compose -p sibyl-trace config -q
 APP_VERSION="$RELEASE_SHA" docker compose -p sibyl-trace pull db tunnel
-APP_VERSION="$RELEASE_SHA" docker compose -p sibyl-trace build --pull api worker backup
+APP_VERSION="$RELEASE_SHA" docker compose -p sibyl-trace build --pull api backup
 
 ln -sfn "$RELEASE" "$BASE/current.next"
 mv -Tf "$BASE/current.next" "$CURRENT"

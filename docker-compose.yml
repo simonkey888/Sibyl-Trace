@@ -1,7 +1,7 @@
 name: sibyl-trace
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine3.23@sha256:42b8b8b29c8a4e933d88943e5b03001a78794905cf786e6e7634e9f2abd5a0d3
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -14,9 +14,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    networks: [private]
+    networks: [data]
 
   api:
+    image: sibyl-trace-backend:${APP_VERSION:-dev}
     build: ./services/backend
     restart: unless-stopped
     env_file: .env
@@ -25,14 +26,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+    networks: [data, egress]
     expose: ["8000"]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
 
   worker:
-    build: ./services/backend
+    image: sibyl-trace-backend:${APP_VERSION:-dev}
     restart: unless-stopped
     command: ["python", "-m", "app.worker"]
     env_file: .env
@@ -41,36 +42,41 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+      api:
+        condition: service_started
+    networks: [data, egress]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
 
   tunnel:
-    image: cloudflare/cloudflared:2026.7.3
+    image: cloudflare/cloudflared:2026.7.3@sha256:e39ee8da81ad5e05d77f38d2f51c60ca51bf2a8450ac3abab50c17fdb91d91bf
     restart: unless-stopped
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on: [api]
-    networks: [private]
+    networks: [egress]
     read_only: true
     security_opt: ["no-new-privileges:true"]
 
   backup:
+    image: sibyl-trace-backup:${APP_VERSION:-dev}
     build: ./infra/backup
     restart: unless-stopped
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
-    networks: [private]
+    networks: [data, egress]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
 
 networks:
-  private:
+  data:
+    internal: true
+  egress:
     internal: false
 
 volumes:

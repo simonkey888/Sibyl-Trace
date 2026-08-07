@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     admin_token: str = "development-admin-token"
     gateway_shared_secret: str = "development-gateway-secret"
     cors_origins: str = ""
-    trading_mode: Literal["READ_ONLY", "PAPER"] = "PAPER"
+    trading_mode: Literal["READ_ONLY", "PAPER"] = "READ_ONLY"
+    paper_trading_enabled: bool = False
     live_trading_enabled: bool = False
 
     ai_analysis_enabled: bool = False
@@ -44,6 +45,31 @@ class Settings(BaseSettings):
         if value:
             raise ValueError("LIVE trading is not available in Sibyl Trace V1")
         return value
+
+    @model_validator(mode="after")
+    def reject_unsafe_configuration(self) -> "Settings":
+        if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
+            raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
+
+        if self.app_env.lower() != "production":
+            return self
+
+        secrets = {
+            "admin_token": self.admin_token,
+            "gateway_shared_secret": self.gateway_shared_secret,
+        }
+        weak_prefixes = ("development-", "replace-with-", "change-me")
+        for name, value in secrets.items():
+            normalized = value.strip().lower()
+            if (
+                len(value) < 32
+                or not normalized
+                or any(normalized.startswith(prefix) for prefix in weak_prefixes)
+            ):
+                raise ValueError(
+                    f"{name} must be a non-placeholder secret of at least 32 characters"
+                )
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

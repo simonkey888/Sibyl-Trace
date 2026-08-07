@@ -1,3 +1,5 @@
+import hashlib
+import json
 import time
 from datetime import UTC, datetime
 
@@ -7,8 +9,39 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.domain import PortfolioState, RiskPolicy, RiskRequest
 from app.models import PaperOrder, PaperPosition, PortfolioSnapshot, Signal, Wallet
-from app.polymarket import PolymarketClient
+from app.polymarket import PolymarketClient, PolymarketError
 from app.repository import audit, current_portfolio, get_state, set_state
+
+
+def activity_source_keys(wallet_address: str, activity: dict) -> tuple[str, str]:
+    tx_hash = str(activity.get("transactionHash") or "")
+    asset_id = str(activity.get("asset") or "")
+    side = str(activity.get("side") or "").upper()
+    legacy = f"{wallet_address}:{tx_hash}:{asset_id}:{side}"
+    outcome_index = activity.get("outcomeIndex")
+    identity = {
+        "wallet": wallet_address,
+        "transaction_hash": tx_hash,
+        "asset_id": asset_id,
+        "side": side,
+        "timestamp": int(activity.get("timestamp") or 0),
+        "price": str(activity.get("price") or ""),
+        "size": str(activity.get("size") or ""),
+        "usdc_size": str(activity.get("usdcSize") or ""),
+        "outcome_index": str(outcome_index) if outcome_index is not None else "",
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    current = f"v2:{hashlib.sha256(encoded.encode()).hexdigest()}"
+    return current, legacy
+
+
+def _legacy_signal_matches(signal: Signal, activity: dict) -> bool:
+    return (
+        signal.source_timestamp == int(activity.get("timestamp") or 0)
+        and abs(signal.source_price - float(activity.get("price") or 0)) <= 1e-12
+        and abs(signal.source_size - float(activity.get("size") or 0)) <= 1e-12
+        and abs(signal.source_usdc - float(activity.get("usdcSize") or 0)) <= 1e-9
+    )
 
 
 class PaperEngine:
@@ -18,41 +51,84 @@ class PaperEngine:
         self.policy = RiskPolicy(
             maximum_signal_age_seconds=settings.risk_max_signal_age_seconds
         )
+        self._price_cache: dict[str, float | None] = {}
+
+    def clear_price_cache(self) -> None:
+        self._price_cache.clear()
+
+    def _midpoint(self, asset_id: str) -> float:
+        if asset_id in self._price_cache:
+            cached = self._price_cache[asset_id]
+            if cached is None:
+                raise PolymarketError("cached midpoint unavailable")
+            return cached
+        try:
+            midpoint = self.client.midpoint(asset_id)
+        except Exception:
+            self._price_cache[asset_id] = None
+            raise
+        self._price_cache[asset_id] = midpoint
+        return midpoint
 
     def process_signal(self, db: Session, signal: Signal) -> PaperOrder:
         mode = get_state(db, "mode", self.settings.trading_mode)
         paused = get_state(db, "paused", "false") == "true"
         killed = get_state(db, "kill_switch", "false") == "true"
         if mode != "PAPER" or paused or killed:
-            reason = "system_not_accepting_orders"
-            return self._reject(db, signal, reason)
-
-        try:
-            observed_price = self.client.midpoint(signal.asset_id)
-        except Exception as exc:
-            audit(db, "price_fetch_failed", str(exc), severity="WARN", signal_id=signal.id)
-            return self._reject(db, signal, "price_unavailable")
+            return self._reject(db, signal, "system_not_accepting_orders")
 
         position = db.get(PaperPosition, signal.asset_id)
         portfolio = current_portfolio(db, self.settings.initial_bankroll_usd)
         asset_shares = position.shares if position else 0.0
-        asset_exposure = asset_shares * observed_price
+        reference_price = (
+            position.current_price
+            if position is not None and position.current_price > 0
+            else signal.source_price
+        )
+        source_usdc = max(signal.source_usdc, signal.source_size * signal.source_price)
+        request = RiskRequest(
+            side=signal.side,
+            wallet_score=signal.wallet_score,
+            signal_age_seconds=max(int(time.time()) - signal.source_timestamp, 0),
+            source_price=signal.source_price,
+            observed_price=None,
+            source_usdc=source_usdc,
+        )
         state = PortfolioState(
             equity=portfolio["equity"],
             cash=portfolio["cash"],
             total_exposure=portfolio["exposure"],
             daily_pnl=portfolio["daily_pnl"],
             drawdown=portfolio["drawdown"],
-            asset_exposure=asset_exposure,
+            asset_exposure=asset_shares * max(reference_price, 0),
+            asset_shares=asset_shares,
+        )
+        preflight = self.policy.preflight(request, state)
+        if preflight is not None:
+            return self._reject(db, signal, preflight.reason)
+
+        try:
+            observed_price = self._midpoint(signal.asset_id)
+        except Exception as exc:
+            audit(db, "price_fetch_failed", str(exc), severity="WARN", signal_id=signal.id)
+            return self._reject(db, signal, "price_unavailable")
+
+        state = PortfolioState(
+            equity=portfolio["equity"],
+            cash=portfolio["cash"],
+            total_exposure=portfolio["exposure"],
+            daily_pnl=portfolio["daily_pnl"],
+            drawdown=portfolio["drawdown"],
+            asset_exposure=asset_shares * observed_price,
             asset_shares=asset_shares,
         )
         request = RiskRequest(
             side=signal.side,
             wallet_score=signal.wallet_score,
-            signal_age_seconds=max(int(time.time()) - signal.source_timestamp, 0),
+            signal_age_seconds=request.signal_age_seconds,
             source_price=signal.source_price,
             observed_price=observed_price,
-            source_usdc=max(signal.source_usdc, signal.source_size * signal.source_price),
+            source_usdc=source_usdc,
         )
         decision = self.policy.evaluate(request, state)
         if not decision.approved:
@@ -134,7 +210,11 @@ class PaperEngine:
             source_price=signal.source_price,
             observed_price=observed_price,
             fill_price=None,
-            slippage=(observed_price - signal.source_price) if observed_price else None,
+            slippage=(
+                observed_price - signal.source_price
+                if observed_price is not None
+                else None
+            ),
             status="REJECTED",
             rejection_reason=reason,
         )
@@ -162,6 +242,7 @@ def ingest_wallet_activity(
     db: Session, client: PolymarketClient, settings: Settings, engine: PaperEngine
 ) -> int:
     processed = 0
+    engine.clear_price_cache()
     wallets = list(db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all())
     for wallet in wallets:
         start = (
@@ -183,8 +264,14 @@ def ingest_wallet_activity(
             side = str(activity.get("side") or "").upper()
             if not timestamp or not tx_hash or not asset_id or side not in {"BUY", "SELL"}:
                 continue
-            source_key = f"{wallet.address}:{tx_hash}:{asset_id}:{side}"
+            source_key, legacy_key = activity_source_keys(wallet.address, activity)
             if db.scalar(select(Signal.id).where(Signal.source_key == source_key)):
+                wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
+                continue
+            legacy_signal = db.scalar(
+                select(Signal).where(Signal.source_key == legacy_key).limit(1)
+            )
+            if legacy_signal is not None and _legacy_signal_matches(legacy_signal, activity):
                 wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
                 continue
             signal = Signal(
@@ -203,9 +290,9 @@ def ingest_wallet_activity(
                 transaction_hash=tx_hash,
             )
             db.add(signal)
+            wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
             db.flush()
             engine.process_signal(db, signal)
-            wallet.last_activity_at = max(wallet.last_activity_at, timestamp)
             processed += 1
     set_state(db, "last_watch_at", datetime.now(UTC).isoformat())
     db.commit()

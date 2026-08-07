@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isControlRequestAuthorized } from "../src/index.js";
+import { isControlRequestAuthorized, withSecurityHeaders } from "../src/index.js";
 
 const target = new URL("https://trace.example.com/api/v1/control/pause");
 
@@ -37,4 +37,35 @@ test("rejects form-compatible owner control", () => {
     ),
     false,
   );
+});
+
+test("preserves explicit no-store on proxied API responses", () => {
+  const response = withSecurityHeaders(
+    Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } }),
+  );
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
+
+test("defaults JSON responses to no-store", () => {
+  const response = withSecurityHeaders(Response.json({ ok: true }));
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
+
+test("overrides public cache policy on private JSON", () => {
+  const response = withSecurityHeaders(
+    Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=31536000" } }),
+  );
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
+
+test("overrides public cache policy on private HTML", () => {
+  const response = withSecurityHeaders(
+    new Response("<html></html>", {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000",
+      },
+    }),
+  );
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
 });

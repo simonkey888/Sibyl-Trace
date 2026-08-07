@@ -106,3 +106,44 @@ def test_activity_stops_after_short_page() -> None:
 
     assert offsets == [0]
     assert len(activity) == 1
+
+
+def test_closed_markets_uses_condition_filter_and_accepts_keyset_shape() -> None:
+    client = PolymarketClient(Settings())
+    captured: dict[str, Any] = {}
+
+    def fake_get(url: str, params: dict[str, Any]) -> dict:
+        captured["url"] = url
+        captured["params"] = params
+        return {
+            "markets": [
+                {
+                    "conditionId": "condition",
+                    "closed": True,
+                    "clobTokenIds": '["asset", "other"]',
+                    "outcomePrices": '["1", "0"]',
+                }
+            ],
+            "next_cursor": "LTE=",
+        }
+
+    client._get = fake_get
+    try:
+        markets = client.closed_markets(["condition", "condition", ""])
+    finally:
+        client.close()
+
+    assert captured["url"].endswith("/markets")
+    assert captured["params"]["condition_ids"] == ["condition"]
+    assert captured["params"]["closed"] == "true"
+    assert markets[0]["conditionId"] == "condition"
+
+
+def test_closed_markets_accepts_legacy_list_shape() -> None:
+    client = client_with_payload([{"conditionId": "condition", "closed": True}])
+    try:
+        markets = client.closed_markets(["condition"])
+    finally:
+        client.close()
+
+    assert len(markets) == 1

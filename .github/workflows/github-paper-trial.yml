@@ -6,11 +6,18 @@ on:
       - main
     paths:
       - ".github/workflows/github-paper-trial.yml"
+      - "services/backend/app/ai.py"
       - "services/backend/app/config.py"
+      - "services/backend/app/db.py"
       - "services/backend/app/domain.py"
+      - "services/backend/app/models.py"
       - "services/backend/app/paper.py"
       - "services/backend/app/polymarket.py"
+      - "services/backend/app/repository.py"
       - "services/backend/app/scanner.py"
+      - "services/backend/app/scoring.py"
+      - "services/backend/app/settlement.py"
+      - "services/backend/app/settlement_models.py"
       - "services/backend/app/trial.py"
   schedule:
     - cron: "17 * * * *"
@@ -33,7 +40,7 @@ jobs:
   paper-cycle:
     name: Delayed PAPER cycle
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       STATE_DIR: ${{ github.workspace }}/.trial-state
       OUTPUT_DIR: ${{ github.workspace }}/trial-output
@@ -42,6 +49,7 @@ jobs:
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
       TRADING_MODE: PAPER
+      PAPER_TRADING_ENABLED: "true"
       LIVE_TRADING_ENABLED: "false"
       INITIAL_BANKROLL_USD: "300"
       CANDIDATE_LIMIT: "6"
@@ -57,10 +65,10 @@ jobs:
 
     steps:
       - name: Check out canonical main
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -70,7 +78,7 @@ jobs:
         working-directory: services/backend
         run: pip install -e .
 
-      - name: Restore private PAPER state
+      - name: Restore and verify private PAPER state
         env:
           RESET_STATE: ${{ inputs.reset_state || 'false' }}
         run: |
@@ -81,17 +89,27 @@ jobs:
             exit 0
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if gh release download "$RELEASE_TAG" \
+            gh release download "$RELEASE_TAG" \
               --pattern "sibyl.db.gz" \
+              --pattern "SHA256SUMS" \
               --dir "$STATE_DIR" \
-              --clobber; then
-              gzip -t "$STATE_DIR/sibyl.db.gz"
-              gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
-              rm -f "$STATE_DIR/sibyl.db.gz"
-              echo "Previous PAPER state restored."
-            else
-              echo "Release exists without a database asset; starting clean."
+              --clobber
+            test -s "$STATE_DIR/sibyl.db.gz"
+            test -s "$STATE_DIR/SHA256SUMS"
+            EXPECTED_SHA="$(awk 'NF {print $1; exit}' "$STATE_DIR/SHA256SUMS" | tr '[:upper:]' '[:lower:]')"
+            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid SHA256SUMS payload; refusing to restore persisted PAPER state."
+              exit 1
             fi
+            ACTUAL_SHA="$(sha256sum "$STATE_DIR/sibyl.db.gz" | awk '{print $1}')"
+            if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+              echo "Persisted PAPER state checksum mismatch; refusing to restore."
+              exit 1
+            fi
+            gzip -t "$STATE_DIR/sibyl.db.gz"
+            gzip -dc "$STATE_DIR/sibyl.db.gz" > "$STATE_DIR/sibyl.db"
+            rm -f "$STATE_DIR/sibyl.db.gz" "$STATE_DIR/SHA256SUMS"
+            echo "Previous PAPER state restored and verified."
           else
             echo "No previous PAPER state found; starting clean."
           fi
@@ -100,11 +118,11 @@ jobs:
         working-directory: services/backend
         run: python -m compileall -q app
 
-      - name: Execute one delayed PAPER cycle
+      - name: Execute one bounded delayed PAPER cycle
         id: cycle
         continue-on-error: true
         working-directory: services/backend
-        run: python -m app.trial --output-dir "$OUTPUT_DIR"
+        run: timeout --signal=TERM --kill-after=30s 12m python -m app.trial --output-dir "$OUTPUT_DIR"
 
       - name: Package current state
         if: always()
@@ -113,20 +131,62 @@ jobs:
           test -s "$STATE_DIR/sibyl.db"
           gzip -c "$STATE_DIR/sibyl.db" > "$OUTPUT_DIR/sibyl.db.gz"
           gzip -t "$OUTPUT_DIR/sibyl.db.gz"
-          sha256sum "$OUTPUT_DIR/sibyl.db.gz" > "$OUTPUT_DIR/SHA256SUMS"
+          (cd "$OUTPUT_DIR" && sha256sum sibyl.db.gz > SHA256SUMS)
+
+      - name: Ensure an audit report exists
+        if: always()
+        env:
+          CYCLE_OUTCOME: ${{ steps.cycle.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ -s "$OUTPUT_DIR/trial-summary.json" && -s "$OUTPUT_DIR/trial-summary.md" ]]; then
+            exit 0
+          fi
+          python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          output = Path(os.environ["OUTPUT_DIR"])
+          output.mkdir(parents=True, exist_ok=True)
+          completed = datetime.now(UTC).isoformat()
+          outcome = os.environ.get("CYCLE_OUTCOME", "unknown")
+          payload = {
+              "schema_version": 2,
+              "run": {
+                  "status": "FAILED",
+                  "profile": "GITHUB_DELAYED_PAPER",
+                  "completed_at": completed,
+                  "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
+                  "github_sha": os.environ.get("GITHUB_SHA", ""),
+                  "errors": [{
+                      "phase": "bounded_cycle",
+                      "type": "WorkflowOutcome",
+                      "message": f"Cycle ended with outcome {outcome} before report generation",
+                  }],
+              },
+              "safety": {"trading_mode": "PAPER", "live_available": False},
+          }
+          (output / "trial-summary.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          (output / "trial-summary.md").write_text(
+              "# Sibyl Trace PAPER cycle\n\n"
+              f"**Status:** `FAILED`  \n**Outcome:** `{outcome}`  \n"
+              "The last committed SQLite state was preserved and packaged.\n",
+              encoding="utf-8",
+          )
+          PY
 
       - name: Publish run summary
         if: always()
-        run: |
-          if [[ -f "$OUTPUT_DIR/trial-summary.md" ]]; then
-            cat "$OUTPUT_DIR/trial-summary.md" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "# Sibyl Trace PAPER cycle failed before report generation" >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: cat "$OUTPUT_DIR/trial-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload audit artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sibyl-paper-${{ github.run_id }}
           path: |
@@ -147,6 +207,11 @@ jobs:
               --title "Sibyl Trace rolling PAPER state" \
               --notes "Private rolling state for GitHub-delayed PAPER testing. No keys or live credentials." \
               --prerelease
+          else
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" \
+              -F force=true
           fi
           gh release upload "$RELEASE_TAG" \
             "$OUTPUT_DIR/sibyl.db.gz" \
@@ -158,5 +223,5 @@ jobs:
       - name: Fail closed on degraded cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "The PAPER cycle was persisted but one or more phases degraded."
+          echo "The PAPER cycle was persisted but one or more phases degraded or timed out."
           exit 1

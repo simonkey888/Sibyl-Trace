@@ -13,7 +13,8 @@ def test_dashboard_and_live_gate() -> None:
         dashboard = client.get("/api/v1/dashboard")
         assert dashboard.status_code == 200
         payload = dashboard.json()
-        assert payload["system"]["mode"] == "PAPER"
+        assert payload["system"]["mode"] == "READ_ONLY"
+        assert "GLOBAL=60% SHORT" in payload["system"]["score_contract"]
         assert payload["portfolio"]["initial_bankroll"] == 300
 
         readiness = client.get("/api/v1/live/readiness")

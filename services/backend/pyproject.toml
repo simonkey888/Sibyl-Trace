@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,20 +8,21 @@ version = "0.1.0"
 description = "Prediction-market wallet intelligence and paper execution engine"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.128,<1",
-  "httpx>=0.28,<1",
-  "pydantic>=2.13,<3",
-  "pydantic-settings>=2.7,<3",
-  "sqlalchemy>=2.0.50,<3",
-  "psycopg[binary]>=3.2,<4",
-  "uvicorn[standard]>=0.40,<1",
+  "fastapi==0.141.1",
+  "httpx==0.28.1",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "sqlalchemy==2.0.51",
+  "psycopg[binary]==3.3.4",
+  "uvicorn[standard]==0.52.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=9,<10",
-  "pytest-cov>=7,<8",
-  "ruff>=0.14,<1",
+  "pip-audit==2.10.1",
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
+  "ruff==0.16.1",
 ]
 
 [tool.hatch.build.targets.wheel]
