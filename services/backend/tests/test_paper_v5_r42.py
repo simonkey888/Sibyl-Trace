@@ -188,6 +188,29 @@ def test_shadow_self_impact_depletes_subsequent_books():
     assert next_book["source_hash"] == "r42-book-1"
 
 
+def test_shadow_self_impact_tolerates_malformed_price_levels():
+    raw = {
+        "hash": "r42-book-malformed",
+        "timestamp": "5001",
+        "asks": [
+            {"price": None, "size": "5"},
+            {"price": "not-a-number", "size": "5"},
+            {"price": "0.51", "size": "10"},
+        ],
+        "bids": [{"price": "0.49", "size": "10"}],
+    }
+    client = FakeClient([raw])
+    proxy = _R42TruthClient(client)
+    proxy._shadow[("asset-r42", "BUY", "0.51")] = 4.0
+    proxy.start_signal("condition-r42", "r42-market")
+    adjusted = proxy.order_book("asset-r42")
+
+    assert adjusted["asks"][0]["price"] is None
+    assert adjusted["asks"][1]["price"] == "not-a-number"
+    assert float(adjusted["asks"][2]["size"]) == pytest.approx(6.0)
+    assert adjusted["hash"].startswith("shadow-")
+
+
 def test_r42_ledger_emits_copy_decay_and_fee_provenance(monkeypatch, tmp_path: Path):
     local = factory()
     client = FakeClient(
