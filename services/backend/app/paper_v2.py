@@ -14,6 +14,7 @@ from app.evidence import build_manifest, protected_hashes
 from app.polymarket import PolymarketClient
 from app.repository import current_portfolio
 from app.research_cycle import checkpoint, run_research_cycle
+from app.research_dashboard import render_research_dashboard
 from app.trial import run_cycle as run_legacy_cycle
 from app.watchdogs import accounting_watchdog
 
@@ -188,6 +189,10 @@ def run(output_dir: Path) -> int:
                 )
                 legacy_report["run"]["status"] = "DEGRADED"
             _write_json(output_dir / "trial-summary.json", legacy_report)
+            (output_dir / "research-dashboard.html").write_text(
+                render_research_dashboard(legacy_report),
+                encoding="utf-8",
+            )
             checkpoint(
                 db,
                 run_id,
