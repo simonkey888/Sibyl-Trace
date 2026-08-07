@@ -116,7 +116,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         return
     if (
         v5.get("status") != "PASS"
-        or v5.get("cohort_id") != "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07"
+        or v5.get("cohort_id") != "PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07"
         or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
     ):
         raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")
@@ -133,7 +133,8 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         raise ValueError("PAPER V5 snapshot violates PAPER/LIVE/$0 policy")
     method = v5.get("methodology") or {}
     if (
-        method.get("execution_model") != "L2_TAKER_FAK_ARRIVAL_BOOK_V3_SLUG_IDENTITY"
+        method.get("execution_model")
+        != "L2_TAKER_FAK_ARRIVAL_BOOK_V4_POST_DELAY_REVALIDATION_SHADOW_IMPACT"
         or method.get("midpoint_fills") is not False
         or method.get("arrival_book_refetch") is not True
         or method.get("l2_depth_consumed") is not True
@@ -151,6 +152,13 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         or method.get("summary_ledger_reconciliation") is not True
         or method.get("unknown_official_delay_fail_closed") is not True
         or method.get("market_identity_exact") is not True
+        or method.get("post_delay_market_state_revalidation") is not True
+        or method.get("shadow_self_impact") is not True
+        or method.get("shadow_self_impact_live_claim") is not False
+        or method.get("public_book_hash_bridge_persisted") is not True
+        or method.get("execution_evidence_hash_includes_book_provenance") is not True
+        or method.get("copy_decay_metrics_in_ledger") is not True
+        or method.get("fee_provenance_in_ledger") is not True
         or method.get("delayed_market_arrival_delay_ms") is not None
         or method.get("regular_arrival_delay_ms") is not None
     ):
