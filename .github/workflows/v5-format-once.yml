@@ -30,9 +30,17 @@ jobs:
           text = text.replace('"regular_arrival_delay_ms": 350,', '"regular_arrival_delay_ms": 0,')
           text = text.replace(
               '"delayed_market_arrival_delay_ms": 1000,',
-              '"regular_arrival_delay_basis": "immediate public-book refetch; no synthetic regular delay",\n'
+              '"regular_arrival_delay_basis": "immediate public-book refetch; no synthetic delay",\n'
               '            "delayed_market_arrival_delay_ms": 1000,\n'
               '            "delayed_market_arrival_delay_basis": "CLOB itode flag",',
+          )
+          text = text.replace(
+              '"marking": "net executable liquidation value against current bids; unfilled residual valued at zero",',
+              '"marking": "net executable liquidation value; unfilled residual = zero",',
+          )
+          text = text.replace(
+              '"accuracy_denominator": "resolved BUY predictions with non-zero simulated FAK fill only",',
+              '"accuracy_denominator": "resolved filled BUY predictions only",',
           )
           if '"regular_arrival_delay_ms": 350,' in text:
               raise SystemExit("stale synthetic delay remains")
