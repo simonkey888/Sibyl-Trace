@@ -64,6 +64,7 @@ def activity(tx="0xr4"):
         "title": "R4 market",
         "outcome": "Yes",
         "outcomeIndex": 0,
+        "slug": "r4-market",
     }
 
 
@@ -96,9 +97,9 @@ class FakeClient:
         self.settings = SimpleNamespace(gamma_api_base="https://gamma.test")
 
     def _get(self, url, params=None):
-        assert url == "https://gamma.test/markets"
-        assert params == {"condition_ids": ["condition-r4"], "limit": 10}
-        return [dict(self.market_data)]
+        assert url == "https://gamma.test/markets/slug/r4-market"
+        assert params is None
+        return dict(self.market_data)
 
     def clob_market_info(self, _condition_id):
         return {
@@ -239,7 +240,7 @@ def test_atlanta_golden_accounting_identity():
 
 def test_market_lookup_and_hash_are_deterministic():
     client = FakeClient([])
-    resolved = _market_by_condition(client, "condition-r4")
+    resolved = _market_by_condition(client, "condition-r4", "r4-market")
     assert resolved["conditionId"] == "condition-r4"
     first = _canonical_hash({"b": 2, "a": 1})
     second = _canonical_hash({"a": 1, "b": 2})
@@ -247,8 +248,8 @@ def test_market_lookup_and_hash_are_deterministic():
     assert len(first) == 64
 
     client.market_data = {"conditionId": "other"}
-    with pytest.raises(Exception, match="did not match requested condition"):
-        _market_by_condition(client, "condition-r4")
+    with pytest.raises(Exception, match="conditionId mismatch"):
+        _market_by_condition(client, "condition-r4", "r4-market")
 
 
 def test_r4_report_reconciles_cycle_counts_and_ledger(tmp_path, monkeypatch):
@@ -463,11 +464,55 @@ def test_run_wrapper_installs_and_restores_r4_contract(monkeypatch, tmp_path):
     monkeypatch.setattr(legacy, "run", fake_run)
     assert run_r4(tmp_path) == 0
     assert observed["output_dir"] == tmp_path
-    assert observed["cohort"] == "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"
+    assert observed["cohort"] == "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07"
     assert observed["engine"] is PaperEngineV5R4
-    assert observed["model"] == "L2_TAKER_FAK_ARRIVAL_BOOK_V2_AUDIT_RECONCILED"
+    assert observed["model"] == "L2_TAKER_FAK_ARRIVAL_BOOK_V3_SLUG_IDENTITY"
     assert original_cohort == legacy.COHORT_ID
     assert legacy.PaperEngineV5 is original_engine
     assert legacy.build_report is original_build
     assert legacy._write_ledger is original_writer
     assert original_model == legacy.EXECUTION_MODEL
+
+
+def test_official_delay_is_not_reported_as_synthetic_latency(monkeypatch):
+    local = factory()
+    client = FakeClient(
+        [book(asks=[(0.80, 100)], bids=[(0.79, 100)], suffix="1")],
+        market_data=market(secondsDelay=1),
+    )
+    monkeypatch.setattr("app.paper_v5_r4.time.sleep", lambda _seconds: None)
+    with local() as db:
+        initialize_state(db, settings())
+        wallet = add_wallet(db)
+        PaperEngineV5R4(settings(), client).process(db, wallet, activity("0xofficial-delay"))
+        execution = db.scalar(select(PaperV5Execution))
+        evidence = db.scalar(select(PaperV5ExecutionEvidence))
+        assert execution.status == "REJECTED"
+        assert execution.simulated_latency_ms == 0
+        assert evidence is not None
+        assert evidence.official_seconds_delay == 1
+
+
+def test_r4_1_report_erases_stale_250ms_semantics():
+    local = factory()
+    with local() as db:
+        initialize_state(db, settings())
+        baseline = _status_counts(db)
+        report = {
+            "status": "PASS",
+            "run": {"errors": []},
+            "methodology": {
+                "delayed_market_arrival_delay_basis": "official 250ms CLOB itode window",
+                "delayed_market_arrival_delay_ms": 250,
+                "regular_arrival_delay_ms": 0,
+            },
+            "cycle": {"signals_processed": 0},
+        }
+        reconciled = _apply_r4_report(report, db, baseline)
+        method = reconciled["methodology"]
+        assert method["delayed_market_arrival_delay_ms"] is None
+        assert method["regular_arrival_delay_ms"] is None
+        assert "250" not in method["delayed_market_arrival_delay_basis"]
+        assert method["immediate_post_fill_marking"] is True
+        assert method["end_cycle_mark_refresh"] is True
+        assert method["market_identity_exact"] is True
