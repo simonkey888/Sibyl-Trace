@@ -41,7 +41,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.paper-v5-state
       OUTPUT_DIR: ${{ github.workspace }}/paper-v5-output
-      RELEASE_TAG: github-paper-v5-state-v4
+      RELEASE_TAG: github-paper-v5-state-v4-1
       DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-state/sibyl-v5.db
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
@@ -84,11 +84,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
           if [[ "$RESET_STATE" == "true" ]]; then
-            echo "Explicit clean R4 cohort requested."
+            echo "Explicit clean R4.1 cohort requested."
             exit 0
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "No R4 V5 state exists yet; starting clean."
+            echo "No R4.1 V5 state exists yet; starting clean."
             exit 0
           fi
           gh release download "$RELEASE_TAG" \
@@ -105,7 +105,7 @@ jobs:
           gzip -t "$STATE_DIR/sibyl-v5.db.gz"
           gzip -dc "$STATE_DIR/sibyl-v5.db.gz" > "$STATE_DIR/sibyl-v5.db"
           rm -f "$STATE_DIR/sibyl-v5.db.gz" "$STATE_DIR/SHA256SUMS"
-          echo "Verified R4 V5 state restored."
+          echo "Verified R4.1 V5 state restored."
 
       - name: Verify import and truth contract
         working-directory: services/backend
@@ -114,8 +114,9 @@ jobs:
           set -euo pipefail
           python -m compileall -q app
           ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py app/paper_v5_r4.py
-          grep -q 'PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07' app/paper_v5_r4.py
+          grep -q 'PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07' app/paper_v5_r4.py
           grep -q 'Gamma market.secondsDelay' app/paper_v5_r4.py
+          grep -q 'markets/slug/' app/paper_v5_r4.py
           grep -q 'synthetic_canonical_latency.*False' app/paper_v5_r4.py
           grep -q 'active_market_book_404' app/paper_v5_r4.py
           grep -q 'execution_evidence_hash' app/paper_v5_r4.py
@@ -141,14 +142,16 @@ jobs:
           test -s "$OUTPUT_DIR/paper-v5-summary.md"
           test -f "$OUTPUT_DIR/prediction-ledger-v5.jsonl"
           test -s "$OUTPUT_DIR/evidence-manifest-v5.json"
-          grep -q '"cohort_id": "PAPER_V5_R4_AUDIT_RECONCILIATION_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"cohort_id": "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"midpoint_fills": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"legacy_history_rewritten": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"order_placement": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"live_available": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"synthetic_canonical_latency": false' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"market_identity_exact": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
+          ! grep -q 'official 250ms CLOB itode window' "$OUTPUT_DIR/paper-v5-summary.json"
 
       - name: Reconcile summary ledger and execution evidence
         if: always()
@@ -165,14 +168,22 @@ jobs:
           summary = json.loads((root / "paper-v5-summary.json").read_text())
           rows = [json.loads(line) for line in (root / "prediction-ledger-v5.jsonl").read_text().splitlines() if line.strip()]
           totals = summary["totals"]
+          method = summary["methodology"]
           assert summary["evidence_reconciliation"]["state"] == "PASS"
+          assert summary["execution_health"]["state"] != "RED"
+          assert method["synthetic_canonical_latency"] is False
+          assert method["delayed_market_arrival_delay_ms"] is None
+          assert method["regular_arrival_delay_ms"] is None
+          assert method["market_identity_exact"] is True
           assert len(rows) == totals["executions"] == totals["predictions"]
           counts = Counter(row["execution"]["status"] for row in rows)
           assert counts["FILLED"] + counts["PARTIAL_FILLED"] == totals["filled_orders"]
           assert counts["NO_FILL"] == totals["no_fills"]
           assert counts["REJECTED"] == totals["rejected"]
           for row in rows:
-              if row["execution"]["status"] in {"FILLED", "PARTIAL_FILLED"}:
+              execution = row["execution"]
+              assert execution["simulated_latency_ms"] == 0
+              if execution["status"] in {"FILLED", "PARTIAL_FILLED"}:
                   evidence = row.get("execution_evidence") or {}
                   assert len(evidence.get("execution_evidence_hash") or "") == 64
                   assert evidence.get("decision_received_at_ms") is not None
@@ -220,8 +231,8 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --title "Sibyl Trace rolling PAPER V5 R4 state" \
-              --notes "Private audit-reconciled R4 PAPER state. No keys, no LIVE, zero authorized cost." \
+              --title "Sibyl Trace rolling PAPER V5 R4.1 state" \
+              --notes "Private truth-closed R4.1 PAPER state. No keys, no LIVE, zero authorized cost." \
               --prerelease
           else
             gh api --method PATCH \
@@ -240,5 +251,5 @@ jobs:
       - name: Fail closed on degraded V5 cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "V5 R4 evidence was retained for audit, but canonical rolling state was NOT advanced."
+          echo "V5 R4.1 evidence was retained for audit, but canonical rolling state was NOT advanced."
           exit 1
