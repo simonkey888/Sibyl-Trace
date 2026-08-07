@@ -1,0 +1,43 @@
+{
+  "baseline_main_sha": "e4676c8d494a9d83f42749a0b85eac2288de5a54",
+  "cost_policy": {
+    "authorized_usd": 0,
+    "paid_apis": false
+  },
+  "evidence_generation": "SIBYL_PAPER_V2",
+  "frozen_source_sha": "1c3cfc41102b2bf1f80f4036e8547abdeb0d729e",
+  "frozen_source_tree_sha": "5fed37f2f4883a60238684eced41515ee3110438",
+  "live_policy": {
+    "available": false,
+    "real_money": false
+  },
+  "policy_checks": {
+    "cost_authorization_locked_zero": true,
+    "live_validator_rejects_true": true,
+    "scheduled_ai_disabled": true,
+    "scheduled_cost_zero": true,
+    "scheduled_live_false": true,
+    "secret_scan_checks_cost": true,
+    "secret_scan_checks_live": true
+  },
+  "polymarket_contract_version": "POLYMARKET_PREDICTIONS_2026-08-07",
+  "protected_files_sha256": {
+    ".github/workflows/ci.yml": "db13fbdda4b3bbad00f7a37ec3e69da9e04895d2de3fed37e5b7cb549e6c951f",
+    ".github/workflows/github-paper-trial.yml": "66fdf416bed113c07f14c046d7ba54b792f2541aed0ce3a57b37888d5aefd0cc",
+    "apps/gateway/package-lock.json": "ec1b5b724ba809d60f0241d805c27032c38d58ee1d45fa95091db74b4b50fd9b",
+    "scripts/secret-scan.sh": "c2fbec43d4292a3f53ecfbf9a74dda17078ccaae21108d7d4abda913f4109102",
+    "services/backend/app/config.py": "b13091663f9ff1fbc8c7c24219ad72d29e8d077b930c7a5406b11846247cf127",
+    "services/backend/app/domain.py": "c9379e67e6351c4c375b9a51a54b7ab575489f590af3a5ac0e832cd992c440e6",
+    "services/backend/app/evidence.py": "0fcb6c1fd5f4ec6a5a3534e465ca715ac3e8a6d117c29cd64b5cc8603e3a270d",
+    "services/backend/app/hypothesis.py": "6143bea983c727aec04f3dd89111eda6475bffabbe8ea3d36483ae49decd9fda",
+    "services/backend/app/paper.py": "5a385614d9ad9e0095f2c60028fc0884d40cee58676eaff9db5264825442c25a",
+    "services/backend/app/research_cycle.py": "a41a46912b12dddbd30dc795a0f2b54a249896f4935c9986f6c9bd5a35302c76",
+    "services/backend/app/scoring.py": "db6f15db93c23da4059f31699fda2d97dbb462c64c15963f36de75b2e3951f50",
+    "services/backend/app/settlement.py": "2e44b2236136379154b171595c0aa42bbfd1084bf23d65995561043f622077c3",
+    "services/backend/pyproject.toml": "2ccbc8a12a56f372be3ab6ddfb768cd862f5c15693f43eea06e6df529a3fb0cc"
+  },
+  "risk_version": "RISK_V1_FROZEN",
+  "schema_version": 1,
+  "scoring_version": "SCORE_V2",
+  "simulator_version": "PAPER_SIM_V2"
+}
