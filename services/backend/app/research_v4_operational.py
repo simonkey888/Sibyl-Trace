@@ -98,11 +98,22 @@ def _v3_events(path: Path) -> tuple[V3Event, ...]:
             )
         except (TypeError, ValueError):
             continue
-    return tuple(event for event in events if event.source and event.receive_timestamp_ms > 0)
+    return tuple(
+        event for event in events if event.source and event.receive_timestamp_ms > 0
+    )
 
 
 def _gzip_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    raw = ("\n".join(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False) for row in rows) + ("\n" if rows else "")).encode()
+    lines = [
+        json.dumps(
+            row,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        for row in rows
+    ]
+    raw = ("\n".join(lines) + ("\n" if lines else "")).encode()
     path.write_bytes(gzip.compress(raw, compresslevel=9, mtime=0))
 
 
@@ -114,9 +125,21 @@ def _reconstruction_summary(capture: V4Capture) -> dict[str, Any]:
     assets = sorted({event.asset_id for event in capture.events})
     reconstructed: list[dict[str, Any]] = []
     for asset_id in assets:
-        asset_events = tuple(event for event in capture.events if event.asset_id == asset_id)
+        asset_events = tuple(
+            event for event in capture.events if event.asset_id == asset_id
+        )
         try:
             result = reconstruct_l2(asset_events)
+            best_bid = (
+                result.book.best_bid.price
+                if result.book is not None and result.book.best_bid is not None
+                else None
+            )
+            best_ask = (
+                result.book.best_ask.price
+                if result.book is not None and result.book.best_ask is not None
+                else None
+            )
             reconstructed.append(
                 {
                     "asset_id": asset_id,
@@ -125,8 +148,8 @@ def _reconstruction_summary(capture: V4Capture) -> dict[str, Any]:
                     "gaps": list(result.gaps),
                     "final_bid_levels": len(result.book.bids) if result.book else 0,
                     "final_ask_levels": len(result.book.asks) if result.book else 0,
-                    "best_bid": result.book.best_bid.price if result.book and result.book.best_bid else None,
-                    "best_ask": result.book.best_ask.price if result.book and result.book.best_ask else None,
+                    "best_bid": best_bid,
+                    "best_ask": best_ask,
                 }
             )
         except ValueError as exc:
@@ -142,7 +165,10 @@ def _reconstruction_summary(capture: V4Capture) -> dict[str, Any]:
                     "best_ask": None,
                 }
             )
-    kinds = {kind: sum(event.kind == kind for event in capture.events) for kind in ("SNAPSHOT", "DELTA", "TRADE")}
+    kinds = {
+        kind: sum(event.kind == kind for event in capture.events)
+        for kind in ("SNAPSHOT", "DELTA", "TRADE")
+    }
     return {
         "status": "CAPTURED" if capture.events else "NO_DATA",
         "fidelity": "L2_AGGREGATE",
@@ -158,8 +184,16 @@ def _reconstruction_summary(capture: V4Capture) -> dict[str, Any]:
     }
 
 
-def _polymarket_contract(question: str, condition_id: str, end_timestamp_ms: int) -> MarketContract:
-    cutoff = datetime.fromtimestamp(end_timestamp_ms / 1000, tz=UTC).isoformat() if end_timestamp_ms > 0 else None
+def _polymarket_contract(
+    question: str,
+    condition_id: str,
+    end_timestamp_ms: int,
+) -> MarketContract:
+    cutoff = (
+        datetime.fromtimestamp(end_timestamp_ms / 1000, tz=UTC).isoformat()
+        if end_timestamp_ms > 0
+        else None
+    )
     return MarketContract(
         venue="POLYMARKET",
         market_id=condition_id,
@@ -196,7 +230,9 @@ def _kalshi_research(question: str, contract: MarketContract) -> dict[str, Any]:
                     "parity_allowed": decision.decision == "EXACT_EQUIVALENT",
                 }
             )
-        exact = sum(row["identity_decision"] == "EXACT_EQUIVALENT" for row in rows)
+        exact = sum(
+            row["identity_decision"] == "EXACT_EQUIVALENT" for row in rows
+        )
         return {
             "status": "CANDIDATES" if rows else "NO_CANDIDATES",
             "public_read_only": True,
@@ -230,6 +266,11 @@ def _render_markdown(summary: dict[str, Any]) -> str:
     tape = summary.get("l2_tape_v4") or {}
     cross = summary.get("cross_venue_v4") or {}
     target = summary.get("target") or {}
+    counts = (
+        f"{tape.get('snapshots', 0)} / "
+        f"{tape.get('deltas', 0)} / "
+        f"{tape.get('trades', 0)}"
+    )
     return "\n".join(
         [
             "# Sibyl Trace — Research Lab V4 Operational",
@@ -249,7 +290,7 @@ def _render_markdown(summary: dict[str, Any]) -> str:
             "",
             f"- Raw websocket records: {tape.get('raw_records', 0)}",
             f"- Normalized tape events: {tape.get('normalized_events', 0)}",
-            f"- Snapshots / deltas / trades: {tape.get('snapshots', 0)} / {tape.get('deltas', 0)} / {tape.get('trades', 0)}",
+            f"- Snapshots / deltas / trades: {counts}",
             f"- Fidelity: `{tape.get('fidelity', 'NO_DATA')}`",
             f"- Continuity statement: `{tape.get('continuity', 'UNKNOWN')}`",
             "",
@@ -281,8 +322,12 @@ def run(input_dir: Path, output_dir: Path) -> int:
     source = {
         "github_run_id": os.getenv("SOURCE_V3_RUN_ID", ""),
         "github_sha": os.getenv("SOURCE_V3_SHA", os.getenv("GITHUB_SHA", "")),
-        "research_v3_summary_sha256": _sha256(input_dir / "research-v3-summary.json"),
-        "research_v3_journal_sha256": _sha256(input_dir / "research-journal-v3.jsonl.gz"),
+        "research_v3_summary_sha256": _sha256(
+            input_dir / "research-v3-summary.json"
+        ),
+        "research_v3_journal_sha256": _sha256(
+            input_dir / "research-journal-v3.jsonl.gz"
+        ),
     }
     summary: dict[str, Any] = {
         "schema_version": 4,
@@ -328,23 +373,52 @@ def run(input_dir: Path, output_dir: Path) -> int:
                 "errors": [],
                 "assets": [],
             }
-            summary["cross_venue_v4"] = {"status": "NO_TARGET", "candidates": [], "exact_equivalents": 0, "parity_execution_enabled": False}
+            summary["cross_venue_v4"] = {
+                "status": "NO_TARGET",
+                "candidates": [],
+                "exact_equivalents": 0,
+                "parity_execution_enabled": False,
+            }
             _gzip_jsonl(output_dir / "research-tape-v4.jsonl.gz", [])
             _gzip_jsonl(output_dir / "research-raw-v4.jsonl.gz", [])
         else:
-            capture = asyncio.run(capture_polymarket_l2(target, duration_seconds=15.0, max_messages=240))
-            summary["research_state"] = "CAPTURED" if capture.events else "DEGRADED"
+            capture = asyncio.run(
+                capture_polymarket_l2(
+                    target,
+                    duration_seconds=15.0,
+                    max_messages=240,
+                )
+            )
+            summary["research_state"] = (
+                "CAPTURED" if capture.events else "DEGRADED"
+            )
             summary["target"] = asdict(target)
             summary["l2_tape_v4"] = _reconstruction_summary(capture)
-            poly_contract = _polymarket_contract(target.question, target.condition_id, target.end_timestamp_ms)
-            summary["cross_venue_v4"] = _kalshi_research(target.question, poly_contract)
-            _gzip_jsonl(output_dir / "research-tape-v4.jsonl.gz", _tape_rows(capture.events))
-            _gzip_jsonl(output_dir / "research-raw-v4.jsonl.gz", list(capture.raw_records))
+            poly_contract = _polymarket_contract(
+                target.question,
+                target.condition_id,
+                target.end_timestamp_ms,
+            )
+            summary["cross_venue_v4"] = _kalshi_research(
+                target.question,
+                poly_contract,
+            )
+            _gzip_jsonl(
+                output_dir / "research-tape-v4.jsonl.gz",
+                _tape_rows(capture.events),
+            )
+            _gzip_jsonl(
+                output_dir / "research-raw-v4.jsonl.gz",
+                list(capture.raw_records),
+            )
     finally:
         client.close()
 
     _write_json(output_dir / "research-v4-summary.json", summary)
-    (output_dir / "research-v4-summary.md").write_text(_render_markdown(summary), encoding="utf-8")
+    (output_dir / "research-v4-summary.md").write_text(
+        _render_markdown(summary),
+        encoding="utf-8",
+    )
 
     root = Path(os.getenv("GITHUB_WORKSPACE") or Path(__file__).resolve().parents[3])
     manifest = {
@@ -366,7 +440,9 @@ def run(input_dir: Path, output_dir: Path) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run operational PAPER-only Research Lab V4")
+    parser = argparse.ArgumentParser(
+        description="Run operational PAPER-only Research Lab V4"
+    )
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
