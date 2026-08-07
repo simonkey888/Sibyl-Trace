@@ -1,0 +1,89 @@
+name: V5 R3 Report Patch Once
+
+on:
+  push:
+    branches: [fix/paper-v5-r3-report-contract]
+    paths: [".github/workflows/v5-r3-report-patch-once.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/paper-v5-r3-report-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Patch structured R3 methodology contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/backend/app/paper_v5_r3.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''def run(output_dir: Path) -> int:\n    legacy.COHORT_ID = COHORT_ID\n    legacy.PaperEngineV5 = PaperEngineV5R3\n    return legacy.run(output_dir)\n'''
+          new = '''def _apply_r3_methodology(report: dict[str, Any]) -> dict[str, Any]:\n    methodology = report.setdefault("methodology", {})\n    methodology.update(\n        {\n            "immediate_post_fill_marking": True,\n            "end_cycle_mark_refresh": True,\n            "closed_book_404_is_no_fill": True,\n            "unknown_delayed_schedule_fail_closed": True,\n            "crypto_delayed_market_ms": 250,\n            "marking": (\n                "immediate post-fill plus end-cycle net executable liquidation "\n                "value; unfilled residual = zero"\n            ),\n            "delayed_market_arrival_delay_basis": (\n                "250ms only for observed itode=true fee_rate=0.07; "\n                "unsupported delayed schedules fail closed"\n            ),\n        }\n    )\n    return report\n\n\ndef run(output_dir: Path) -> int:\n    original_cohort = legacy.COHORT_ID\n    original_engine = legacy.PaperEngineV5\n    original_build_report = legacy.build_report\n\n    def build_report_r3(*args: Any, **kwargs: Any) -> dict[str, Any]:\n        return _apply_r3_methodology(original_build_report(*args, **kwargs))\n\n    legacy.COHORT_ID = COHORT_ID\n    legacy.PaperEngineV5 = PaperEngineV5R3\n    legacy.build_report = build_report_r3\n    try:\n        return legacy.run(output_dir)\n    finally:\n        legacy.COHORT_ID = original_cohort\n        legacy.PaperEngineV5 = original_engine\n        legacy.build_report = original_build_report\n'''
+          if old not in text:
+              raise SystemExit("paper_v5_r3 run anchor not found")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+
+          path = Path("services/backend/app/cloudflare_snapshot.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''        or method.get("partial_fills") is not True\n        or method.get("legacy_history_rewritten") is not False\n    ):\n'''
+          new = '''        or method.get("partial_fills") is not True\n        or method.get("legacy_history_rewritten") is not False\n        or method.get("immediate_post_fill_marking") is not True\n        or method.get("end_cycle_mark_refresh") is not True\n        or method.get("closed_book_404_is_no_fill") is not True\n        or method.get("unknown_delayed_schedule_fail_closed") is not True\n        or method.get("crypto_delayed_market_ms") != 250\n    ):\n'''
+          if old not in text:
+              raise SystemExit("cloudflare V5 methodology anchor not found")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+
+          path = Path("services/backend/tests/test_cloudflare_snapshot_v5.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''            "partial_fills": True,\n            "legacy_history_rewritten": False,\n        },\n'''
+          new = '''            "partial_fills": True,\n            "legacy_history_rewritten": False,\n            "immediate_post_fill_marking": True,\n            "end_cycle_mark_refresh": True,\n            "closed_book_404_is_no_fill": True,\n            "unknown_delayed_schedule_fail_closed": True,\n            "crypto_delayed_market_ms": 250,\n        },\n'''
+          if old not in text:
+              raise SystemExit("snapshot test fixture anchor not found")
+          text = text.replace(old, new)
+          if "test_public_snapshot_rejects_v5_without_r3_mark_contract" not in text:
+              text += '''\n\ndef test_public_snapshot_rejects_v5_without_r3_mark_contract(tmp_path) -> None:\n    write_json(tmp_path / "trial-summary.json", legacy_trial())\n    v5 = truthful_v5()\n    v5["methodology"]["immediate_post_fill_marking"] = False\n    write_json(tmp_path / "paper-v5-summary.json", v5)\n    with pytest.raises(ValueError, match="truthful-execution methodology"):\n        build_cloudflare_snapshot(tmp_path)\n'''
+          path.write_text(text, encoding="utf-8")
+
+          path = Path("services/backend/tests/test_paper_v5_r3.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "from app.paper_v5_r3 import COHORT_ID, PaperEngineV5R3\n",
+              "from app.paper_v5_r3 import COHORT_ID, PaperEngineV5R3, _apply_r3_methodology\n",
+          )
+          if "test_r3_methodology_reports_exact_behavior" not in text:
+              text += '''\n\ndef test_r3_methodology_reports_exact_behavior() -> None:\n    report = _apply_r3_methodology({"methodology": {"midpoint_fills": False}})\n    method = report["methodology"]\n    assert method["midpoint_fills"] is False\n    assert method["immediate_post_fill_marking"] is True\n    assert method["end_cycle_mark_refresh"] is True\n    assert method["closed_book_404_is_no_fill"] is True\n    assert method["unknown_delayed_schedule_fail_closed"] is True\n    assert method["crypto_delayed_market_ms"] == 250\n    assert "immediate post-fill" in method["marking"]\n'''
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          python -m pip install --disable-pip-version-check ruff==0.12.3
+          files=(
+            services/backend/app/paper_v5_r3.py
+            services/backend/app/cloudflare_snapshot.py
+            services/backend/tests/test_paper_v5_r3.py
+            services/backend/tests/test_cloudflare_snapshot_v5.py
+          )
+          ruff format "${files[@]}"
+          ruff check --fix "${files[@]}"
+          ruff check "${files[@]}"
+          grep -q 'immediate_post_fill_marking' services/backend/app/paper_v5_r3.py
+          grep -q 'closed_book_404_is_no_fill' services/backend/app/cloudflare_snapshot.py
+
+      - name: Commit reporting contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/backend
+          git diff --cached --check
+          git commit -m "fix(v5): make R3 methodology machine-verifiable"
+          git push origin HEAD:fix/paper-v5-r3-report-contract
