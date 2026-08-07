@@ -211,7 +211,7 @@ def test_shadow_self_impact_tolerates_malformed_price_levels():
     assert adjusted["hash"].startswith("shadow-")
 
 
-def test_r42_ledger_emits_copy_decay_and_fee_provenance(monkeypatch, tmp_path: Path):
+def test_r42_ledger_emits_copy_decay_fee_and_book_provenance(monkeypatch, tmp_path: Path):
     local = factory()
     client = FakeClient(
         [
@@ -223,7 +223,9 @@ def test_r42_ledger_emits_copy_decay_and_fee_provenance(monkeypatch, tmp_path: P
     with local() as db:
         initialize_state(db, settings())
         wallet = add_wallet(db)
-        PaperEngineV5R42(settings(), client).process(db, wallet, activity("0xledger"))
+        engine = PaperEngineV5R42(settings(), client)
+        engine._truth_client._shadow[("asset-r42", "BUY", "0.52")] = 10.0
+        engine.process(db, wallet, activity("0xledger"))
         path = tmp_path / "ledger.jsonl"
         _write_ledger_r42(legacy._write_ledger, db, path)
         rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -238,6 +240,15 @@ def test_r42_ledger_emits_copy_decay_and_fee_provenance(monkeypatch, tmp_path: P
         assert row["fee_provenance"]["fee_rate"] == pytest.approx(0.05)
         assert row["fee_provenance"]["fee_exponent"] == pytest.approx(1.0)
         assert row["fee_provenance"]["fee_rate_bps_crosscheck"] == 1000
+        provenance = row["book_provenance"]
+        assert provenance["decision_public_book_hash"] == "r42-book-1"
+        assert provenance["decision_execution_book_hash"] == "r42-book-1"
+        assert provenance["decision_shadow_adjusted"] is False
+        assert provenance["arrival_public_book_hash"] == "r42-book-2"
+        assert provenance["arrival_execution_book_hash"].startswith("shadow-")
+        assert provenance["arrival_shadow_adjusted"] is True
+        assert row["shadow_self_impact_applied"] is True
+        assert len(row["execution_evidence"]["execution_evidence_hash"]) == 64
 
 
 def test_r42_report_declares_only_truthful_corrections(monkeypatch):
@@ -260,5 +271,7 @@ def test_r42_report_declares_only_truthful_corrections(monkeypatch):
         assert method["post_delay_market_state_revalidation"] is True
         assert method["shadow_self_impact"] is True
         assert method["shadow_self_impact_live_claim"] is False
+        assert method["public_book_hash_bridge_persisted"] is True
+        assert method["execution_evidence_hash_includes_book_provenance"] is True
         assert method["copy_decay_metrics_in_ledger"] is True
         assert method["fee_provenance_in_ledger"] is True
