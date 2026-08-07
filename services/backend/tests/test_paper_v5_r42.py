@@ -15,15 +15,13 @@ from app import paper_v5_r4 as r4
 from app.config import Settings
 from app.db import Base
 from app.models import Wallet
-from app.models_v5 import PaperV5Execution, PaperV5Prediction
+from app.models_v5 import PaperV5Execution
 from app.paper_v5_r42 import (
     COHORT_ID,
     EXECUTION_MODEL,
     PaperEngineV5R42,
-    _R42BookUnavailable,
     _R42TruthClient,
     _apply_r42_report,
-    _status_counts if False else None,
     _write_ledger_r42,
 )
 from app.repository import initialize_state
