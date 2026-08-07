@@ -1,0 +1,29 @@
+name: V5 R3 Cleanup SHA Once
+
+on:
+  push:
+    branches: [fix/paper-v5-r3-report-contract]
+    paths: [".github/workflows/v5-r3-cleanup-sha-once.yml"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: fix/paper-v5-r3-report-contract
+      - name: Publish cleanup blob SHAs to PR 19
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_sha=$(git ls-files -s .github/workflows/v5-r3-report-patch-once.yml | awk '{print $2}')
+          cleanup_sha=$(git ls-files -s .github/workflows/v5-r3-cleanup-sha-once.yml | awk '{print $2}')
+          [[ "$patch_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$cleanup_sha" =~ ^[0-9a-f]{40}$ ]]
+          gh pr comment 19 --body "CLEANUP_SHA patch=$patch_sha cleanup=$cleanup_sha"
