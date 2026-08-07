@@ -80,10 +80,11 @@ def score_matrix(
     long_score, long_rejection = wallet_score(long_metrics)
 
     rejection = long_rejection or short_rejection
-    if rejection is None:
-        global_score = round(0.60 * short_score + 0.40 * long_score, 2)
-    else:
-        global_score = 0.0
+    global_score = (
+        round(0.60 * short_score + 0.40 * long_score, 2)
+        if rejection is None
+        else 0.0
+    )
 
     edge_score, edge_sample_size, average_edge = execution_edge(db, wallet_address)
     return ScoreMatrix(
