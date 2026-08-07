@@ -10,6 +10,31 @@ class PolymarketError(RuntimeError):
     pass
 
 
+TAKER_FEE_RATES = {
+    "crypto": 0.07,
+    "sports": 0.05,
+    "finance": 0.04,
+    "politics": 0.04,
+    "economics": 0.05,
+    "culture": 0.05,
+    "weather": 0.05,
+    "mentions": 0.04,
+    "tech": 0.04,
+    "geopolitics": 0.0,
+    "world": 0.0,
+    "other": 0.05,
+    "general": 0.05,
+}
+
+
+def taker_fee_rate_for_category(category: str | None) -> float:
+    normalized = str(category or "").strip().casefold()
+    for key, rate in TAKER_FEE_RATES.items():
+        if key in normalized:
+            return rate
+    return TAKER_FEE_RATES["general"]
+
+
 class PolymarketClient:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -79,7 +104,11 @@ class PolymarketClient:
                     "sortDirection": "DESC",
                 },
             )
-            page = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+            page = (
+                [item for item in data if isinstance(item, dict)]
+                if isinstance(data, list)
+                else []
+            )
             results.extend(page)
             if len(page) < page_limit:
                 break
@@ -92,7 +121,7 @@ class PolymarketClient:
         return self._closed_positions(wallet, limit)
 
     def activity(self, wallet: str, start: int, limit: int = 500) -> list[dict]:
-        target = min(max(limit, 0), 10000)
+        target = min(max(limit, 0), 5000)
         if target == 0:
             return []
 
@@ -166,8 +195,8 @@ class PolymarketClient:
                 "limit": 500,
                 "offset": 0,
                 "order": "endDate",
-                "ascending": "true",
-                "closed": "false",
+                "ascending": True,
+                "closed": False,
                 "end_date_min": now.isoformat(),
                 "end_date_max": (now + timedelta(minutes=horizon_minutes)).isoformat(),
             },
