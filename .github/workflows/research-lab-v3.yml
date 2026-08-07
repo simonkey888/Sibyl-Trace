@@ -25,7 +25,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.trial-state
       OUTPUT_DIR: ${{ github.workspace }}/research-v3-output
-      NORMALIZED_INPUT_DIR: ${{ runner.temp }}/sibyl-v3-source
+      NORMALIZED_INPUT_DIR: /tmp/sibyl-v3-source
       RELEASE_TAG: github-paper-state-v1
       DATABASE_URL: sqlite:///${{ github.workspace }}/.trial-state/sibyl.db
       APP_ENV: github-trial
