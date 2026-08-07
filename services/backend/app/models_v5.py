@@ -35,7 +35,9 @@ class PaperV5Prediction(Base):
     resolution_price: Mapped[float | None] = mapped_column(Float)
     result: Mapped[str] = mapped_column(String(24), default="UNRESOLVED", index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class PaperV5Execution(Base):
@@ -68,7 +70,9 @@ class PaperV5Execution(Base):
     levels_consumed: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), index=True)
     reason: Mapped[str | None] = mapped_column(String(240))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class PaperV5Position(Base):
@@ -98,7 +102,9 @@ class PaperV5Settlement(Base):
     proceeds: Mapped[float] = mapped_column(Float)
     cost_basis: Mapped[float] = mapped_column(Float)
     realized_pnl: Mapped[float] = mapped_column(Float)
-    settled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    settled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class PaperV5PortfolioSnapshot(Base):
@@ -112,4 +118,6 @@ class PaperV5PortfolioSnapshot(Base):
     unrealized_pnl: Mapped[float] = mapped_column(Float)
     drawdown: Mapped[float] = mapped_column(Float)
     accounting_ok: Mapped[bool] = mapped_column(Boolean, default=True)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
