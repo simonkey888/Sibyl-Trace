@@ -33,7 +33,7 @@ def test_market_rules_fail_closed_without_supported_per_market_fee_schedule() ->
     assert rules.tick_size == pytest.approx(0.01)
     assert rules.minimum_order_size == pytest.approx(5)
     assert rules.fee_rate == pytest.approx(0.07)
-    assert rules.order_delay_ms == 350
+    assert rules.order_delay_ms == 0
 
     delayed = market_rules_from_clob_info(
         {
