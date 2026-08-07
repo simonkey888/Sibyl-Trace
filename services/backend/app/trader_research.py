@@ -72,7 +72,10 @@ def trader_reconstruction(positions: list[dict[str, Any]]) -> dict[str, Any]:
         asymmetry = payout_asymmetry(float(row.get("realizedPnl") or 0.0) for row in rows)
         return {
             **asdict(asymmetry),
-            "realized_pnl": round(sum(float(row.get("realizedPnl") or 0.0) for row in rows), 6),
+            "realized_pnl": round(
+                sum(float(row.get("realizedPnl") or 0.0) for row in rows),
+                6,
+            ),
             "average_entry_price": (
                 round(fmean(float(row.get("avgPrice") or 0.0) for row in rows), 6)
                 if rows
@@ -83,10 +86,16 @@ def trader_reconstruction(positions: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         }
 
+    overall_summary = {
+        **asdict(overall),
+        "realized_pnl": round(overall.expectancy_cash * overall.sample_size, 6),
+    }
     return {
         "sample_size": len(valid),
-        "overall": {**asdict(overall), "realized_pnl": round(overall.expectancy_cash * overall.sample_size, 6)},
-        "price_buckets": {key: summarize(rows) for key, rows in sorted(price_buckets.items())},
+        "overall": overall_summary,
+        "price_buckets": {
+            key: summarize(rows) for key, rows in sorted(price_buckets.items())
+        },
         "locations": {key: summarize(rows) for key, rows in sorted(cities.items())},
         "price_size_correlation": _pearson(prices, notionals),
     }
