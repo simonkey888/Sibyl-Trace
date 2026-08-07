@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
 
@@ -123,6 +123,21 @@ def _fee_decimal(shares: Decimal, price: Decimal, fee_rate: Decimal) -> Decimal:
     )
 
 
+def _no_fill(reason: str, levels_consumed: int = 0) -> FillV5:
+    return FillV5(
+        status="NO_FILL",
+        reason=reason,
+        filled_shares=0,
+        gross_notional=0,
+        fee_usd=0,
+        net_cash_delta=0,
+        average_fill_price=None,
+        effective_price=None,
+        fill_fraction=0,
+        levels_consumed=levels_consumed,
+    )
+
+
 def simulate_fak_fill(
     book: dict[str, Any],
     *,
@@ -135,10 +150,10 @@ def simulate_fak_fill(
 ) -> FillV5:
     side = side.upper()
     if side not in {"BUY", "SELL"}:
-        return FillV5("NO_FILL", "unsupported_side", 0, 0, 0, 0, None, None, 0, 0)
+        return _no_fill("unsupported_side")
     levels = _levels(book, side)
     if not levels:
-        return FillV5("NO_FILL", "empty_executable_book", 0, 0, 0, 0, None, None, 0, 0)
+        return _no_fill("empty_executable_book")
 
     fee_rate_d = _decimal(fee_rate)
     min_size = _decimal(minimum_order_size)
@@ -151,11 +166,11 @@ def simulate_fak_fill(
     if side == "BUY":
         budget = _decimal(requested_usd)
         if budget <= 0:
-            return FillV5("NO_FILL", "invalid_buy_budget", 0, 0, 0, 0, None, None, 0, 0)
+            return _no_fill("invalid_buy_budget")
         best = levels[0][0]
         best_unit_cost = best + fee_rate_d * best * (D("1") - best)
         if best > limit or best_unit_cost <= 0 or budget / best_unit_cost < min_size:
-            return FillV5("NO_FILL", "below_min_order_or_price_limit", 0, 0, 0, 0, None, None, 0, 0)
+            return _no_fill("below_min_order_or_price_limit")
         remaining = budget
         for price, available in levels:
             if price > limit or remaining <= 0:
@@ -180,14 +195,14 @@ def simulate_fak_fill(
             remaining -= total
             levels_used += 1
         if filled < min_size:
-            return FillV5("NO_FILL", "filled_below_min_order_size", 0, 0, 0, 0, None, None, 0, levels_used)
+            return _no_fill("filled_below_min_order_size", levels_used)
         spent = gross + fees
         fraction = min(spent / budget, D("1")) if budget > 0 else D("0")
         net_cash = -spent
     else:
         requested = _decimal(requested_shares)
         if requested < min_size:
-            return FillV5("NO_FILL", "below_min_order_size", 0, 0, 0, 0, None, None, 0, 0)
+            return _no_fill("below_min_order_size")
         remaining = requested
         for price, available in levels:
             if price < limit or remaining <= 0:
@@ -201,7 +216,7 @@ def simulate_fak_fill(
             remaining -= take
             levels_used += 1
         if filled < min_size:
-            return FillV5("NO_FILL", "filled_below_min_order_size", 0, 0, 0, 0, None, None, 0, levels_used)
+            return _no_fill("filled_below_min_order_size", levels_used)
         fraction = min(filled / requested, D("1")) if requested > 0 else D("0")
         net_cash = gross - fees
 
