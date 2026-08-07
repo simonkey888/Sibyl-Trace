@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from app.market_identity_v4 import MarketContract
+from app.market_identity_v4 import MarketContract, title_similarity
 from app.venue_v3 import NormalizedBook, PriceLevel, VenueCapabilities
 
 KALSHI_PUBLIC_BASE = "https://external-api.kalshi.com/trade-api/v2"
@@ -99,6 +99,21 @@ def normalize_kalshi_contract(market: dict[str, Any]) -> MarketContract:
     )
 
 
+def rank_btc_markets(markets: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for market in markets:
+        text = " ".join(
+            str(market.get(key) or "")
+            for key in ("title", "subtitle", "yes_sub_title", "event_ticker", "ticker")
+        )
+        normalized = text.casefold()
+        if "bitcoin" not in normalized and "btc" not in normalized:
+            continue
+        candidates.append((title_similarity(query, text), market))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [market for _, market in candidates]
+
+
 class KalshiReadOnlyVenue:
     capabilities = VenueCapabilities(
         public_books=True,
@@ -109,6 +124,18 @@ class KalshiReadOnlyVenue:
 
     def __init__(self, client: httpx.Client | None = None):
         self.client = client or httpx.Client(base_url=KALSHI_PUBLIC_BASE, timeout=10.0)
+
+    def close(self) -> None:
+        self.client.close()
+
+    def list_markets(self, *, status: str = "open", limit: int = 1000) -> list[dict[str, Any]]:
+        response = self.client.get("/markets", params={"status": status, "limit": limit})
+        response.raise_for_status()
+        payload = response.json()
+        markets = payload.get("markets") if isinstance(payload, dict) else None
+        if not isinstance(markets, list):
+            return []
+        return [market for market in markets if isinstance(market, dict)]
 
     def get_market(self, ticker: str) -> dict[str, Any]:
         response = self.client.get(f"/markets/{ticker}")
