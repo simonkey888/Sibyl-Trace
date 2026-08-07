@@ -119,6 +119,8 @@ jobs:
           grep -q 'PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07' app/paper_v5_r42.py
           grep -q 'post_delay_market_state_revalidation' app/paper_v5_r42.py
           grep -q 'shadow_self_impact' app/paper_v5_r42.py
+          grep -q 'public_book_hash_bridge_persisted' app/paper_v5_r42.py
+          grep -q 'execution_evidence_hash_includes_book_provenance' app/paper_v5_r42.py
           grep -q 'copy_decay_metrics_in_ledger' app/paper_v5_r42.py
           grep -q 'Gamma market.secondsDelay' app/paper_v5_r4.py
           grep -q 'markets/slug/' app/paper_v5_r4.py
@@ -152,6 +154,8 @@ jobs:
           grep -q '"market_identity_exact": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"post_delay_market_state_revalidation": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"shadow_self_impact": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"public_book_hash_bridge_persisted": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"execution_evidence_hash_includes_book_provenance": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"copy_decay_metrics_in_ledger": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
@@ -182,6 +186,8 @@ jobs:
           assert method["post_delay_market_state_revalidation"] is True
           assert method["shadow_self_impact"] is True
           assert method["shadow_self_impact_live_claim"] is False
+          assert method["public_book_hash_bridge_persisted"] is True
+          assert method["execution_evidence_hash_includes_book_provenance"] is True
           assert method["copy_decay_metrics_in_ledger"] is True
           assert method["fee_provenance_in_ledger"] is True
           assert len(rows) == totals["executions"] == totals["predictions"]
@@ -194,6 +200,16 @@ jobs:
               assert execution["simulated_latency_ms"] == 0
               assert row.get("copy_decay") is not None
               assert row.get("fee_provenance") is not None
+              provenance = row.get("book_provenance") or {}
+              if row.get("shadow_self_impact_applied"):
+                  for label in ("decision", "arrival"):
+                      execution_hash = execution.get(f"{label}_book_hash")
+                      if str(execution_hash or "").startswith("shadow-"):
+                          assert provenance.get(f"{label}_shadow_adjusted") is True
+                          assert provenance.get(f"{label}_execution_book_hash") == execution_hash
+                          public_hash = provenance.get(f"{label}_public_book_hash")
+                          assert public_hash
+                          assert not str(public_hash).startswith("shadow-")
               if execution["status"] in {"FILLED", "PARTIAL_FILLED"}:
                   evidence = row.get("execution_evidence") or {}
                   assert len(evidence.get("execution_evidence_hash") or "") == 64
