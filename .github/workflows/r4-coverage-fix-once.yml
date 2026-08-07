@@ -33,5 +33,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add services/backend/app/paper_v5_r4.py services/backend/tests/test_paper_v5_r4.py
           git diff --cached --check
-          git commit -m 'fix(v5): preserve decision-book evidence on rejected exits'
+          git commit -m 'fix(v5): remove unreachable post-book sell rejection'
           git push origin HEAD:fix/paper-v5-audit-reconciliation-001
