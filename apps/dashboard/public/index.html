@@ -4,138 +4,169 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#071017" />
-  <title>Sibyl Trace — Prediction Intelligence</title>
+  <meta name="theme-color" content="#050708" />
+  <title>Sibyl Trace — PAPER Research Terminal</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="noise"></div>
-  <div class="shell">
-    <aside class="sidebar">
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="terminal-shell">
+    <aside class="rail">
       <div class="brand">
-        <div class="brand-mark"><span></span><span></span><span></span></div>
-        <div><strong>SIBYL</strong><small>TRACE</small></div>
+        <div class="brand-glyph">S</div>
+        <div><strong>SIBYL TRACE</strong><small>PAPER RESEARCH</small></div>
       </div>
-      <nav>
-        <button class="nav-item active" data-target="overview"><i>⌁</i> Overview</button>
-        <button class="nav-item" data-target="wallets"><i>◎</i> Wallet Intelligence</button>
-        <button class="nav-item" data-target="signals"><i>↯</i> Signal Stream</button>
-        <button class="nav-item" data-target="operations"><i>⇄</i> Operations</button>
-        <button class="nav-item" data-target="audit"><i>◫</i> Audit Trail</button>
+      <nav class="nav">
+        <button class="nav-item active" data-view="overview"><span>01</span> Terminal</button>
+        <button class="nav-item" data-view="wallets"><span>02</span> Wallets</button>
+        <button class="nav-item" data-view="latency"><span>03</span> Latency</button>
+        <button class="nav-item" data-view="research"><span>04</span> Research</button>
+        <button class="nav-item" data-view="ledger"><span>05</span> Ledger</button>
       </nav>
-      <div class="sidebar-foot">
-        <div class="mini-row"><span>Runtime</span><b id="runtimeMode">PAPER</b></div>
-        <div class="mini-row"><span>Release</span><b id="runtimeVersion">—</b></div>
-        <div class="mini-row"><span>Origin</span><b id="originState">OFFLINE</b></div>
+      <div class="rail-status">
+        <div><span>MODE</span><b id="modeValue">PAPER</b></div>
+        <div><span>LIVE</span><b class="good">ABSENT</b></div>
+        <div><span>COST</span><b>$0</b></div>
+        <div><span>SHA</span><b id="shaValue">—</b></div>
       </div>
     </aside>
 
-    <main>
+    <main class="workspace">
       <header class="topbar">
         <div>
-          <div class="eyebrow">AUTONOMOUS MARKET OBSERVATORY</div>
-          <h1>Prediction intelligence <span>without blind execution.</span></h1>
+          <p class="eyebrow">PREDICTION MARKET INTELLIGENCE / READ-ONLY</p>
+          <h1>Sibyl <span>Research Terminal</span></h1>
         </div>
-        <div class="status-cluster">
-          <div class="clock" id="clock">--:--:-- UTC</div>
-          <div class="pill disconnected" id="connectionPill"><span></span> DISCONNECTED</div>
+        <div class="top-status">
+          <time id="utcClock">--:--:-- UTC</time>
+          <div class="status-pill" id="snapshotStatus"><i></i><span>LOADING</span></div>
         </div>
       </header>
 
-      <section class="warning-strip" id="safetyStrip">
-        <span class="warning-icon">◆</span>
-        <strong>FAIL-CLOSED:</strong> Live execution is unavailable. Signals are evaluated by deterministic paper-risk rules.
+      <section class="tape" aria-label="Research status tape">
+        <div><span>EVIDENCE</span><b id="evidenceValue">—</b></div>
+        <div><span>RUN</span><b id="runValue">—</b></div>
+        <div><span>AGE</span><b id="ageValue">—</b></div>
+        <div><span>WATCHDOG</span><b id="watchdogValue">—</b></div>
+        <div><span>ACCOUNTING</span><b id="accountingValue">—</b></div>
+        <div><span>GEO</span><b id="geoValue">—</b></div>
       </section>
 
       <section id="overview" class="view active">
-        <div class="metrics-grid">
-          <article class="metric hero-metric">
-            <div class="metric-top"><span>PORTFOLIO EQUITY</span><em id="equityDelta">0.00%</em></div>
-            <div class="metric-value" id="equityValue">$0.00</div>
-            <div class="metric-sub"><span>Cash <b id="cashValue">$0.00</b></span><span>Exposure <b id="exposureValue">$0.00</b></span></div>
+        <div class="metric-grid">
+          <article class="metric primary">
+            <span>PORTFOLIO EQUITY</span>
+            <strong id="equityValue">$0.00</strong>
+            <small id="equityReturn">0.00% from initial</small>
           </article>
-          <article class="metric">
-            <div class="metric-top"><span>REALIZED PNL</span><em>LOCKED</em></div>
-            <div class="metric-value small" id="realizedValue">$0.00</div>
-            <div class="microbar"><i id="realizedBar"></i></div>
-          </article>
-          <article class="metric">
-            <div class="metric-top"><span>UNREALIZED PNL</span><em>MARKED</em></div>
-            <div class="metric-value small" id="unrealizedValue">$0.00</div>
-            <div class="microbar"><i id="unrealizedBar"></i></div>
-          </article>
-          <article class="metric danger-metric">
-            <div class="metric-top"><span>MAX DRAWDOWN</span><em>LIMIT 10%</em></div>
-            <div class="metric-value small" id="drawdownValue">0.00%</div>
-            <div class="microbar danger"><i id="drawdownBar"></i></div>
-          </article>
+          <article class="metric"><span>REALIZED PNL</span><strong id="realizedValue">$0.00</strong><small>settled only</small></article>
+          <article class="metric"><span>UNREALIZED PNL</span><strong id="unrealizedValue">$0.00</strong><small>marked positions</small></article>
+          <article class="metric"><span>DRAWDOWN</span><strong id="drawdownValue">0.00%</strong><small>limit 10.00%</small></article>
+          <article class="metric"><span>FILLS / SIGNALS</span><strong id="fillSignalValue">0 / 0</strong><small id="fillRateValue">0.00% fill rate</small></article>
+          <article class="metric"><span>SETTLEMENTS</span><strong id="settledValue">0</strong><small id="openPositionValue">0 open positions</small></article>
         </div>
 
-        <div class="main-grid">
-          <article class="panel chart-panel">
+        <div class="split split-wide">
+          <article class="panel market-panel">
             <div class="panel-head">
-              <div><span class="panel-kicker">ACCOUNT CURVE</span><h2>Equity trajectory</h2></div>
-              <div class="legend"><span><i class="cyan"></i> Equity</span><span><i class="amber"></i> Drawdown</span></div>
+              <div><span class="kicker">ACTIVE RESEARCH TARGET</span><h2 id="marketQuestion">Awaiting market snapshot</h2></div>
+              <span class="badge" id="marketState">PAPER</span>
             </div>
-            <div class="chart-wrap">
-              <svg id="equityChart" viewBox="0 0 900 300" preserveAspectRatio="none" aria-label="Equity chart"></svg>
-              <div class="chart-empty" id="chartEmpty">Awaiting portfolio snapshots</div>
+            <div class="market-price-row">
+              <div><span>Tick</span><b id="tickValue">—</b></div>
+              <div><span>Fee rate</span><b id="feeValue">—</b></div>
+              <div><span>Feed events</span><b id="feedEventValue">0</b></div>
+              <div><span>Executable edge</span><b id="execEdgeValue">0</b></div>
+            </div>
+            <div class="feed-bars">
+              <div><span>Polymarket</span><div class="bar"><i id="polyBar"></i></div><b id="polyCount">0</b></div>
+              <div><span>Binance</span><div class="bar"><i id="binanceBar"></i></div><b id="binanceCount">0</b></div>
+              <div><span>Coinbase</span><div class="bar"><i id="coinbaseBar"></i></div><b id="coinbaseCount">0</b></div>
             </div>
           </article>
 
-          <article class="panel control-panel">
-            <div class="panel-head"><div><span class="panel-kicker">OWNER CONTROLS</span><h2>Safety console</h2></div></div>
-            <div class="system-state">
-              <div><span>Mode</span><b id="modeState">PAPER</b></div>
-              <div><span>Order intake</span><b id="pauseState">ACTIVE</b></div>
-              <div><span>Kill switch</span><b id="killState">CLEAR</b></div>
-              <div><span>Geo check</span><b id="geoState">UNKNOWN</b></div>
+          <article class="panel health-panel">
+            <div class="panel-head"><div><span class="kicker">SYSTEM HEALTH</span><h2>Fail-closed state</h2></div></div>
+            <div class="health-list">
+              <div><span>Accounting</span><b id="healthAccounting">—</b></div>
+              <div><span>Latency feeds</span><b id="healthLatency">—</b></div>
+              <div><span>Research maturity</span><b id="healthResearch">—</b></div>
+              <div><span>Paid APIs</span><b class="good">NONE</b></div>
+              <div><span>Real-money execution</span><b class="good">ABSENT</b></div>
             </div>
-            <div class="control-buttons">
-              <button class="control secondary" id="pauseButton">Pause intake</button>
-              <button class="control secondary" id="resumeButton">Resume</button>
-              <button class="control danger" id="killButton">Emergency stop</button>
-              <button class="control ghost" id="clearKillButton">Clear stop</button>
-            </div>
-            <p class="control-note">Controls are accepted only through Cloudflare Access and the server-side gateway token.</p>
+            <p class="note">This terminal is descriptive. It cannot sign, deposit, withdraw or place a LIVE order.</p>
           </article>
         </div>
 
-        <div class="two-grid">
+        <div class="split">
           <article class="panel">
-            <div class="panel-head"><div><span class="panel-kicker">SELECTED SOURCES</span><h2>Tracked wallets</h2></div><button class="text-button" data-jump="wallets">View all</button></div>
-            <div class="wallet-stack" id="walletStack"></div>
+            <div class="panel-head"><div><span class="kicker">SOURCE QUALITY</span><h2>Tracked wallets</h2></div><button class="jump" data-jump="wallets">OPEN MATRIX</button></div>
+            <div id="walletCards" class="card-stack"></div>
           </article>
           <article class="panel">
-            <div class="panel-head"><div><span class="panel-kicker">LATEST DECISIONS</span><h2>Signal gate</h2></div><button class="text-button" data-jump="signals">Open stream</button></div>
-            <div class="signal-stack" id="signalStack"></div>
+            <div class="panel-head"><div><span class="kicker">LATEST PAPER EXECUTION</span><h2>Decision tape</h2></div><button class="jump" data-jump="ledger">OPEN LEDGER</button></div>
+            <div id="orderCards" class="card-stack"></div>
           </article>
         </div>
       </section>
 
       <section id="wallets" class="view">
-        <div class="section-head"><div><span class="panel-kicker">WALLET INTELLIGENCE</span><h2>Ranked behavioral sources</h2></div><p>Scored from closed-position history. Outlier-dependent wallets are rejected.</p></div>
-        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Wallet</th><th>Score</th><th>Win rate</th><th>Profit factor</th><th>Realized PnL</th><th>Closed</th><th>Top-3 concentration</th><th>Status</th></tr></thead><tbody id="walletTable"></tbody></table></div></article>
+        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2>SHORT / LONG / GLOBAL / EDGE</h2></div><p>GLOBAL ranks source quality. EDGE measures PAPER execution copyability and remains unproven until its sample matures.</p></div>
+        <article class="panel table-panel">
+          <div class="table-scroll"><table>
+            <thead><tr><th>Source</th><th>Short</th><th>Long</th><th>Global</th><th>Edge</th><th>Edge n</th><th>Win rate</th><th>Profit factor</th><th>Realized PnL</th></tr></thead>
+            <tbody id="walletTable"></tbody>
+          </table></div>
+        </article>
       </section>
 
-      <section id="signals" class="view">
-        <div class="section-head"><div><span class="panel-kicker">SIGNAL STREAM</span><h2>Observed wallet activity</h2></div><p>Each event is deduplicated by wallet, transaction, asset, and side.</p></div>
-        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Time</th><th>Source</th><th>Market</th><th>Side</th><th>Outcome</th><th>Price</th><th>Source size</th><th>Decision</th></tr></thead><tbody id="signalTable"></tbody></table></div></article>
+      <section id="latency" class="view">
+        <div class="section-head"><div><span class="kicker">BTC MICROSTRUCTURE</span><h2>Latency Lab</h2></div><p>Public feeds only. Divergence is not counted as tradable edge unless bid/ask, depth, fee and simulated fill all survive.</p></div>
+        <div class="metric-grid latency-metrics">
+          <article class="metric"><span>OBSERVATIONS</span><strong id="latencyEvents">0</strong><small>current capture</small></article>
+          <article class="metric"><span>DIVERGENCES</span><strong id="latencyDivergences">0</strong><small>gross dislocations</small></article>
+          <article class="metric"><span>EXECUTABLE</span><strong id="latencyExecutable">0</strong><small>after fill constraints</small></article>
+          <article class="metric"><span>AVG LAG</span><strong id="latencyLag">—</strong><small>milliseconds</small></article>
+        </div>
+        <div class="split">
+          <article class="panel"><div class="panel-head"><div><span class="kicker">FEED MATRIX</span><h2>Observed events</h2></div></div><div id="feedMatrix" class="matrix"></div></article>
+          <article class="panel"><div class="panel-head"><div><span class="kicker">EXECUTABLE OPPORTUNITIES</span><h2>Fee-adjusted tape</h2></div></div><div id="opportunityList" class="card-stack"></div></article>
+        </div>
       </section>
 
-      <section id="operations" class="view">
-        <div class="section-head"><div><span class="panel-kicker">PAPER OPERATIONS</span><h2>Decision-to-fill ledger</h2></div><p>No result is hidden: approved, rejected, stale, and unavailable-price decisions remain visible.</p></div>
-        <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Time</th><th>Market</th><th>Order</th><th>Requested</th><th>Filled</th><th>Source</th><th>Observed</th><th>Slippage</th><th>Status</th></tr></thead><tbody id="orderTable"></tbody></table></div></article>
+      <section id="research" class="view">
+        <div class="section-head"><div><span class="kicker">HYPOTHESIS LEDGER</span><h2>Reference reconstructions</h2></div><p>External trader claims are reconstructed from public evidence and kept separate from Sibyl's own PAPER performance.</p></div>
+        <div id="referenceGrid" class="reference-grid"></div>
+        <article class="panel hypothesis-panel">
+          <div class="panel-head"><div><span class="kicker">PREREGISTERED</span><h2>Hypothesis IDs</h2></div></div>
+          <div id="hypothesisList" class="hypothesis-list"></div>
+        </article>
       </section>
 
-      <section id="audit" class="view">
-        <div class="section-head"><div><span class="panel-kicker">AUDIT TRAIL</span><h2>Immutable operational narrative</h2></div><p>Worker failures, scans, controls, and order decisions are recorded server-side.</p></div>
-        <article class="panel audit-list" id="auditList"></article>
+      <section id="ledger" class="view">
+        <div class="section-head"><div><span class="kicker">PAPER LEDGER</span><h2>Orders and open positions</h2></div><p>Rejected attempts remain visible. Settled PnL is separated from marked PnL.</p></div>
+        <article class="panel table-panel">
+          <div class="table-scroll"><table>
+            <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Source</th><th>Observed</th><th>Slippage</th><th>Filled USD</th><th>Status</th></tr></thead>
+            <tbody id="orderTable"></tbody>
+          </table></div>
+        </article>
+        <article class="panel table-panel position-panel">
+          <div class="panel-head pad-head"><div><span class="kicker">OPEN POSITIONS</span><h2>Marked inventory</h2></div></div>
+          <div class="table-scroll"><table>
+            <thead><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Average</th><th>Current</th><th>Realized</th></tr></thead>
+            <tbody id="positionTable"></tbody>
+          </table></div>
+        </article>
       </section>
+
+      <footer>
+        <span>SIBYL TRACE / PAPER V2</span>
+        <span id="footerVersion">—</span>
+        <span>NO LIVE · NO PAID API · $0 AUTHORIZED</span>
+      </footer>
     </main>
   </div>
-  <div class="toast" id="toast"></div>
   <script src="/app.js" defer></script>
-  <script src="/ai-panel.js" defer></script>
 </body>
 </html>

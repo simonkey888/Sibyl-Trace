@@ -1,0 +1,147 @@
+name: Publish Cloudflare Terminal
+
+on:
+  workflow_run:
+    workflows: ["GitHub PAPER Trial"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sibyl-cloudflare-terminal
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      ACCESS_POLICY_AUD: ${{ secrets.ACCESS_POLICY_AUD }}
+      ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve source run
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-trial.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
+            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
+            [[ -n "$run_id" && -n "$sha" ]]
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Cloudflare configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          enabled=true
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ACCESS_TEAM_DOMAIN ACCESS_POLICY_AUD ACCESS_OWNER_EMAIL; do
+            if [[ -z "${!name:-}" ]]; then enabled=false; fi
+          done
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [[ "$enabled" != "true" ]]; then
+            echo "Cloudflare terminal publish skipped: required repository secrets are not configured."
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/gateway/package-lock.json
+
+      - name: Download exact PAPER evidence
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sibyl-evidence
+          gh run download "$SOURCE_RUN_ID" \
+            --name "sibyl-paper-v2-$SOURCE_RUN_ID" \
+            --dir /tmp/sibyl-evidence
+          test -s /tmp/sibyl-evidence/trial-summary.json
+          test -s /tmp/sibyl-evidence/SHA256SUMS
+          (cd /tmp/sibyl-evidence && sha256sum -c SHA256SUMS --ignore-missing)
+
+      - name: Build sanitized terminal snapshot
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          PYTHONPATH: services/backend
+        run: |
+          set -euo pipefail
+          rm -rf apps/dashboard/public/data
+          python -m app.cloudflare_snapshot \
+            --input-dir /tmp/sibyl-evidence \
+            --output-dir apps/dashboard/public/data
+          test -s apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
+
+      - name: Install pinned gateway dependencies
+        if: steps.config.outputs.enabled == 'true'
+        working-directory: apps/gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Deploy read-only terminal assets
+        if: steps.config.outputs.enabled == 'true'
+        working-directory: apps/gateway
+        run: npx --no-install wrangler deploy
+
+      - name: Apply fail-closed Access verifier secrets
+        if: steps.config.outputs.enabled == 'true'
+        working-directory: apps/gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          jq -n \
+            --arg team "$ACCESS_TEAM_DOMAIN" \
+            --arg aud "$ACCESS_POLICY_AUD" \
+            --arg email "$ACCESS_OWNER_EMAIL" \
+            '{ACCESS_TEAM_DOMAIN:$team,ACCESS_POLICY_AUD:$aud,ACCESS_OWNER_EMAIL:$email}' \
+            > /tmp/sibyl-access-secrets.json
+          npx --no-install wrangler secret bulk /tmp/sibyl-access-secrets.json
+          rm -f /tmp/sibyl-access-secrets.json
+
+      - name: Publish summary
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          {
+            echo "### Sibyl Trace Cloudflare Terminal"
+            echo "- Source PAPER run: ${{ steps.source.outputs.run_id }}"
+            echo "- Source SHA: ${{ steps.source.outputs.sha }}"
+            echo "- Mode: read-only PAPER snapshot"
+            echo "- LIVE: absent"
+            echo "- Paid APIs: none"
+          } >> "$GITHUB_STEP_SUMMARY"
