@@ -3,6 +3,8 @@ name: Temporary Audit Verification
 on:
   schedule:
     - cron: "*/5 * * * *"
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -13,6 +15,7 @@ concurrency:
 
 jobs:
   backend:
+    if: github.event_name == 'schedule' || (github.event.issue.pull_request && github.event.issue.number == 4 && github.event.comment.body == '/verify-audit-014692')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,6 +35,7 @@ jobs:
       - run: pytest --cov=app --cov-report=term-missing
 
   dashboard:
+    if: github.event_name == 'schedule' || (github.event.issue.pull_request && github.event.issue.number == 4 && github.event.comment.body == '/verify-audit-014692')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -52,6 +56,7 @@ jobs:
         run: npm test
 
   container:
+    if: github.event_name == 'schedule' || (github.event.issue.pull_request && github.event.issue.number == 4 && github.event.comment.body == '/verify-audit-014692')
     runs-on: ubuntu-latest
     env:
       APP_VERSION: ci-01469245d59fcd52369aab8692f16967f5230bf8
