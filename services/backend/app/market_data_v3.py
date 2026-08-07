@@ -335,6 +335,22 @@ async def _collect_polymarket(
         errors.append(f"POLYMARKET:{type(exc).__name__}:{str(exc)[:160]}")
 
 
+def annotate_optional_feed_gaps(
+    events: list[V3Event],
+    errors: list[str],
+    *,
+    include_futures: bool,
+) -> list[str]:
+    annotated = list(errors)
+    if (
+        include_futures
+        and not any(event.source == "BINANCE_FUTURES" for event in events)
+        and not any(error.startswith("BINANCE_FUTURES:") for error in annotated)
+    ):
+        annotated.append("BINANCE_FUTURES:NO_EVENTS")
+    return annotated
+
+
 async def capture_market_window(
     target: V3Target,
     *,
@@ -374,6 +390,11 @@ async def capture_market_window(
             )
         )
     await asyncio.gather(*coroutines)
+    optional_errors = annotate_optional_feed_gaps(
+        events,
+        optional_errors,
+        include_futures=include_futures,
+    )
     return V3Capture(
         events=tuple(
             sorted(
