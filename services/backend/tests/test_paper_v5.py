@@ -15,6 +15,7 @@ from app.models_v5 import PaperV5Execution, PaperV5Prediction
 from app.paper_v5 import (
     PaperEngineV5,
     current_portfolio_v5,
+    execution_health_v5,
     settle_v5,
 )
 from app.repository import initialize_state
@@ -68,7 +69,7 @@ class FakeClient:
             "mts": "0.01",
             "mos": "1",
             "itode": False,
-            "fd": {"r": "0.07", "e": 2, "to": True},
+            "fd": {"r": "0.07", "e": 1, "to": True},
         }
 
     def order_book(self, _asset_id):
@@ -270,3 +271,26 @@ def test_rejected_prediction_never_enters_accuracy_denominator(monkeypatch) -> N
         assert prediction.result == "REJECTED"
         assert prediction.resolution_status == "NOT_APPLICABLE"
         assert execution.status == "REJECTED"
+
+
+def test_systemic_adapter_failure_is_red(monkeypatch) -> None:
+    class BadRulesClient(FakeClient):
+        def clob_market_info(self, _condition_id):
+            return {
+                "mts": "0.01",
+                "mos": "1",
+                "fd": {"r": "0.07", "e": 2, "to": True},
+            }
+
+    SessionLocal = factory()
+    client = BadRulesClient([order_book(asks=[(0.51, 100)], bids=[(0.49, 100)])])
+    monkeypatch.setattr("app.paper_v5.time.sleep", lambda _seconds: None)
+    with SessionLocal() as db:
+        initialize_state(db, settings())
+        wallet = add_wallet(db)
+        PaperEngineV5(settings(), client).process(db, wallet, activity(tx="0xbad-rules"))
+        health = execution_health_v5(db)
+        assert health["state"] == "RED"
+        assert health["adapter_failures"] == 1
+        assert health["decision_books_reached"] == 0
+        assert health["errors"] == ["systemic_market_data_adapter_failure:1"]

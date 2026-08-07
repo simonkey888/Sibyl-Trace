@@ -116,6 +116,7 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         return
     if (
         v5.get("status") != "PASS"
+        or v5.get("cohort_id") != "PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07"
         or v5.get("evidence_generation") != "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
     ):
         raise ValueError("PAPER V5 snapshot is not PASS truthful-execution evidence")

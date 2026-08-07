@@ -19,7 +19,7 @@ The unfilled remainder is cancelled. `PARTIAL_FILLED` and `NO_FILL` are valid ev
 
 ## Latency
 
-V5 does not invent a generic exchange latency. For ordinary markets the arrival book is the immediately re-fetched public book. Both decision and arrival book hashes/timestamps are retained. If the CLOB market metadata explicitly flags taker-order delay, V5 injects the documented delayed-market wait before the arrival-book re-fetch. This remains a PAPER approximation: without submitting a real order we cannot prove the exact queue position or exchange match that a real order would receive.
+V5 does not invent a generic exchange latency. For ordinary markets the arrival book is the immediately re-fetched public book. Both decision and arrival book hashes/timestamps are retained. If the CLOB market metadata explicitly flags taker-order delay, V5 injects the documented 250 ms delayed-market wait before the arrival-book re-fetch. This remains a PAPER approximation: without submitting a real order we cannot prove the exact queue position or exchange match that a real order would receive.
 
 ## Fees
 
@@ -95,3 +95,7 @@ Implementation choices were checked against current public sources on 2026-08-07
 - Polymarket public CLOB market metadata API.
 
 Recent research was used as a skepticism check, not as ground truth for fills: contemporary benchmark work models prediction-market strategies against order-book execution, and recent large-scale microstructure studies report that apparent predictive signals often fail out of sample. No external paper is used to manufacture a V5 fill or a positive edge claim.
+
+## R2 correction — 2026-08-07
+
+The first integrated V5 run is retained only as invalid-adapter audit evidence and is not canonical. A live public CLOB probe showed fee details `e=1` for sports/eSports (`r=0.05`) and BTC (`r=0.07`). R2 validates that observed/documented fee curve, uses the official 250 ms delayed-market window when `itode=true`, starts a fresh rolling state, and fails the run if adapter failures occur while zero decision books are reached. Cohort ID: `PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07`.
