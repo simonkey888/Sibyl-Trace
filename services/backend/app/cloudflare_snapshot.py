@@ -91,7 +91,10 @@ def _validate_v4(v4: dict[str, Any], v3: dict[str, Any]) -> None:
         return
     if not v3:
         raise ValueError("Research V4 cannot be published without Research V3")
-    if v4.get("status") != "PASS" or v4.get("evidence_generation") != "SIBYL_RESEARCH_V4_OPERATIONAL":
+    if (
+        v4.get("status") != "PASS"
+        or v4.get("evidence_generation") != "SIBYL_RESEARCH_V4_OPERATIONAL"
+    ):
         raise ValueError("Research V4 snapshot is not PASS operational evidence")
     safety = v4.get("safety") or {}
     if (
@@ -174,7 +177,7 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     trial_public = dict(trial)
     trial_public.pop("research", None)
     trial_public["methodology_label"] = "LEGACY_SIMULATION_MIDPOINT_V2"
-    trial_public["canonical_performance"] = False if paper_v5 else True
+    trial_public["canonical_performance"] = not paper_v5
     if paper_v5:
         paper_v5 = dict(paper_v5)
         paper_v5["canonical_performance"] = True
@@ -228,7 +231,9 @@ def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build sanitized Cloudflare PAPER dashboard snapshot")
+    parser = argparse.ArgumentParser(
+        description="Build sanitized Cloudflare PAPER dashboard snapshot"
+    )
     parser.add_argument("--input-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
