@@ -12,7 +12,7 @@ from app.config import Settings
 from app.db import Base
 
 
-def test_session_factory():
+def _session_factory():
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -62,7 +62,7 @@ class FakeClient:
 
 
 def install_harness(monkeypatch, output_dir: Path, research_result: dict) -> None:
-    factory = test_session_factory()
+    factory = _session_factory()
 
     def fake_legacy(target: Path) -> int:
         target.mkdir(parents=True, exist_ok=True)
