@@ -17,8 +17,10 @@ export function withSecurityHeaders(response) {
   for (const [key, value] of Object.entries(SECURITY_HEADERS)) headers.set(key, value);
   const contentType = response.headers.get("Content-Type") || "";
   const privateContent = contentType.includes("text/html") || contentType.includes("json");
-  if (!headers.has("Cache-Control")) {
-    headers.set("Cache-Control", privateContent ? "no-store" : "public, max-age=300");
+  if (privateContent) {
+    headers.set("Cache-Control", "no-store");
+  } else if (!headers.has("Cache-Control")) {
+    headers.set("Cache-Control", "public, max-age=300");
   }
   return new Response(response.body, {
     status: response.status,
