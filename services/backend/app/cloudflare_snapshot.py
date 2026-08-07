@@ -133,7 +133,9 @@ def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build sanitized Cloudflare PAPER dashboard snapshot")
+    parser = argparse.ArgumentParser(
+        description="Build sanitized Cloudflare PAPER dashboard snapshot"
+    )
     parser.add_argument("--input-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args()
