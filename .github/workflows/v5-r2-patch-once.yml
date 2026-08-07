@@ -78,7 +78,7 @@ jobs:
           text = text.replace('            "errors": errors,', '            "errors": run_errors,', 1)
           text = text.replace(
               '            "delayed_market_arrival_delay_ms": 1000,\n            "delayed_market_arrival_delay_basis": "CLOB itode flag",',
-              '            "delayed_market_arrival_delay_ms": 250,\n            "delayed_market_arrival_delay_basis": "official CLOB delayed-market window when itode=true",',
+              '            "delayed_market_arrival_delay_ms": 250,\n            "delayed_market_arrival_delay_basis": "official 250ms CLOB itode window",',
           )
           text = text.replace(
               '        "accounting_watchdog": {\n',
