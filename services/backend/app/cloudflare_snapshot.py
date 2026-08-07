@@ -155,6 +155,8 @@ def _validate_v5(v5: dict[str, Any]) -> None:
         or method.get("post_delay_market_state_revalidation") is not True
         or method.get("shadow_self_impact") is not True
         or method.get("shadow_self_impact_live_claim") is not False
+        or method.get("public_book_hash_bridge_persisted") is not True
+        or method.get("execution_evidence_hash_includes_book_provenance") is not True
         or method.get("copy_decay_metrics_in_ledger") is not True
         or method.get("fee_provenance_in_ledger") is not True
         or method.get("delayed_market_arrival_delay_ms") is not None
