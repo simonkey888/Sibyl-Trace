@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
-
 
 D = Decimal
 FEE_QUANTUM = D("0.00001")
