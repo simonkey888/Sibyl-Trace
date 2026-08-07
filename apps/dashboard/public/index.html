@@ -4,26 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#050708" />
-  <title>Sibyl Trace — PAPER Research Terminal</title>
+  <meta name="theme-color" content="#07100f" />
+  <meta name="description" content="Sibyl Trace PAPER research terminal for prediction-market evidence, execution simulation and market microstructure." />
+  <title>Sibyl Trace — Research Terminal</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="scanlines" aria-hidden="true"></div>
+  <a class="skip-link" href="#mainContent">Skip to terminal</a>
+  <div class="ambient-grid" aria-hidden="true"></div>
   <div class="terminal-shell">
-    <aside class="rail">
+    <aside class="rail" aria-label="Primary navigation">
       <div class="brand">
-        <div class="brand-glyph">S</div>
-        <div><strong>SIBYL TRACE</strong><small>PAPER RESEARCH</small></div>
+        <div class="brand-glyph" aria-hidden="true">S</div>
+        <div class="brand-copy">
+          <strong>SIBYL TRACE</strong>
+          <small>Evidence system / PAPER</small>
+        </div>
       </div>
+
+      <p class="nav-label">WORKSPACE</p>
       <nav class="nav">
-        <button class="nav-item active" data-view="overview"><span>01</span> Terminal</button>
-        <button class="nav-item" data-view="wallets"><span>02</span> Wallets</button>
-        <button class="nav-item" data-view="latency"><span>03</span> Latency</button>
-        <button class="nav-item" data-view="research"><span>04</span> Research</button>
-        <button class="nav-item" data-view="ledger"><span>05</span> Ledger</button>
+        <button class="nav-item active" data-view="overview"><span>01</span><b>Overview</b></button>
+        <button class="nav-item" data-view="wallets"><span>02</span><b>Wallets</b></button>
+        <button class="nav-item" data-view="latency"><span>03</span><b>Microstructure</b></button>
+        <button class="nav-item" data-view="research"><span>04</span><b>Research</b></button>
+        <button class="nav-item" data-view="ledger"><span>05</span><b>Ledger</b></button>
       </nav>
-      <div class="rail-status">
+
+      <div class="rail-status" aria-label="Safety state">
+        <p>SAFETY ENVELOPE</p>
         <div><span>MODE</span><b id="modeValue">PAPER</b></div>
         <div><span>LIVE</span><b class="good">ABSENT</b></div>
         <div><span>COST</span><b>$0</b></div>
@@ -31,11 +40,12 @@
       </div>
     </aside>
 
-    <main class="workspace">
+    <main class="workspace" id="mainContent">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">PREDICTION MARKET INTELLIGENCE / READ-ONLY</p>
+        <div class="topbar-copy">
+          <p class="eyebrow">PREDICTION-MARKET EVIDENCE / READ-ONLY</p>
           <h1>Sibyl <span>Research Terminal</span></h1>
+          <p class="lede">A decision-grade view of PAPER performance, source quality, market microstructure and reproducible research evidence.</p>
         </div>
         <div class="top-status">
           <time id="utcClock">--:--:-- UTC</time>
@@ -43,16 +53,21 @@
         </div>
       </header>
 
-      <section class="tape" aria-label="Research status tape">
-        <div><span>EVIDENCE</span><b id="evidenceValue">—</b></div>
-        <div><span>RUN</span><b id="runValue">—</b></div>
-        <div><span>AGE</span><b id="ageValue">—</b></div>
-        <div><span>WATCHDOG</span><b id="watchdogValue">—</b></div>
+      <section class="tape" aria-label="Evidence status">
+        <div><span>EVIDENCE CHAIN</span><b id="evidenceValue">—</b></div>
+        <div><span>RUN ID</span><b id="runValue">—</b></div>
+        <div><span>FRESHNESS</span><b id="ageValue">—</b></div>
+        <div><span>RESEARCH</span><b id="watchdogValue">—</b></div>
         <div><span>ACCOUNTING</span><b id="accountingValue">—</b></div>
-        <div><span>GEO</span><b id="geoValue">—</b></div>
+        <div><span>REGION</span><b id="geoValue">—</b></div>
       </section>
 
-      <section id="overview" class="view active">
+      <section id="overview" class="view active" aria-labelledby="overviewTitle">
+        <div class="view-heading">
+          <div><span class="kicker">PORTFOLIO / CURRENT STATE</span><h2 id="overviewTitle">What matters now</h2></div>
+          <p>Real market observations. Simulated execution. Every number remains inside the PAPER safety boundary.</p>
+        </div>
+
         <div class="metric-grid">
           <article class="metric primary">
             <span>PORTFOLIO EQUITY</span>
@@ -94,24 +109,24 @@
               <div><span>Paid APIs</span><b class="good">NONE</b></div>
               <div><span>Real-money execution</span><b class="good">ABSENT</b></div>
             </div>
-            <p class="note">This terminal is descriptive. It cannot sign, deposit, withdraw or place a LIVE order.</p>
+            <p class="note">Descriptive only. This terminal cannot sign, deposit, withdraw or place a LIVE order.</p>
           </article>
         </div>
 
         <div class="split">
           <article class="panel">
-            <div class="panel-head"><div><span class="kicker">SOURCE QUALITY</span><h2>Tracked wallets</h2></div><button class="jump" data-jump="wallets">OPEN MATRIX</button></div>
+            <div class="panel-head"><div><span class="kicker">SOURCE QUALITY</span><h2>Tracked wallets</h2></div><button class="jump" data-jump="wallets">View matrix →</button></div>
             <div id="walletCards" class="card-stack"></div>
           </article>
           <article class="panel">
-            <div class="panel-head"><div><span class="kicker">LATEST PAPER EXECUTION</span><h2>Decision tape</h2></div><button class="jump" data-jump="ledger">OPEN LEDGER</button></div>
+            <div class="panel-head"><div><span class="kicker">LATEST PAPER EXECUTION</span><h2>Decision tape</h2></div><button class="jump" data-jump="ledger">View ledger →</button></div>
             <div id="orderCards" class="card-stack"></div>
           </article>
         </div>
       </section>
 
-      <section id="wallets" class="view">
-        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2>SHORT / LONG / GLOBAL / EDGE</h2></div><p>GLOBAL ranks source quality. EDGE measures PAPER execution copyability and remains unproven until its sample matures.</p></div>
+      <section id="wallets" class="view" aria-labelledby="walletsTitle">
+        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2 id="walletsTitle">Source quality, without the leaderboard theater</h2></div><p>GLOBAL ranks source quality. EDGE measures PAPER execution copyability and remains unproven until its sample matures.</p></div>
         <article class="panel table-panel">
           <div class="table-scroll"><table>
             <thead><tr><th>Source</th><th>Short</th><th>Long</th><th>Global</th><th>Edge</th><th>Edge n</th><th>Win rate</th><th>Profit factor</th><th>Realized PnL</th></tr></thead>
@@ -120,8 +135,8 @@
         </article>
       </section>
 
-      <section id="latency" class="view">
-        <div class="section-head"><div><span class="kicker">BTC MICROSTRUCTURE</span><h2>Latency Lab</h2></div><p>Public feeds only. Divergence is not counted as tradable edge unless bid/ask, depth, fee and simulated fill all survive.</p></div>
+      <section id="latency" class="view" aria-labelledby="latencyTitle">
+        <div class="section-head"><div><span class="kicker">BTC MICROSTRUCTURE</span><h2 id="latencyTitle">Latency & order-book laboratory</h2></div><p>Public feeds only. Divergence is not tradable edge unless bid/ask, depth, fees and simulated fills all survive.</p></div>
         <div class="metric-grid latency-metrics">
           <article class="metric"><span>OBSERVATIONS</span><strong id="latencyEvents">0</strong><small>current capture</small></article>
           <article class="metric"><span>DIVERGENCES</span><strong id="latencyDivergences">0</strong><small>gross dislocations</small></article>
@@ -134,8 +149,8 @@
         </div>
       </section>
 
-      <section id="research" class="view">
-        <div class="section-head"><div><span class="kicker">HYPOTHESIS LEDGER</span><h2>Reference reconstructions</h2></div><p>External trader claims are reconstructed from public evidence and kept separate from Sibyl's own PAPER performance.</p></div>
+      <section id="research" class="view" aria-labelledby="researchTitle">
+        <div class="section-head"><div><span class="kicker">HYPOTHESIS LEDGER</span><h2 id="researchTitle">Evidence before narrative</h2></div><p>External trader claims are reconstructed from public evidence and remain separate from Sibyl's own PAPER performance.</p></div>
         <div id="referenceGrid" class="reference-grid"></div>
         <article class="panel hypothesis-panel">
           <div class="panel-head"><div><span class="kicker">PREREGISTERED</span><h2>Hypothesis IDs</h2></div></div>
@@ -143,8 +158,8 @@
         </article>
       </section>
 
-      <section id="ledger" class="view">
-        <div class="section-head"><div><span class="kicker">PAPER LEDGER</span><h2>Orders and open positions</h2></div><p>Rejected attempts remain visible. Settled PnL is separated from marked PnL.</p></div>
+      <section id="ledger" class="view" aria-labelledby="ledgerTitle">
+        <div class="section-head"><div><span class="kicker">PAPER LEDGER</span><h2 id="ledgerTitle">Every decision stays inspectable</h2></div><p>Rejected attempts remain visible. Settled PnL is separated from marked PnL.</p></div>
         <article class="panel table-panel">
           <div class="table-scroll"><table>
             <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Source</th><th>Observed</th><th>Slippage</th><th>Filled USD</th><th>Status</th></tr></thead>
@@ -161,13 +176,14 @@
       </section>
 
       <footer>
-        <span>SIBYL TRACE / PAPER V2 + RESEARCH V3</span>
+        <span>SIBYL TRACE / PAPER V2 + RESEARCH V3 + V4</span>
         <span id="footerVersion">—</span>
-        <span>NO LIVE · NO PAID API · $0 AUTHORIZED</span>
+        <span>READ-ONLY · NO LIVE · $0 AUTHORIZED</span>
       </footer>
     </main>
   </div>
   <script src="/app.js" defer></script>
   <script src="/research-v3.js" defer></script>
+  <script src="/research-v4.js" defer></script>
 </body>
 </html>
