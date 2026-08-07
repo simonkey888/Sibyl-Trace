@@ -24,9 +24,6 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
-      ACCESS_POLICY_AUD: ${{ secrets.ACCESS_POLICY_AUD }}
-      ACCESS_OWNER_EMAIL: ${{ secrets.ACCESS_OWNER_EMAIL }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Resolve source run
@@ -51,12 +48,12 @@ jobs:
         run: |
           set -euo pipefail
           enabled=true
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ACCESS_TEAM_DOMAIN ACCESS_POLICY_AUD ACCESS_OWNER_EMAIL; do
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
             if [[ -z "${!name:-}" ]]; then enabled=false; fi
           done
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
           if [[ "$enabled" != "true" ]]; then
-            echo "Cloudflare terminal publish skipped: required repository secrets are not configured."
+            echo "Cloudflare terminal publish skipped: CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing."
           fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -112,26 +109,10 @@ jobs:
         working-directory: apps/gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Deploy read-only terminal assets
+      - name: Deploy public read-only PAPER terminal
         if: steps.config.outputs.enabled == 'true'
         working-directory: apps/gateway
         run: npx --no-install wrangler deploy
-
-      - name: Apply fail-closed Access verifier secrets
-        if: steps.config.outputs.enabled == 'true'
-        working-directory: apps/gateway
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          jq -n \
-            --arg team "$ACCESS_TEAM_DOMAIN" \
-            --arg aud "$ACCESS_POLICY_AUD" \
-            --arg email "$ACCESS_OWNER_EMAIL" \
-            '{ACCESS_TEAM_DOMAIN:$team,ACCESS_POLICY_AUD:$aud,ACCESS_OWNER_EMAIL:$email}' \
-            > /tmp/sibyl-access-secrets.json
-          npx --no-install wrangler secret bulk /tmp/sibyl-access-secrets.json
-          rm -f /tmp/sibyl-access-secrets.json
 
       - name: Publish summary
         if: steps.config.outputs.enabled == 'true'
@@ -141,7 +122,8 @@ jobs:
             echo "### Sibyl Trace Cloudflare Terminal"
             echo "- Source PAPER run: ${{ steps.source.outputs.run_id }}"
             echo "- Source SHA: ${{ steps.source.outputs.sha }}"
-            echo "- Mode: read-only PAPER snapshot"
+            echo "- Mode: public read-only sanitized PAPER snapshot"
+            echo "- API/control routes: disabled"
             echo "- LIVE: absent"
             echo "- Paid APIs: none"
           } >> "$GITHUB_STEP_SUMMARY"
