@@ -17,7 +17,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Apply correction
-        run: python scripts/r4_ci_fix.py
+        run: |
+          python scripts/r4_ci_fix.py
+          python scripts/r4_ci_fix2.py
       - name: Verify full backend and freeze
         run: |
           python -m pip install -q -e 'services/backend[dev]'
