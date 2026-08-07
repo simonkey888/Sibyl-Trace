@@ -112,18 +112,17 @@ async function proxyApi(request, env) {
 
 export default {
   async fetch(request, env) {
-    const authentication = await verifyAccessRequest(request, env);
-    if (!authentication.ok) {
-      return withSecurityHeaders(
-        Response.json({ detail: authentication.detail }, { status: 403 }),
-      );
-    }
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
-      if (!["GET", "POST"].includes(request.method)) {
-        return withSecurityHeaders(new Response("Method not allowed", { status: 405 }));
-      }
-      return withSecurityHeaders(await proxyApi(request, env));
+      return withSecurityHeaders(
+        Response.json(
+          { detail: "API and control routes are disabled on the public PAPER terminal" },
+          { status: 404 },
+        ),
+      );
+    }
+    if (!["GET", "HEAD"].includes(request.method)) {
+      return withSecurityHeaders(new Response("Method not allowed", { status: 405 }));
     }
     return withSecurityHeaders(await env.ASSETS.fetch(request));
   },
