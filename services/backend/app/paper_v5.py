@@ -38,6 +38,7 @@ from app.watchdogs import accounting_watchdog
 EVIDENCE_GENERATION = "SIBYL_PAPER_V5_EXECUTION_REALISTIC"
 EXECUTION_MODEL = "L2_TAKER_FAK_ARRIVAL_BOOK_V1"
 LEGACY_LABEL = "LEGACY_SIMULATION_MIDPOINT_V2"
+COHORT_ID = "PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07"
 
 
 def utcnow() -> datetime:
@@ -295,7 +296,9 @@ class PaperEngineV5:
             decision_book = self.client.order_book(asset_id)
             observed = best_executable_price(decision_book, side)
         except Exception as exc:
-            self._reject(db, prediction, f"market_data_unavailable:{type(exc).__name__}")
+            self._reject(
+                db, prediction, f"market_data_unavailable:{type(exc).__name__}:{str(exc)[:120]}"
+            )
             return True
         if observed is None:
             self._reject(
@@ -343,7 +346,7 @@ class PaperEngineV5:
             self._reject(
                 db,
                 prediction,
-                f"arrival_book_unavailable:{type(exc).__name__}",
+                f"arrival_book_unavailable:{type(exc).__name__}:{str(exc)[:120]}",
                 requested_usd=decision.amount_usd,
                 requested_shares=requested_shares,
                 decision_book=decision_book,
@@ -649,6 +652,60 @@ def _recent_rows(db: Session, limit: int = 30) -> list[dict[str, Any]]:
     return output
 
 
+def execution_health_v5(db: Session) -> dict[str, Any]:
+    adapter_failures = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.reason.like("market_data_unavailable:%"))
+        )
+        or 0
+    )
+    decision_books_reached = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.decision_book_hash.is_not(None))
+        )
+        or 0
+    )
+    arrival_failures = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.reason.like("arrival_book_unavailable:%"))
+        )
+        or 0
+    )
+    arrival_books_reached = int(
+        db.scalar(
+            select(func.count())
+            .select_from(PaperV5Execution)
+            .where(PaperV5Execution.arrival_book_hash.is_not(None))
+        )
+        or 0
+    )
+    errors: list[str] = []
+    if adapter_failures > 0 and decision_books_reached == 0:
+        errors.append(f"systemic_market_data_adapter_failure:{adapter_failures}")
+    if arrival_failures > 0 and arrival_books_reached == 0:
+        errors.append(f"systemic_arrival_book_failure:{arrival_failures}")
+    if errors:
+        state = "RED"
+    elif adapter_failures or arrival_failures:
+        state = "YELLOW"
+    else:
+        state = "GREEN"
+    return {
+        "state": state,
+        "adapter_failures": adapter_failures,
+        "decision_books_reached": decision_books_reached,
+        "arrival_failures": arrival_failures,
+        "arrival_books_reached": arrival_books_reached,
+        "errors": errors,
+    }
+
+
 def build_report(
     db: Session,
     settings: Settings,
@@ -736,7 +793,9 @@ def build_report(
     )
     completed_at = utcnow()
     accuracy = wins / (wins + losses) if wins + losses else None
-    is_pass = not errors and accounting.state != "RED"
+    execution_health = execution_health_v5(db)
+    run_errors = list(errors) + list(execution_health["errors"])
+    is_pass = not run_errors and accounting.state != "RED"
     db.add(
         PaperV5PortfolioSnapshot(
             cash=portfolio["cash"],
@@ -751,6 +810,7 @@ def build_report(
     db.commit()
     return {
         "schema_version": 5,
+        "cohort_id": COHORT_ID,
         "evidence_generation": EVIDENCE_GENERATION,
         "status": "PASS" if is_pass else "DEGRADED",
         "run": {
@@ -759,7 +819,7 @@ def build_report(
             "started_at": started_at.isoformat(),
             "completed_at": completed_at.isoformat(),
             "duration_seconds": round((completed_at - started_at).total_seconds(), 3),
-            "errors": errors,
+            "errors": run_errors,
         },
         "safety": {
             "trading_mode": "PAPER",
@@ -782,8 +842,8 @@ def build_report(
             "fee_formula": "shares * rate * p * (1-p); rounded to 5 decimals",
             "regular_arrival_delay_ms": 0,
             "regular_arrival_delay_basis": "immediate public-book refetch; no synthetic delay",
-            "delayed_market_arrival_delay_ms": 1000,
-            "delayed_market_arrival_delay_basis": "CLOB itode flag",
+            "delayed_market_arrival_delay_ms": 250,
+            "delayed_market_arrival_delay_basis": "official 250ms CLOB itode window",
             "marking": "net executable liquidation value; unfilled residual = zero",
             "accuracy_denominator": "resolved filled BUY predictions only",
             "sell_signals_scored_as_directional_predictions": False,
@@ -812,6 +872,7 @@ def build_report(
             "accuracy": round(accuracy, 6) if accuracy is not None else None,
         },
         "portfolio": portfolio,
+        "execution_health": execution_health,
         "accounting_watchdog": {
             "state": accounting.state,
             "watchdog": accounting.watchdog,
@@ -1008,6 +1069,7 @@ def run(output_dir: Path) -> int:
     files = [output_dir / "paper-v5-summary.json", output_dir / "prediction-ledger-v5.jsonl"]
     manifest = {
         "schema_version": 5,
+        "cohort_id": COHORT_ID,
         "evidence_generation": EVIDENCE_GENERATION,
         "code_sha": os.getenv("GITHUB_SHA", settings.app_version),
         "execution_model": EXECUTION_MODEL,

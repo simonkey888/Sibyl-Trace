@@ -28,7 +28,7 @@ def test_fee_formula_matches_current_polymarket_taker_schedule() -> None:
 
 def test_market_rules_fail_closed_without_supported_per_market_fee_schedule() -> None:
     rules = market_rules_from_clob_info(
-        {"mts": "0.01", "mos": "5", "fd": {"r": "0.07", "e": 2, "to": True}}
+        {"mts": "0.01", "mos": "5", "fd": {"r": "0.07", "e": 1, "to": True}}
     )
     assert rules.tick_size == pytest.approx(0.01)
     assert rules.minimum_order_size == pytest.approx(5)
@@ -40,16 +40,16 @@ def test_market_rules_fail_closed_without_supported_per_market_fee_schedule() ->
             "mts": "0.001",
             "mos": "1",
             "itode": True,
-            "fd": {"r": "0.07", "e": 2, "to": True},
+            "fd": {"r": "0.07", "e": 1, "to": True},
         }
     )
-    assert delayed.order_delay_ms == 1000
+    assert delayed.order_delay_ms == 250
 
     with pytest.raises(ValueError, match="fee_schedule_unavailable"):
         market_rules_from_clob_info({"mts": "0.01", "mos": "5"})
     with pytest.raises(ValueError, match="unsupported_fee_schedule"):
         market_rules_from_clob_info(
-            {"mts": "0.01", "mos": "5", "fd": {"r": "0.07", "e": 1, "to": True}}
+            {"mts": "0.01", "mos": "5", "fd": {"r": "0.07", "e": 2, "to": True}}
         )
 
 
