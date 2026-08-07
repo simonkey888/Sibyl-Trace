@@ -57,7 +57,7 @@ def market_rules_from_clob_info(info: dict[str, Any]) -> MarketRulesV5:
         minimum_order_size=float(minimum),
         fee_rate=float(rate),
         fee_exponent=float(exponent),
-        order_delay_ms=1000 if info.get("itode") is True else 350,
+        order_delay_ms=1000 if info.get("itode") is True else 0,
     )
 
 
