@@ -96,7 +96,11 @@ class _R42TruthClient:
                 if not isinstance(item, dict):
                     continue
                 row = dict(item)
-                key = _price_key(row.get("price"))
+                try:
+                    key = _price_key(row.get("price"))
+                except Exception:
+                    rewritten.append(row)
+                    continue
                 debt = self._shadow.get((asset_id, side, key), 0.0)
                 try:
                     size = float(row.get("size") or 0)
