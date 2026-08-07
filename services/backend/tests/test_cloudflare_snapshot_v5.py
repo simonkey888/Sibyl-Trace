@@ -29,7 +29,7 @@ def legacy_trial():
 def truthful_v5():
     return {
         "schema_version": 5,
-        "cohort_id": "PAPER_V5_R4_1_REPORT_PUBLISH_TRUTH_2026_08_07",
+        "cohort_id": "PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07",
         "evidence_generation": "SIBYL_PAPER_V5_EXECUTION_REALISTIC",
         "status": "PASS",
         "run": {
@@ -49,7 +49,7 @@ def truthful_v5():
             "cost_authorized_usd": 0,
         },
         "methodology": {
-            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V3_SLUG_IDENTITY",
+            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V4_POST_DELAY_REVALIDATION_SHADOW_IMPACT",
             "midpoint_fills": False,
             "arrival_book_refetch": True,
             "l2_depth_consumed": True,
@@ -67,6 +67,11 @@ def truthful_v5():
             "summary_ledger_reconciliation": True,
             "unknown_official_delay_fail_closed": True,
             "market_identity_exact": True,
+            "post_delay_market_state_revalidation": True,
+            "shadow_self_impact": True,
+            "shadow_self_impact_live_claim": False,
+            "copy_decay_metrics_in_ledger": True,
+            "fee_provenance_in_ledger": True,
             "delayed_market_arrival_delay_ms": None,
             "regular_arrival_delay_ms": None,
         },
@@ -90,6 +95,8 @@ def test_public_snapshot_prefers_v5_and_labels_v2_legacy(tmp_path) -> None:
     assert snapshot["source"]["github_run_id"] == "v5-run"
     assert snapshot["paper_v5"]["canonical_performance"] is True
     assert snapshot["paper_v5"]["methodology"]["midpoint_fills"] is False
+    assert snapshot["paper_v5"]["methodology"]["post_delay_market_state_revalidation"] is True
+    assert snapshot["paper_v5"]["methodology"]["shadow_self_impact"] is True
     assert snapshot["trial"]["canonical_performance"] is False
     assert snapshot["trial"]["methodology_label"] == "LEGACY_SIMULATION_MIDPOINT_V2"
     assert snapshot["paper_v5"]["selected_wallets"][0]["wallet"].endswith("…1111")
@@ -117,6 +124,15 @@ def test_public_snapshot_rejects_v5_without_r3_mark_contract(tmp_path) -> None:
     write_json(tmp_path / "trial-summary.json", legacy_trial())
     v5 = truthful_v5()
     v5["methodology"]["immediate_post_fill_marking"] = False
+    write_json(tmp_path / "paper-v5-summary.json", v5)
+    with pytest.raises(ValueError, match="truthful-execution methodology"):
+        build_cloudflare_snapshot(tmp_path)
+
+
+def test_public_snapshot_rejects_v5_without_r42_truth_corrections(tmp_path) -> None:
+    write_json(tmp_path / "trial-summary.json", legacy_trial())
+    v5 = truthful_v5()
+    v5["methodology"]["post_delay_market_state_revalidation"] = False
     write_json(tmp_path / "paper-v5-summary.json", v5)
     with pytest.raises(ValueError, match="truthful-execution methodology"):
         build_cloudflare_snapshot(tmp_path)
