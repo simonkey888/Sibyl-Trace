@@ -29,7 +29,8 @@ TAKER_FEE_RATES = {
 
 def taker_fee_rate_for_category(category: str | None) -> float:
     normalized = str(category or "").strip().casefold()
-    for key, rate in TAKER_FEE_RATES.items():
+    categories = sorted(TAKER_FEE_RATES.items(), key=lambda item: len(item[0]), reverse=True)
+    for key, rate in categories:
         if key in normalized:
             return rate
     return TAKER_FEE_RATES["general"]
