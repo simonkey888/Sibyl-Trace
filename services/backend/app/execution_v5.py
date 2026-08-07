@@ -51,12 +51,15 @@ def market_rules_from_clob_info(info: dict[str, Any]) -> MarketRulesV5:
     taker_only = fee.get("to")
     if rate < 0 or rate > 1 or exponent != 1 or taker_only is not True:
         raise ValueError("unsupported_fee_schedule")
+    delayed = info.get("itode") is True
+    if delayed and abs(float(rate) - 0.07) > 1e-12:
+        raise ValueError("unsupported_delayed_market_schedule")
     return MarketRulesV5(
         tick_size=float(tick),
         minimum_order_size=float(minimum),
         fee_rate=float(rate),
         fee_exponent=float(exponent),
-        order_delay_ms=250 if info.get("itode") is True else 0,
+        order_delay_ms=250 if delayed else 0,
     )
 
 

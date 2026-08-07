@@ -8,9 +8,11 @@ on:
       - "services/backend/app/models_v5.py"
       - "services/backend/app/execution_v5.py"
       - "services/backend/app/paper_v5.py"
+      - "services/backend/app/paper_v5_r3.py"
       - "services/backend/app/db.py"
       - "services/backend/tests/test_execution_v5.py"
       - "services/backend/tests/test_paper_v5.py"
+      - "services/backend/tests/test_paper_v5_r3.py"
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
@@ -36,7 +38,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.paper-v5-state
       OUTPUT_DIR: ${{ github.workspace }}/paper-v5-output
-      RELEASE_TAG: github-paper-v5-state-v2
+      RELEASE_TAG: github-paper-v5-state-v3
       DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-state/sibyl-v5.db
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
@@ -83,7 +85,7 @@ jobs:
             exit 0
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "No R2 V5 state exists yet; starting clean."
+            echo "No R3 V5 state exists yet; starting clean."
             exit 0
           fi
           gh release download "$RELEASE_TAG" \
@@ -100,7 +102,7 @@ jobs:
           gzip -t "$STATE_DIR/sibyl-v5.db.gz"
           gzip -dc "$STATE_DIR/sibyl-v5.db.gz" > "$STATE_DIR/sibyl-v5.db"
           rm -f "$STATE_DIR/sibyl-v5.db.gz" "$STATE_DIR/SHA256SUMS"
-          echo "Verified R2 V5 state restored."
+          echo "Verified R3 V5 state restored."
 
       - name: Verify import and truth contract
         working-directory: services/backend
@@ -108,19 +110,22 @@ jobs:
         run: |
           set -euo pipefail
           python -m compileall -q app
-          ! grep -nE '\.midpoint\(' app/paper_v5.py
+          ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py
           grep -q 'L2_TAKER_FAK_ARRIVAL_BOOK_V1' app/paper_v5.py
           grep -q 'legacy_history_rewritten.*False' app/paper_v5.py
-          grep -q 'PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07' app/paper_v5.py
+          grep -q 'PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07' app/paper_v5_r3.py
+          grep -q '_mark_position_from_book' app/paper_v5_r3.py
+          grep -q 'decision_book_not_found' app/paper_v5_r3.py
           grep -q 'systemic_market_data_adapter_failure' app/paper_v5.py
           grep -q 'order_delay_ms=250' app/execution_v5.py
+          grep -q 'unsupported_delayed_market_schedule' app/execution_v5.py
           grep -q 'exponent != 1' app/execution_v5.py
 
       - name: Execute bounded PAPER V5 cycle
         id: cycle
         continue-on-error: true
         working-directory: services/backend
-        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5 --output-dir "$OUTPUT_DIR"
+        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5_r3 --output-dir "$OUTPUT_DIR"
 
       - name: Package diagnostic state and evidence
         if: always()
@@ -135,7 +140,7 @@ jobs:
           test -s "$OUTPUT_DIR/paper-v5-summary.md"
           test -f "$OUTPUT_DIR/prediction-ledger-v5.jsonl"
           test -s "$OUTPUT_DIR/evidence-manifest-v5.json"
-          grep -q '"cohort_id": "PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"cohort_id": "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"midpoint_fills": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"legacy_history_rewritten": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"order_placement": false' "$OUTPUT_DIR/paper-v5-summary.json"
@@ -180,8 +185,8 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --title "Sibyl Trace rolling PAPER V5 R2 state" \
-              --notes "Private truthful-execution R2 PAPER state. No keys, no LIVE, zero authorized cost." \
+              --title "Sibyl Trace rolling PAPER V5 R3 state" \
+              --notes "Private truthful-execution R3 PAPER state. No keys, no LIVE, zero authorized cost." \
               --prerelease
           else
             gh api --method PATCH \
@@ -200,5 +205,5 @@ jobs:
       - name: Fail closed on degraded V5 cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "V5 R2 evidence was retained for audit, but canonical rolling state was NOT advanced."
+          echo "V5 R3 evidence was retained for audit, but canonical rolling state was NOT advanced."
           exit 1

@@ -29,7 +29,7 @@ def legacy_trial():
 def truthful_v5():
     return {
         "schema_version": 5,
-        "cohort_id": "PAPER_V5_R2_CLOB_FEE_CURVE_2026_08_07",
+        "cohort_id": "PAPER_V5_R3_INTRACYCLE_MARK_2026_08_07",
         "evidence_generation": "SIBYL_PAPER_V5_EXECUTION_REALISTIC",
         "status": "PASS",
         "run": {
