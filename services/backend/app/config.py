@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     scan_interval_seconds: int = Field(default=3600, ge=60)
     watch_interval_seconds: int = Field(default=5, ge=2)
     activity_lookback_seconds: int = Field(default=120, ge=120, le=86400)
-    activity_fetch_limit: int = Field(default=500, ge=100, le=10000)
+    activity_fetch_limit: int = Field(default=500, ge=100, le=5000)
     candidate_limit: int = Field(default=20, ge=3, le=50)
     tracked_wallet_limit: int = Field(default=3, ge=1, le=10)
     mark_interval_seconds: int = Field(default=30, ge=10, le=3600)
@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     trading_mode: Literal["READ_ONLY", "PAPER"] = "READ_ONLY"
     paper_trading_enabled: bool = False
     live_trading_enabled: bool = False
+    cost_authorized_usd: float = Field(default=0.0, ge=0.0, le=0.0)
+
+    evidence_generation: str = "LEGACY_V1"
+    research_enabled: bool = False
+    latency_lab_enabled: bool = False
+    latency_capture_seconds: float = Field(default=15.0, ge=2.0, le=60.0)
+    latency_requested_shares: float = Field(default=5.0, gt=0.0, le=100.0)
+    reference_research_enabled: bool = False
+    reference_usernames: str = "djdjdjekekek,okkokok"
+    sports_fair_price_enabled: bool = False
+    weather_research_enabled: bool = False
 
     ai_analysis_enabled: bool = False
     ai_analysis_interval_seconds: int = Field(default=21600, ge=900)
@@ -43,13 +54,19 @@ class Settings(BaseSettings):
     @classmethod
     def reject_live_mode(cls, value: bool) -> bool:
         if value:
-            raise ValueError("LIVE trading is not available in Sibyl Trace V1")
+            raise ValueError("LIVE trading is not available in Sibyl Trace")
         return value
 
     @model_validator(mode="after")
     def reject_unsafe_configuration(self) -> "Settings":
+        if self.cost_authorized_usd != 0:
+            raise ValueError("Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0")
         if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
             raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
+        if self.research_enabled and self.trading_mode != "PAPER":
+            raise ValueError("research capture requires explicit PAPER mode")
+        if self.ai_analysis_enabled and self.app_env.lower() == "github-trial":
+            raise ValueError("scheduled GitHub PAPER must not use paid LLM APIs")
 
         if self.app_env.lower() != "production":
             return self
@@ -74,6 +91,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def reference_username_list(self) -> list[str]:
+        return [value.strip() for value in self.reference_usernames.split(",") if value.strip()]
 
 
 @lru_cache

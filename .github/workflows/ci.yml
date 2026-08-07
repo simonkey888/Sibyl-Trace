@@ -22,7 +22,7 @@ jobs:
       - run: pip check
       - run: pip-audit --local --progress-spinner off
       - run: ruff check .
-      - run: pytest --cov=app --cov-report=term-missing
+      - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=75
   dashboard:
     runs-on: ubuntu-latest
     steps:
@@ -30,16 +30,26 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/gateway/package-lock.json
       - run: node --check apps/dashboard/public/app.js
       - run: node --check apps/dashboard/public/ai-panel.js
       - working-directory: apps/gateway
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - working-directory: apps/gateway
         run: npm audit --omit=dev --audit-level=high
       - working-directory: apps/gateway
         run: npm run check
       - working-directory: apps/gateway
         run: npm test
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Scan repository boundaries
+        run: bash scripts/secret-scan.sh
+      - name: Verify frozen PAPER V2 invariants
+        run: python scripts/freeze_manifest.py --check
   container:
     runs-on: ubuntu-latest
     env:

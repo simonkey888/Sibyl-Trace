@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sibyl-trace-backend"
-version = "0.1.0"
-description = "Prediction-market wallet intelligence and paper execution engine"
+version = "0.2.0"
+description = "Prediction-market wallet intelligence and zero-dollar PAPER research engine"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi==0.141.1",
@@ -15,6 +15,7 @@ dependencies = [
   "sqlalchemy==2.0.51",
   "psycopg[binary]==3.3.4",
   "uvicorn[standard]==0.52.1",
+  "websockets==16.1.1",
 ]
 
 [project.optional-dependencies]

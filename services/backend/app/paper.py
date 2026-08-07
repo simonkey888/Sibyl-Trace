@@ -143,7 +143,7 @@ class PaperEngine:
             outcome=signal.outcome,
             side=signal.side,
             requested_usd=decision.amount_usd,
-            filled_usd=decision.amount_usd,
+            filled_usd=0,
             source_price=signal.source_price,
             observed_price=observed_price,
             fill_price=fill_price,
@@ -151,7 +151,13 @@ class PaperEngine:
             status="FILLED",
         )
         db.add(order)
-        self._apply_fill(db, signal, decision.amount_usd, fill_price)
+        actual_filled_usd = self._apply_fill(
+            db,
+            signal,
+            decision.amount_usd,
+            fill_price,
+        )
+        order.filled_usd = actual_filled_usd
         signal.decision = "APPROVED"
         signal.decision_reason = "paper_fill"
         db.flush()
@@ -159,15 +165,17 @@ class PaperEngine:
         audit(
             db,
             "paper_order_filled",
-            f"{signal.side} {signal.outcome} for ${decision.amount_usd:.2f}",
+            f"{signal.side} {signal.outcome} for ${actual_filled_usd:.2f}",
             signal_id=signal.id,
             order_id=order.id,
             fill_price=fill_price,
+            requested_usd=decision.amount_usd,
+            filled_usd=actual_filled_usd,
         )
         db.commit()
         return order
 
-    def _apply_fill(self, db: Session, signal: Signal, amount: float, price: float) -> None:
+    def _apply_fill(self, db: Session, signal: Signal, amount: float, price: float) -> float:
         position = db.get(PaperPosition, signal.asset_id)
         if position is None:
             position = PaperPosition(
@@ -184,16 +192,19 @@ class PaperEngine:
             total_cost = position.shares * position.average_price + amount
             position.shares += shares
             position.average_price = total_cost / position.shares if position.shares else 0.0
+            actual_filled_usd = amount
         else:
             shares = min(amount / price, position.shares)
             proceeds = shares * price
             cost = shares * position.average_price
             position.shares -= shares
             position.realized_pnl += proceeds - cost
+            actual_filled_usd = proceeds
             if position.shares <= 1e-9:
                 position.shares = 0
                 position.average_price = 0
         position.updated_at = datetime.now(UTC)
+        return round(actual_filled_usd, 8)
 
     def _reject(
         self, db: Session, signal: Signal, reason: str, observed_price: float | None = None
