@@ -25,6 +25,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.trial-state
       OUTPUT_DIR: ${{ github.workspace }}/research-v3-output
+      NORMALIZED_INPUT_DIR: ${{ runner.temp }}/sibyl-v3-source
       RELEASE_TAG: github-paper-state-v1
       DATABASE_URL: sqlite:///${{ github.workspace }}/.trial-state/sibyl.db
       APP_ENV: github-trial
@@ -100,9 +101,20 @@ jobs:
             --name "sibyl-paper-v2-$SOURCE_RUN_ID" \
             --dir "$OUTPUT_DIR"
           test -s "$OUTPUT_DIR/trial-summary.json"
+          test -s "$OUTPUT_DIR/evidence-manifest.json"
           test -s "$OUTPUT_DIR/SHA256SUMS"
           (cd "$OUTPUT_DIR" && sha256sum -c SHA256SUMS --ignore-missing)
           rm -f "$OUTPUT_DIR/SHA256SUMS"
+
+      - name: Normalize frozen V2 safety contract without mutating evidence
+        working-directory: services/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$NORMALIZED_INPUT_DIR"
+          python -c 'from pathlib import Path; from app.source_contract_v3 import normalize_v2_source; import os; normalize_v2_source(Path(os.environ["OUTPUT_DIR"]), Path(os.environ["NORMALIZED_INPUT_DIR"]))'
+          test -s "$NORMALIZED_INPUT_DIR/trial-summary.json"
+          echo "Original V2 evidence remains byte-for-byte untouched in OUTPUT_DIR."
 
       - name: Execute bounded additive Research Lab V3
         working-directory: services/backend
@@ -113,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=20s 7m \
-            python -m app.research_v3 --input-dir "$OUTPUT_DIR" --output-dir "$OUTPUT_DIR"
+            python -m app.research_v3 --input-dir "$NORMALIZED_INPUT_DIR" --output-dir "$OUTPUT_DIR"
 
       - name: Package updated additive state
         shell: bash
