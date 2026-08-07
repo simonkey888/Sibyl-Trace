@@ -47,6 +47,22 @@ def _resolved_price(market: dict, asset_id: str) -> float | None:
     return None
 
 
+def _settle_shares(
+    position: PaperPosition,
+    settlement_price: float,
+) -> tuple[float, float, float, float]:
+    shares = max(position.shares, 0.0)
+    cost_basis = shares * max(position.average_price, 0.0)
+    proceeds = shares * settlement_price
+    realized_pnl = proceeds - cost_basis
+    position.current_price = settlement_price
+    position.realized_pnl += realized_pnl
+    position.shares = 0
+    position.average_price = 0
+    position.updated_at = datetime.now(UTC)
+    return shares, cost_basis, proceeds, realized_pnl
+
+
 def settle_closed_positions(
     db: Session,
     client: PolymarketClient,
@@ -70,9 +86,26 @@ def settle_closed_positions(
     for position in positions:
         existing = db.get(PaperSettlement, position.asset_id)
         if existing is not None:
-            position.current_price = existing.settlement_price
-            position.shares = 0
-            position.average_price = 0
+            shares, cost_basis, proceeds, realized_pnl = _settle_shares(
+                position,
+                existing.settlement_price,
+            )
+            existing.shares += shares
+            existing.cost_basis += cost_basis
+            existing.proceeds += proceeds
+            existing.realized_pnl += realized_pnl
+            audit(
+                db,
+                "paper_position_reopened_after_settlement",
+                "Residual PAPER shares were reconciled at the recorded terminal price",
+                severity="WARN",
+                asset_id=position.asset_id,
+                condition_id=position.condition_id,
+                shares=round(shares, 8),
+                proceeds=round(proceeds, 6),
+                realized_pnl=round(realized_pnl, 6),
+            )
+            settled += 1
             continue
 
         market = by_condition.get(position.condition_id)
@@ -90,10 +123,10 @@ def settle_closed_positions(
             )
             continue
 
-        shares = max(position.shares, 0.0)
-        cost_basis = shares * max(position.average_price, 0.0)
-        proceeds = shares * settlement_price
-        realized_pnl = proceeds - cost_basis
+        shares, cost_basis, proceeds, realized_pnl = _settle_shares(
+            position,
+            settlement_price,
+        )
         db.add(
             PaperSettlement(
                 asset_id=position.asset_id,
@@ -107,11 +140,6 @@ def settle_closed_positions(
                 realized_pnl=realized_pnl,
             )
         )
-        position.current_price = settlement_price
-        position.realized_pnl += realized_pnl
-        position.shares = 0
-        position.average_price = 0
-        position.updated_at = datetime.now(UTC)
         audit(
             db,
             "paper_position_settled",
