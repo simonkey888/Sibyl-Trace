@@ -53,6 +53,8 @@ def test_copy_timing_measures_source_to_book_without_importing_filter() -> None:
     result = build_copy_timing_analysis(rows)
 
     assert result["source_price_semantics"] == SOURCE_PRICE_SEMANTICS
+    assert result["source_timestamp_resolution_ms"] == 1000
+    assert result["percentile_method"] == "nearest_rank"
     assert result["automatic_execution_gate"] is False
     assert result["arbitrary_max_age_filter_imported"] is False
     assert result["rows_total"] == 2
@@ -67,7 +69,7 @@ def test_copy_timing_measures_source_to_book_without_importing_filter() -> None:
     assert result["worst_positive_decision_copy_decay"][0]["prediction_id"] == 2
 
 
-def test_copy_timing_surfaces_clock_anomaly_instead_of_clamping_it() -> None:
+def test_copy_timing_surfaces_clock_anomaly_and_excludes_negative_decay_from_worst() -> None:
     rows = [
         _row(
             3,
@@ -79,6 +81,25 @@ def test_copy_timing_surfaces_clock_anomaly_instead_of_clamping_it() -> None:
     ]
     result = build_copy_timing_analysis(rows)
 
-    assert result["negative_clock_age_observations"] == 2
+    assert result["negative_clock_age_rows"] == 1
+    assert result["negative_clock_age_measurements"] == 2
     assert result["source_to_decision_book_ms"]["min"] == -1_000
     assert result["source_to_arrival_book_ms"]["min"] == -500
+    assert result["worst_positive_decision_copy_decay"] == []
+
+
+def test_copy_timing_nearest_rank_percentiles_are_deterministic() -> None:
+    rows = [
+        _row(
+            index,
+            source_timestamp=1_000,
+            decision_received_at_ms=1_000_000 + age,
+            arrival_received_at_ms=1_000_100 + age,
+            decision_decay=0.01,
+        )
+        for index, age in enumerate((1_000, 2_000, 100_000), start=1)
+    ]
+    result = build_copy_timing_analysis(rows)
+
+    assert result["source_to_decision_book_ms"]["p50"] == 2_000
+    assert result["source_to_decision_book_ms"]["p95"] == 100_000
