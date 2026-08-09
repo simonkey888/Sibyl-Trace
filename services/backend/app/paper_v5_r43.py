@@ -218,10 +218,14 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
         )
         selection = selection_by_prediction.get(prediction_id)
         row["selection_provenance"] = selection
-        row["selection_evidence_bound"] = bool(
-            selection
-            and _selection_payload_hash_valid(selection)
-            and _selection_evidence_binding_valid(selection, evidence_hash)
+        row["selection_evidence_bound"] = (
+            None
+            if evidence_hash is None
+            else bool(
+                selection
+                and _selection_payload_hash_valid(selection)
+                and _selection_evidence_binding_valid(selection, evidence_hash)
+            )
         )
         row["book_timing"] = {
             "timestamp_semantics": (
@@ -229,6 +233,11 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
             ),
             "decision_book_timestamp_ms": decision_book_ts,
             "decision_received_at_ms": decision_received,
+            "decision_state_offset_at_receipt_ms": (
+                int(decision_received) - int(decision_book_ts)
+                if decision_received is not None and decision_book_ts is not None
+                else None
+            ),
             "decision_state_age_at_receipt_ms": (
                 max(int(decision_received) - int(decision_book_ts), 0)
                 if decision_received is not None and decision_book_ts is not None
@@ -236,6 +245,11 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
             ),
             "arrival_book_timestamp_ms": arrival_book_ts,
             "arrival_received_at_ms": arrival_received,
+            "arrival_state_offset_at_receipt_ms": (
+                int(arrival_received) - int(arrival_book_ts)
+                if arrival_received is not None and arrival_book_ts is not None
+                else None
+            ),
             "arrival_state_age_at_receipt_ms": (
                 max(int(arrival_received) - int(arrival_book_ts), 0)
                 if arrival_received is not None and arrival_book_ts is not None
