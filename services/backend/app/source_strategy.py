@@ -7,20 +7,19 @@ from typing import Any
 
 DIRECTIONAL_CANDIDATE = "DIRECTIONAL_CANDIDATE"
 NON_DIRECTIONAL_MAKER = "NON_DIRECTIONAL_MAKER"
+NON_DIRECTIONAL_REBATE = "NON_DIRECTIONAL_REBATE"
 NON_DIRECTIONAL_FULL_SET = "NON_DIRECTIONAL_FULL_SET"
 NON_DIRECTIONAL_TWO_SIDED = "NON_DIRECTIONAL_TWO_SIDED"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 UNAVAILABLE = "UNAVAILABLE"
 
-_EVENT_TYPES = (
+_ACTIVITY_TYPES = (
     "TRADE",
     "SPLIT",
     "MERGE",
-    "REDEEM",
-    "REWARD",
     "CONVERSION",
     "MAKER_REBATE",
-    "REFERRAL_REWARD",
+    "TAKER_REBATE",
 )
 
 
@@ -42,6 +41,7 @@ class SourceStrategyProfile:
     attributable_trade_count: int
     unattributable_trade_count: int
     maker_rebate_count: int
+    taker_rebate_count: int
     split_count: int
     merge_count: int
     conversion_count: int
@@ -68,6 +68,7 @@ class SourceStrategyProfile:
             "attributable_trade_count": self.attributable_trade_count,
             "unattributable_trade_count": self.unattributable_trade_count,
             "maker_rebate_count": self.maker_rebate_count,
+            "taker_rebate_count": self.taker_rebate_count,
             "split_count": self.split_count,
             "merge_count": self.merge_count,
             "conversion_count": self.conversion_count,
@@ -140,7 +141,7 @@ def profile_hash_valid(profile: dict[str, Any]) -> bool:
 def fetch_public_activity_events(
     client: Any, wallet: str, *, cutoff_at: int, limit: int
 ) -> list[dict[str, Any]]:
-    """Read bounded public activity at a fixed cutoff; no auth or trading path."""
+    """Read bounded public copyability evidence at a fixed point-in-time cutoff."""
     target = min(max(int(limit), 0), 5000)
     if target == 0:
         return []
@@ -153,8 +154,9 @@ def fetch_public_activity_events(
             f"{client.settings.data_api_base}/activity",
             {
                 "user": wallet,
-                "start": 0,
-                "end": max(int(cutoff_at), 0),
+                "type": ",".join(_ACTIVITY_TYPES),
+                "start": 1,
+                "end": max(int(cutoff_at), 1),
                 "limit": current_limit,
                 "offset": offset,
                 "sortBy": "TIMESTAMP",
@@ -185,7 +187,7 @@ def classify_source_strategy(
     policy: SourceStrategyPolicy,
 ) -> SourceStrategyProfile:
     clean = [event for event in events if isinstance(event, dict)]
-    counts = {event_type: 0 for event_type in _EVENT_TYPES}
+    counts = {event_type: 0 for event_type in _ACTIVITY_TYPES}
     outcomes_by_condition: dict[str, set[str]] = {}
     trade_count_by_condition: dict[str, int] = {}
     attributable_trade_count = 0
@@ -230,6 +232,9 @@ def classify_source_strategy(
     if counts["MAKER_REBATE"] > 0:
         classification = NON_DIRECTIONAL_MAKER
         rejection_reason = "source_strategy_maker_rebate"
+    elif counts["TAKER_REBATE"] > 0:
+        classification = NON_DIRECTIONAL_REBATE
+        rejection_reason = "source_strategy_taker_rebate"
     elif counts["SPLIT"] > 0 or counts["MERGE"] > 0 or counts["CONVERSION"] > 0:
         classification = NON_DIRECTIONAL_FULL_SET
         rejection_reason = "source_strategy_full_set_or_conversion"
@@ -253,6 +258,7 @@ def classify_source_strategy(
         "attributable_trade_count": attributable_trade_count,
         "unattributable_trade_count": unattributable_trade_count,
         "maker_rebate_count": counts["MAKER_REBATE"],
+        "taker_rebate_count": counts["TAKER_REBATE"],
         "split_count": counts["SPLIT"],
         "merge_count": counts["MERGE"],
         "conversion_count": counts["CONVERSION"],
@@ -277,6 +283,7 @@ def classify_source_strategy(
         attributable_trade_count=attributable_trade_count,
         unattributable_trade_count=unattributable_trade_count,
         maker_rebate_count=counts["MAKER_REBATE"],
+        taker_rebate_count=counts["TAKER_REBATE"],
         split_count=counts["SPLIT"],
         merge_count=counts["MERGE"],
         conversion_count=counts["CONVERSION"],
