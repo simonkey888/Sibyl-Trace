@@ -27,6 +27,14 @@ SELECTION_EVENT = "paper_v5_r43_selection_provenance"
 CYCLE_SELECTION_EFFECTIVE_STATE = "paper_v5_cycle_selection_effective_at"
 ACTIVE_SELECTION_STATE = "paper_v5_cycle_selected_wallets"
 NEXT_SELECTION_STATE = "paper_v5_next_selected_wallets"
+_SELECTION_MATERIAL_KEYS = (
+    "prediction_id",
+    "wallet",
+    "wallet_score",
+    "selection_effective_at",
+    "source_timestamp",
+    "prospective_selection",
+)
 
 _apply_r42_report_base = r42._apply_r42_report
 _write_ledger_r42_base = r42._write_ledger_r42
@@ -45,6 +53,10 @@ def _state_json_list(db: Session, key: str) -> list[dict[str, Any]]:
     except (TypeError, json.JSONDecodeError):
         return []
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _selection_material(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload.get(key) for key in _SELECTION_MATERIAL_KEYS}
 
 
 def _selection_payload(
@@ -68,33 +80,52 @@ def _selection_payload(
 
 def _selection_payload_hash_valid(payload: dict[str, Any]) -> bool:
     claimed = str(payload.get("selection_provenance_hash") or "")
-    if len(claimed) != 64:
+    return len(claimed) == 64 and claimed == r4._canonical_hash(
+        _selection_material(payload)
+    )
+
+
+def _selection_evidence_binding_valid(
+    payload: dict[str, Any], evidence_hash: str | None
+) -> bool:
+    parent = str(payload.get("r4_2_execution_evidence_hash") or "")
+    claimed = str(payload.get("r4_3_execution_evidence_hash") or "")
+    if not parent and not claimed and evidence_hash is None:
+        return True
+    if len(parent) != 64 or len(claimed) != 64 or len(str(evidence_hash or "")) != 64:
         return False
-    material = {
-        key: value
-        for key, value in payload.items()
-        if key != "selection_provenance_hash"
-    }
-    return claimed == r4._canonical_hash(material)
+    expected = r4._canonical_hash(
+        {
+            "r4_2_execution_evidence_hash": parent,
+            "selection_provenance_hash": payload.get("selection_provenance_hash"),
+        }
+    )
+    return claimed == expected == evidence_hash
 
 
 def _bridge_selection_evidence_hash(
     db: Session,
     prediction: PaperV5Prediction,
     selection_provenance: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
+    payload = dict(selection_provenance)
     evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
     if evidence is None:
-        return
-    evidence.execution_evidence_hash = r4._canonical_hash(
+        payload["r4_2_execution_evidence_hash"] = None
+        payload["r4_3_execution_evidence_hash"] = None
+        return payload
+    parent = evidence.execution_evidence_hash
+    bridged = r4._canonical_hash(
         {
-            "r4_2_execution_evidence_hash": evidence.execution_evidence_hash,
-            "selection_provenance_hash": selection_provenance[
-                "selection_provenance_hash"
-            ],
+            "r4_2_execution_evidence_hash": parent,
+            "selection_provenance_hash": payload["selection_provenance_hash"],
         }
     )
+    evidence.execution_evidence_hash = bridged
     db.add(evidence)
+    payload["r4_2_execution_evidence_hash"] = parent
+    payload["r4_3_execution_evidence_hash"] = bridged
+    return payload
 
 
 class PaperEngineV5R43(r42.PaperEngineV5R42):
@@ -130,10 +161,10 @@ class PaperEngineV5R43(r42.PaperEngineV5R42):
         )
         if prediction is None:
             return handled
-        selection_provenance = _selection_payload(
+        selection_provenance = _bridge_selection_evidence_hash(
+            db,
             prediction,
-            wallet,
-            selection_effective_at,
+            _selection_payload(prediction, wallet, selection_effective_at),
         )
         audit(
             db,
@@ -141,7 +172,6 @@ class PaperEngineV5R43(r42.PaperEngineV5R42):
             "Persist point-in-time wallet-selection basis for copied source activity",
             **selection_provenance,
         )
-        _bridge_selection_evidence_hash(db, prediction, selection_provenance)
         db.commit()
         return handled
 
@@ -177,6 +207,7 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
         prediction_id = int(row.get("prediction_id") or 0)
         execution = executions.get(prediction_id)
         evidence = row.get("execution_evidence") or {}
+        evidence_hash = evidence.get("execution_evidence_hash")
         decision_received = evidence.get("decision_received_at_ms")
         arrival_received = evidence.get("arrival_received_at_ms")
         decision_book_ts = (
@@ -190,7 +221,7 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
         row["selection_evidence_bound"] = bool(
             selection
             and _selection_payload_hash_valid(selection)
-            and evidence.get("execution_evidence_hash")
+            and _selection_evidence_binding_valid(selection, evidence_hash)
         )
         row["book_timing"] = {
             "timestamp_semantics": (
@@ -224,6 +255,7 @@ def _apply_r43_report(
     missing = [row.id for row in prediction_rows if row.id not in selection_by_prediction]
     temporal_violations: list[int] = []
     hash_violations: list[int] = []
+    evidence_bridge_violations: list[int] = []
     for row in prediction_rows:
         provenance = selection_by_prediction.get(row.id) or {}
         try:
@@ -234,6 +266,10 @@ def _apply_r43_report(
             temporal_violations.append(row.id)
         if provenance and not _selection_payload_hash_valid(provenance):
             hash_violations.append(row.id)
+        evidence = db.get(PaperV5ExecutionEvidence, row.id)
+        evidence_hash = evidence.execution_evidence_hash if evidence is not None else None
+        if provenance and not _selection_evidence_binding_valid(provenance, evidence_hash):
+            evidence_bridge_violations.append(row.id)
 
     errors: list[str] = []
     if missing:
@@ -244,6 +280,10 @@ def _apply_r43_report(
         )
     if hash_violations:
         errors.append(f"selection_provenance_hash_mismatch:{len(hash_violations)}")
+    if evidence_bridge_violations:
+        errors.append(
+            f"selection_execution_evidence_bridge_mismatch:{len(evidence_bridge_violations)}"
+        )
 
     report["cohort_id"] = COHORT_ID
     report["methodology"].update(
@@ -277,6 +317,9 @@ def _apply_r43_report(
         "next_selection": _state_json_list(db, NEXT_SELECTION_STATE),
         "predictions_with_selection_provenance": len(selection_by_prediction),
         "selection_provenance_hash_mismatches": len(hash_violations),
+        "selection_execution_evidence_bridge_mismatches": len(
+            evidence_bridge_violations
+        ),
     }
     report["selected_wallets"] = report["selection_provenance"]["active_selection"]
     if errors:
