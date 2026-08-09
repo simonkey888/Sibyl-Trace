@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.source_strategy import (
     DIRECTIONAL_CANDIDATE,
     INSUFFICIENT_EVIDENCE,
@@ -49,6 +51,7 @@ def test_directional_candidate_has_recomputable_hash():
     assert profile.classification == DIRECTIONAL_CANDIDATE
     assert profile.rejection_reason is None
     assert profile.directional is True
+    assert profile.attributable_trade_count == 6
     assert profile_hash_valid(profile.to_dict()) is True
 
 
@@ -89,7 +92,7 @@ def test_repeated_two_sided_conditions_are_not_directional_alpha():
     assert profile.classification == NON_DIRECTIONAL_TWO_SIDED
     assert profile.paired_condition_count == 2
     assert profile.paired_trade_count == 4
-    assert profile.paired_trade_fraction == 4 / 6
+    assert profile.paired_trade_fraction == pytest.approx(4 / 6, abs=1e-6)
 
 
 def test_single_flip_does_not_overclassify_two_sided_strategy():
@@ -109,6 +112,26 @@ def test_insufficient_history_fails_closed():
     profile = classify([trade(1, "a"), trade(2, "b")])
     assert profile.classification == INSUFFICIENT_EVIDENCE
     assert profile.rejection_reason == "source_strategy_insufficient_evidence"
+
+
+def test_unattributable_trades_do_not_satisfy_directional_minimum():
+    events = []
+    for i in range(6):
+        row = trade(i, f"condition-{i}")
+        row.pop("conditionId")
+        row.pop("outcomeIndex")
+        events.append(row)
+    profile = classify(events)
+    assert profile.trade_count == 6
+    assert profile.attributable_trade_count == 0
+    assert profile.unattributable_trade_count == 6
+    assert profile.classification == INSUFFICIENT_EVIDENCE
+
+
+def test_outcome_zero_and_one_are_distinct_in_activity_evidence():
+    zero = classify([trade(i, f"condition-{i}", 0) for i in range(6)])
+    one = classify([trade(i, f"condition-{i}", 1) for i in range(6)])
+    assert zero.activity_sample_hash != one.activity_sample_hash
 
 
 def test_event_order_does_not_change_sample_or_evidence_hash():
