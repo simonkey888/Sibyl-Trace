@@ -36,14 +36,14 @@ def accounting_watchdog(
     error_two = abs(identity_two - equity)
     if max(error_one, error_two) > tolerance:
         return _assessment(
-            "ACCOUNTING_RECONCILIATION_FAILURE",
+            "ACCOUNTING_RECONCILIATION",
             "RED",
             "Portfolio identities do not reconcile",
             identity_one_error=error_one,
             identity_two_error=error_two,
         )
     return _assessment(
-        "ACCOUNTING_RECONCILIATION_FAILURE",
+        "ACCOUNTING_RECONCILIATION",
         "GREEN",
         "Portfolio identities reconcile",
         identity_one_error=error_one,
