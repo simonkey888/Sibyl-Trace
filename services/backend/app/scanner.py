@@ -110,14 +110,15 @@ def scan_wallets(
         key=lambda wallet: wallet.score,
         reverse=True,
     )[: settings.tracked_wallet_limit]
-    selection_effective_at = int(time.time()) if prospective else None
+    # Source activity timestamps are integer Unix seconds. Prospective selection
+    # begins on the next whole second so a trade from the same wall-clock second
+    # can never be retrospectively authorized by a score computed milliseconds later.
+    selection_effective_at = int(time.time()) + 1 if prospective else None
     for wallet in eligible:
         wallet.selected = True
         if selection_effective_at is not None:
-            # A freshly scored selection may only authorize source activity that
-            # occurs after the score exists. Advancing the cursor deliberately
-            # sacrifices late-indexed pre-selection trades rather than backfilling
-            # them with future information.
+            # Deliberately sacrifice late-indexed pre-selection activity rather
+            # than backfill it using information unavailable at source-trade time.
             wallet.last_activity_at = max(
                 int(wallet.last_activity_at or 0), selection_effective_at
             )
