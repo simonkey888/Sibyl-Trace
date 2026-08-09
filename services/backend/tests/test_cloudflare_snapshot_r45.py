@@ -41,6 +41,7 @@ def truthful_r45():
             "attributable_economic_observations": 0,
             "unattributable_economic_observations": 0,
             "evidence_level_basis": "attributable_economic_observations",
+            "minimum_settled_for_exploratory_breakdown": 50,
             "automatic_execution_gate": False,
             "out_of_sample_confirmation_required": True,
             "weekday_weekend_claim_verified": False,
@@ -222,6 +223,45 @@ def test_r45_validator_accepts_exploratory_state_at_50_attributable_settlements(
         }
     )
     _validate_v5_r45(payload)
+
+
+def test_r45_validator_tracks_higher_declared_minimum():
+    payload = truthful_r45()
+    payload["methodology"]["regime_min_settled_exploratory"] = 100
+    payload["regime_analysis"].update(
+        {
+            "minimum_settled_for_exploratory_breakdown": 100,
+            "state": "INSUFFICIENT_EVIDENCE",
+            "settled_observations": 75,
+            "resolved_directional_observations": 80,
+            "attributable_economic_observations": 75,
+            "unattributable_economic_observations": 5,
+        }
+    )
+    _validate_v5_r45(payload)
+
+
+def test_r45_validator_tracks_higher_declared_minimum_at_threshold():
+    payload = truthful_r45()
+    payload["methodology"]["regime_min_settled_exploratory"] = 100
+    payload["regime_analysis"].update(
+        {
+            "minimum_settled_for_exploratory_breakdown": 100,
+            "state": "EXPLORATORY_ONLY",
+            "settled_observations": 100,
+            "resolved_directional_observations": 110,
+            "attributable_economic_observations": 100,
+            "unattributable_economic_observations": 10,
+        }
+    )
+    _validate_v5_r45(payload)
+
+
+def test_r45_validator_rejects_analysis_methodology_minimum_mismatch():
+    payload = truthful_r45()
+    payload["regime_analysis"]["minimum_settled_for_exploratory_breakdown"] = 100
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
 
 
 def test_r45_validator_rejects_wrong_evidence_level_basis():
