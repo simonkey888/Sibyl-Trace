@@ -9,7 +9,6 @@ from app.source_strategy import (
     INSUFFICIENT_EVIDENCE,
     NON_DIRECTIONAL_FULL_SET,
     NON_DIRECTIONAL_MAKER,
-    NON_DIRECTIONAL_REBATE,
     NON_DIRECTIONAL_TWO_SIDED,
     SourceStrategyPolicy,
     classify_source_strategy,
@@ -67,12 +66,13 @@ def test_maker_rebate_rejects_profitable_looking_wallet():
     assert profile.rejection_reason == "source_strategy_maker_rebate"
 
 
-def test_taker_rebate_is_not_silently_called_directional_alpha():
+def test_taker_rebate_is_recorded_without_inventing_direction_semantics():
     events = [trade(i, f"condition-{i}") for i in range(6)]
     events.append({"type": "TAKER_REBATE", "timestamp": 1_800_000_100})
     profile = classify(events)
-    assert profile.classification == NON_DIRECTIONAL_REBATE
-    assert profile.rejection_reason == "source_strategy_taker_rebate"
+    assert profile.taker_rebate_count == 1
+    assert profile.classification == DIRECTIONAL_CANDIDATE
+    assert profile.rejection_reason is None
 
 
 def test_split_merge_or_conversion_rejects_full_set_strategy():
