@@ -37,7 +37,9 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
     resolved = int(analysis.get("resolved_directional_observations") or 0)
     attributable = int(analysis.get("attributable_economic_observations") or 0)
     unattributable = int(analysis.get("unattributable_economic_observations") or 0)
-    expected_state = "INSUFFICIENT_EVIDENCE" if resolved < 50 else "EXPLORATORY_ONLY"
+    expected_state = (
+        "INSUFFICIENT_EVIDENCE" if attributable < 50 else "EXPLORATORY_ONLY"
+    )
     if (
         method.get("regime_context_in_ledger") is not True
         or method.get("regime_context_utc_only") is not True
@@ -53,6 +55,7 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or method.get("regime_unattributable_pnl_excluded") is not True
         or method.get("regime_provenance_retry_safe") is not True
         or method.get("loss_cluster_timestamp_ties_deterministic") is not True
+        or method.get("regime_exploratory_threshold_uses_attributable_economics") is not True
         or int(method.get("regime_min_settled_exploratory") or 0) < 50
         or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
         or provenance.get("state") != "PASS"
@@ -60,7 +63,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or int(provenance.get("context_hash_or_timestamp_mismatches") or 0) != 0
         or int(provenance.get("execution_evidence_bridge_mismatches") or 0) != 0
         or analysis.get("state") != expected_state
-        or settled != resolved
+        or analysis.get("evidence_level_basis") != "attributable_economic_observations"
+        or settled != attributable
         or analysis.get("automatic_execution_gate") is not False
         or analysis.get("out_of_sample_confirmation_required") is not True
         or analysis.get("weekday_weekend_claim_verified") is not False
