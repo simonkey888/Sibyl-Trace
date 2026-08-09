@@ -33,6 +33,9 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
 
     provenance = v5.get("regime_provenance") or {}
     analysis = v5.get("regime_analysis") or {}
+    resolved = int(analysis.get("resolved_directional_observations") or 0)
+    attributable = int(analysis.get("attributable_economic_observations") or 0)
+    unattributable = int(analysis.get("unattributable_economic_observations") or 0)
     if (
         method.get("regime_context_in_ledger") is not True
         or method.get("regime_context_utc_only") is not True
@@ -44,6 +47,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or method.get("time_of_day_rule_imported") is not False
         or method.get("naive_strategy_inversion") is not False
         or method.get("loss_cluster_metrics_settled_only") is not True
+        or method.get("regime_pnl_requires_single_fill_asset_no_exit") is not True
+        or method.get("regime_unattributable_pnl_excluded") is not True
         or int(method.get("regime_min_settled_exploratory") or 0) < 50
         or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
         or provenance.get("state") != "PASS"
@@ -53,6 +58,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or analysis.get("automatic_execution_gate") is not False
         or analysis.get("out_of_sample_confirmation_required") is not True
         or analysis.get("naive_strategy_inversion_allowed") is not False
+        or attributable > resolved
+        or unattributable != max(resolved - attributable, 0)
     ):
         raise ValueError("PAPER V5 R4.5 snapshot violates regime evidence methodology")
 
