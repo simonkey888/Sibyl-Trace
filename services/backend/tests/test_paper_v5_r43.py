@@ -15,11 +15,13 @@ from app import paper_v5_r43 as r43
 from app.config import Settings
 from app.db import Base
 from app.models import AuditEvent, Wallet
-from app.models_v5 import PaperV5Position, PaperV5Prediction
+from app.models_v5 import PaperV5ExecutionEvidence, PaperV5Position, PaperV5Prediction
 from app.paper_v5_r43 import (
     CYCLE_SELECTION_EFFECTIVE_STATE,
     PaperEngineV5R43,
     SELECTION_EVENT,
+    _selection_evidence_binding_valid,
+    _selection_payload_hash_valid,
     _write_ledger_r43,
 )
 from app.repository import get_state, initialize_state, set_state
@@ -203,7 +205,7 @@ def test_r43_ignores_activity_that_predates_active_selection():
         assert event is not None
 
 
-def test_r43_valid_activity_persists_selection_and_book_timing(tmp_path: Path):
+def test_r43_valid_activity_persists_recomputable_selection_evidence(tmp_path: Path):
     local = factory()
     now = int(time.time())
     client = ExecutionClient(
@@ -220,11 +222,22 @@ def test_r43_valid_activity_persists_selection_and_book_timing(tmp_path: Path):
         assert PaperEngineV5R43(settings(), client).process(
             db, wallet, activity(now, "0xprospective")
         ) is True
+        prediction = db.scalar(select(PaperV5Prediction))
+        assert prediction is not None
+        evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
+        assert evidence is not None
         event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == SELECTION_EVENT))
         assert event is not None
         payload = json.loads(event.payload_json)
         assert payload["selection_effective_at"] == now - 1
         assert payload["source_timestamp"] == now
+        assert _selection_payload_hash_valid(payload) is True
+        assert _selection_evidence_binding_valid(
+            payload, evidence.execution_evidence_hash
+        ) is True
+        assert len(payload["r4_2_execution_evidence_hash"]) == 64
+        assert len(payload["r4_3_execution_evidence_hash"]) == 64
+        assert payload["r4_2_execution_evidence_hash"] != payload["r4_3_execution_evidence_hash"]
 
         path = tmp_path / "ledger.jsonl"
         _write_ledger_r43(legacy._write_ledger, db, path)
@@ -233,9 +246,39 @@ def test_r43_valid_activity_persists_selection_and_book_timing(tmp_path: Path):
         row = rows[0]
         assert row["selection_provenance"]["prospective_selection"] is True
         assert row["selection_provenance"]["source_timestamp"] >= row["selection_provenance"]["selection_effective_at"]
+        assert row["selection_evidence_bound"] is True
+        assert row["execution_evidence"]["execution_evidence_hash"] == payload[
+            "r4_3_execution_evidence_hash"
+        ]
         assert row["book_timing"]["decision_book_timestamp_ms"] is not None
         assert row["book_timing"]["arrival_book_timestamp_ms"] is not None
         assert "state timestamp" in row["book_timing"]["timestamp_semantics"]
+
+
+def test_r43_selection_provenance_tampering_is_detected():
+    payload = {
+        "prediction_id": 1,
+        "wallet": "0x4444444444444444444444444444444444444444",
+        "wallet_score": 90.0,
+        "selection_effective_at": 100,
+        "source_timestamp": 101,
+        "prospective_selection": True,
+    }
+    payload["selection_provenance_hash"] = r43.r4._canonical_hash(payload)
+    parent = "a" * 64
+    bridged = r43.r4._canonical_hash(
+        {
+            "r4_2_execution_evidence_hash": parent,
+            "selection_provenance_hash": payload["selection_provenance_hash"],
+        }
+    )
+    payload["r4_2_execution_evidence_hash"] = parent
+    payload["r4_3_execution_evidence_hash"] = bridged
+    assert _selection_payload_hash_valid(payload) is True
+    assert _selection_evidence_binding_valid(payload, bridged) is True
+    payload["wallet_score"] = 91.0
+    assert _selection_payload_hash_valid(payload) is False
+    assert _selection_evidence_binding_valid(payload, bridged) is True
 
 
 def test_r43_mark_client_applies_run_local_shadow_debt():
