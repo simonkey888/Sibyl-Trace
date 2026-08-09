@@ -41,6 +41,8 @@ def _unavailable_profile(
         "cutoff_at": cutoff_at,
         "event_count": 0,
         "trade_count": 0,
+        "attributable_trade_count": 0,
+        "unattributable_trade_count": 0,
         "maker_rebate_count": 0,
         "split_count": 0,
         "merge_count": 0,
