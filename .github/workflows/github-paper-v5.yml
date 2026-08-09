@@ -14,9 +14,11 @@ on:
       - "services/backend/app/paper_v5_r43.py"
       - "services/backend/app/paper_v5_r44.py"
       - "services/backend/app/paper_v5_r45.py"
+      - "services/backend/app/copy_timing_audit.py"
       - "services/backend/app/source_strategy.py"
       - "services/backend/app/scanner.py"
       - "services/backend/app/polymarket.py"
+      - "services/backend/app/watchdogs.py"
       - "services/backend/app/db.py"
       - "services/backend/tests/test_execution_v5.py"
       - "services/backend/tests/test_paper_v5.py"
@@ -26,7 +28,9 @@ on:
       - "services/backend/tests/test_paper_v5_r43.py"
       - "services/backend/tests/test_paper_v5_r44.py"
       - "services/backend/tests/test_paper_v5_r45.py"
+      - "services/backend/tests/test_copy_timing_audit.py"
       - "services/backend/tests/test_source_strategy.py"
+      - "services/backend/tests/test_watchdogs.py"
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
@@ -143,6 +147,8 @@ jobs:
           grep -q 'public_book_hash_bridge_persisted' app/paper_v5_r42.py
           grep -q 'Gamma market.secondsDelay' app/paper_v5_r4.py
           grep -q 'systemic_market_data_adapter_failure' app/paper_v5.py
+          grep -q 'historical source-wallet TRADE price' app/copy_timing_audit.py
+          grep -q 'arbitrary_max_age_filter_imported' app/copy_timing_audit.py
 
       - name: Execute bounded PAPER V5 cycle
         id: cycle
@@ -182,6 +188,52 @@ jobs:
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
 
+      - name: Build copy timing and artifact contract
+        if: always()
+        working-directory: services/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m app.copy_timing_audit "$OUTPUT_DIR/prediction-ledger-v5.jsonl" "$OUTPUT_DIR/copy-timing-analysis.json"
+          test -s "$OUTPUT_DIR/copy-timing-analysis.json"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["OUTPUT_DIR"])
+          manifest_path = root / "evidence-manifest-v5.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          roles = {
+              "paper-v5-summary.json": "canonical_summary",
+              "paper-v5-summary.md": "human_readable_summary",
+              "prediction-ledger-v5.jsonl": "immutable_prediction_execution_ledger",
+              "copy-timing-analysis.json": "derived_source_to_book_timing_evidence",
+              "sibyl-v5.db.gz": "compressed_diagnostic_state",
+          }
+          packaged = {}
+          for name, role in roles.items():
+              path = root / name
+              included = path.is_file() and path.stat().st_size > 0
+              packaged[name] = {
+                  "included": included,
+                  "role": role,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if included else None,
+              }
+          manifest["artifact_contract"] = {
+              "primary_evidence": ["paper-v5-summary.json", "prediction-ledger-v5.jsonl"],
+              "auxiliary_evidence": ["paper-v5-summary.md", "copy-timing-analysis.json", "sibyl-v5.db.gz"],
+              "packaged_files": packaged,
+              "sha256sums_scope": "all included package files plus the finalized evidence manifest",
+              "manifest_self_hash": "listed only in SHA256SUMS after manifest finalization",
+          }
+          manifest_path.write_text(
+              json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Reconcile summary ledger and evidence chains
         if: always()
         shell: bash
@@ -196,6 +248,8 @@ jobs:
           root = Path(os.environ["OUTPUT_DIR"])
           summary = json.loads((root / "paper-v5-summary.json").read_text())
           rows = [json.loads(line) for line in (root / "prediction-ledger-v5.jsonl").read_text().splitlines() if line.strip()]
+          timing = json.loads((root / "copy-timing-analysis.json").read_text())
+          manifest = json.loads((root / "evidence-manifest-v5.json").read_text())
           totals = summary["totals"]
           method = summary["methodology"]
           selection = summary["selection_provenance"]
@@ -210,6 +264,24 @@ jobs:
           assert regime_analysis["automatic_execution_gate"] is False
           assert regime_analysis["out_of_sample_confirmation_required"] is True
           assert regime_analysis["naive_strategy_inversion_allowed"] is False
+          assert timing["automatic_execution_gate"] is False
+          assert timing["arbitrary_max_age_filter_imported"] is False
+          assert timing["rows_total"] == len(rows)
+          assert "historical source-wallet TRADE price" in timing["source_price_semantics"]
+          contract = manifest["artifact_contract"]
+          packaged = contract["packaged_files"]
+          for required in (
+              "paper-v5-summary.json",
+              "paper-v5-summary.md",
+              "prediction-ledger-v5.jsonl",
+              "copy-timing-analysis.json",
+          ):
+              assert packaged[required]["included"] is True
+              assert len(packaged[required]["sha256"] or "") == 64
+          db_included = (root / "sibyl-v5.db.gz").is_file() and (root / "sibyl-v5.db.gz").stat().st_size > 0
+          assert packaged["sibyl-v5.db.gz"]["included"] is db_included
+          if db_included:
+              assert len(packaged["sibyl-v5.db.gz"]["sha256"] or "") == 64
           resolved = int(regime_analysis.get("resolved_directional_observations") or 0)
           attributable = int(regime_analysis.get("attributable_economic_observations") or 0)
           unattributable = int(regime_analysis.get("unattributable_economic_observations") or 0)
@@ -310,7 +382,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$OUTPUT_DIR"
-          files=(paper-v5-summary.json paper-v5-summary.md prediction-ledger-v5.jsonl evidence-manifest-v5.json)
+          files=(paper-v5-summary.json paper-v5-summary.md prediction-ledger-v5.jsonl evidence-manifest-v5.json copy-timing-analysis.json)
           if [[ -s sibyl-v5.db.gz ]]; then files+=(sibyl-v5.db.gz); fi
           sha256sum "${files[@]}" > SHA256SUMS
 
@@ -328,6 +400,8 @@ jobs:
             paper-v5-output/paper-v5-summary.md
             paper-v5-output/prediction-ledger-v5.jsonl
             paper-v5-output/evidence-manifest-v5.json
+            paper-v5-output/copy-timing-analysis.json
+            paper-v5-output/sibyl-v5.db.gz
             paper-v5-output/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
@@ -344,7 +418,7 @@ jobs:
           else
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" -F force=true
           fi
-          gh release upload "$RELEASE_TAG" "$OUTPUT_DIR/sibyl-v5.db.gz" "$OUTPUT_DIR/paper-v5-summary.json" "$OUTPUT_DIR/paper-v5-summary.md" "$OUTPUT_DIR/evidence-manifest-v5.json" "$OUTPUT_DIR/SHA256SUMS" --clobber
+          gh release upload "$RELEASE_TAG" "$OUTPUT_DIR/sibyl-v5.db.gz" "$OUTPUT_DIR/paper-v5-summary.json" "$OUTPUT_DIR/paper-v5-summary.md" "$OUTPUT_DIR/prediction-ledger-v5.jsonl" "$OUTPUT_DIR/evidence-manifest-v5.json" "$OUTPUT_DIR/copy-timing-analysis.json" "$OUTPUT_DIR/SHA256SUMS" --clobber
 
       - name: Fail closed on degraded V5 cycle
         if: steps.cycle.outcome != 'success'
