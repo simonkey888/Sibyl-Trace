@@ -44,6 +44,17 @@ def _profile_for_wallet(db: Session, address: str) -> dict[str, Any] | None:
     return None
 
 
+def _profile_predates_selection(
+    profile: dict[str, Any], selection_effective_at: int
+) -> bool:
+    try:
+        cutoff_at = int(profile.get("cutoff_at") or 0)
+        effective_at = int(selection_effective_at or 0)
+    except (TypeError, ValueError):
+        return False
+    return cutoff_at > 0 and effective_at > 0 and cutoff_at < effective_at
+
+
 def _strategy_binding_valid(payload: dict[str, Any], evidence_hash: str | None) -> bool:
     profile = payload.get("source_strategy_profile") or {}
     if not isinstance(profile, dict) or not profile_hash_valid(profile):
@@ -96,11 +107,13 @@ class PaperEngineV5R44(_PaperEngineV5R43Base):
 
     def process(self, db: Session, wallet: Wallet, activity: dict[str, Any]) -> bool:
         profile = _profile_for_wallet(db, wallet.address)
+        selection_effective_at = r43._state_int(db, r43.CYCLE_SELECTION_EFFECTIVE_STATE)
         if (
             profile is None
             or profile.get("classification") != "DIRECTIONAL_CANDIDATE"
             or profile.get("directional") is not True
             or not profile_hash_valid(profile)
+            or not _profile_predates_selection(profile, selection_effective_at)
         ):
             raise RuntimeError("source_strategy_directional_provenance_missing_or_invalid")
 
@@ -118,6 +131,7 @@ class PaperEngineV5R44(_PaperEngineV5R43Base):
             db,
             STRATEGY_EVENT,
             "Bind directional source-strategy evidence to copied prediction",
+            selection_effective_at=selection_effective_at,
             **provenance,
         )
         db.commit()
@@ -207,9 +221,11 @@ def _apply_r44_report(
         _restore_r44_evidence(db, saved)
 
     predictions = list(db.scalars(select(PaperV5Prediction)).all())
+    selection_by_prediction = r43._selection_provenance_by_prediction(db)
     missing: list[int] = []
     invalid_profile: list[int] = []
     non_directional: list[int] = []
+    temporal_mismatch: list[int] = []
     bridge_mismatch: list[int] = []
 
     for prediction in predictions:
@@ -226,6 +242,13 @@ def _apply_r44_report(
             or profile.get("directional") is not True
         ):
             non_directional.append(prediction.id)
+        selection = selection_by_prediction.get(prediction.id) or {}
+        try:
+            selection_effective_at = int(selection.get("selection_effective_at") or 0)
+        except (TypeError, ValueError):
+            selection_effective_at = 0
+        if not _profile_predates_selection(profile, selection_effective_at):
+            temporal_mismatch.append(prediction.id)
         evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
         evidence_hash = evidence.execution_evidence_hash if evidence is not None else None
         if not _strategy_binding_valid(payload, evidence_hash):
@@ -238,6 +261,8 @@ def _apply_r44_report(
         errors.append(f"source_strategy_profile_hash_mismatch:{len(invalid_profile)}")
     if non_directional:
         errors.append(f"non_directional_source_prediction_present:{len(non_directional)}")
+    if temporal_mismatch:
+        errors.append(f"source_strategy_selection_temporal_mismatch:{len(temporal_mismatch)}")
     if bridge_mismatch:
         errors.append(f"source_strategy_execution_evidence_bridge_mismatch:{len(bridge_mismatch)}")
 
@@ -250,6 +275,7 @@ def _apply_r44_report(
             "source_strategy_gate": True,
             "source_strategy_public_activity_only": True,
             "source_strategy_point_in_time_cutoff": True,
+            "source_strategy_cutoff_predates_selection": True,
             "source_strategy_fail_closed": True,
             "maker_rebate_source_rejected": True,
             "split_merge_conversion_source_rejected": True,
@@ -269,6 +295,7 @@ def _apply_r44_report(
         "missing_prediction_profiles": len(missing),
         "profile_hash_mismatches": len(invalid_profile),
         "non_directional_predictions": len(non_directional),
+        "profile_selection_temporal_mismatches": len(temporal_mismatch),
         "execution_evidence_bridge_mismatches": len(bridge_mismatch),
     }
     if errors:
