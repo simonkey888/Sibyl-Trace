@@ -142,21 +142,54 @@ def _strategy_by_prediction(db: Session) -> dict[int, dict[str, Any]]:
     return out
 
 
+def _temporary_r43_evidence_parents(
+    db: Session, provenance: dict[int, dict[str, Any]]
+) -> dict[int, str | None]:
+    saved: dict[int, str | None] = {}
+    for prediction_id, payload in provenance.items():
+        evidence = db.get(PaperV5ExecutionEvidence, prediction_id)
+        if evidence is None:
+            continue
+        saved[prediction_id] = evidence.execution_evidence_hash
+        parent = payload.get("r4_3_execution_evidence_hash")
+        if parent:
+            evidence.execution_evidence_hash = str(parent)
+    return saved
+
+
+def _restore_r44_evidence(
+    db: Session, saved: dict[int, str | None]
+) -> None:
+    for prediction_id, evidence_hash in saved.items():
+        evidence = db.get(PaperV5ExecutionEvidence, prediction_id)
+        if evidence is not None:
+            evidence.execution_evidence_hash = evidence_hash
+
+
 def _write_ledger_r44(original_writer: Any, db: Session, path: Path) -> None:
-    _write_ledger_r43_base(original_writer, db, path)
     provenance = _strategy_by_prediction(db)
+    saved = _temporary_r43_evidence_parents(db, provenance)
+    try:
+        with db.no_autoflush:
+            _write_ledger_r43_base(original_writer, db, path)
+    finally:
+        _restore_r44_evidence(db, saved)
+
     rewritten: list[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(raw)
         prediction_id = int(row.get("prediction_id") or 0)
         payload = provenance.get(prediction_id)
         evidence = row.get("execution_evidence") or {}
-        evidence_hash = evidence.get("execution_evidence_hash")
+        terminal_hash = saved.get(prediction_id)
+        if terminal_hash is not None:
+            evidence["execution_evidence_hash"] = terminal_hash
+            row["execution_evidence"] = evidence
         row["source_strategy_provenance"] = payload
         row["source_strategy_evidence_bound"] = (
             None
-            if evidence_hash is None
-            else bool(payload and _strategy_binding_valid(payload, evidence_hash))
+            if terminal_hash is None
+            else bool(payload and _strategy_binding_valid(payload, terminal_hash))
         )
         rewritten.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
     path.write_text("\n".join(rewritten) + ("\n" if rewritten else ""), encoding="utf-8")
@@ -165,8 +198,14 @@ def _write_ledger_r44(original_writer: Any, db: Session, path: Path) -> None:
 def _apply_r44_report(
     report: dict[str, Any], db: Session, baseline: dict[str, int]
 ) -> dict[str, Any]:
-    report = _apply_r43_report_base(report, db, baseline)
     provenance = _strategy_by_prediction(db)
+    saved = _temporary_r43_evidence_parents(db, provenance)
+    try:
+        with db.no_autoflush:
+            report = _apply_r43_report_base(report, db, baseline)
+    finally:
+        _restore_r44_evidence(db, saved)
+
     predictions = list(db.scalars(select(PaperV5Prediction)).all())
     missing: list[int] = []
     invalid_profile: list[int] = []
