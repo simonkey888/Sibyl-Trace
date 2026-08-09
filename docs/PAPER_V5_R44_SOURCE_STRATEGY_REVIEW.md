@@ -6,7 +6,7 @@ R4.4 does **not** import a market-making, LP, merge/redeem, signing, WebSocket e
 
 ## Why this is required
 
-R4.3 fixed temporal lookahead, but wallet ranking still used closed-position PnL, win rate, profit factor and concentration. Those metrics do not establish *how* the wallet earned the PnL. A wallet can be profitable from maker rebates, two-sided inventory management, or complete-set operations while an observer copying one trade leg loses the economics that made the source profitable.
+R4.3 fixed temporal lookahead, but wallet ranking still used closed-position PnL, win rate, profit factor and concentration. Those metrics do not establish *how* the wallet earned the PnL. A wallet can be profitable from maker behavior, two-sided inventory management, or complete-set operations while an observer copying one trade leg loses the economics that made the source profitable.
 
 That is a source-attribution failure, not an execution-speed problem.
 
@@ -14,9 +14,9 @@ That is a source-attribution failure, not an execution-speed problem.
 
 ### Polymarket public mechanics
 
-Official Polymarket documentation describes complete-set mechanics: collateral can be split into complementary outcome tokens and equal complementary quantities can be merged back into collateral. Public user activity also exposes event types including `TRADE`, `SPLIT`, `MERGE`, `CONVERSION`, `MAKER_REBATE` and `REDEEM`.
+Official Polymarket documentation describes complete-set mechanics: collateral can be split into complementary outcome tokens and equal complementary quantities can be merged back into collateral. Public user activity exposes event types including `TRADE`, `SPLIT`, `MERGE`, `CONVERSION`, `MAKER_REBATE`, `TAKER_REBATE` and `REDEEM`.
 
-R4.4 therefore treats `MAKER_REBATE` and `SPLIT/MERGE/CONVERSION` as direct evidence that historical profitability contains economics Sibyl's directional taker-copy model does not reproduce.
+R4.4 treats `MAKER_REBATE` and `SPLIT/MERGE/CONVERSION` as direct evidence that the observed source behavior is not cleanly represented by Sibyl's directional taker-copy model. `TAKER_REBATE` is retained and hashed as diagnostic evidence, but is **not** by itself used to classify a source as non-directional because its presence does not establish directionality or prove how the scoring PnL accounts for the rebate.
 
 ### `ohehe` claim supplied for review
 
@@ -36,22 +36,32 @@ Reviewed conceptually, not vendored or copied into runtime:
 
 For a bounded point-in-time public activity sample captured before selection becomes effective:
 
-1. any `MAKER_REBATE` => `NON_DIRECTIONAL_MAKER`;
-2. any `SPLIT`, `MERGE` or `CONVERSION` => `NON_DIRECTIONAL_FULL_SET`;
-3. repeated trading of both outcomes in at least the configured number of conditions and at/above the configured trade fraction => `NON_DIRECTIONAL_TWO_SIDED`;
-4. fewer than the configured minimum trade observations => `INSUFFICIENT_EVIDENCE`;
-5. only the remainder => `DIRECTIONAL_CANDIDATE`.
+1. only events with a positive timestamp at or before the fixed cutoff are admissible evidence;
+2. any `MAKER_REBATE` => `NON_DIRECTIONAL_MAKER`;
+3. any `SPLIT`, `MERGE` or `CONVERSION` => `NON_DIRECTIONAL_FULL_SET`;
+4. repeated trading of both outcomes in at least the configured number of conditions and at/above the configured trade fraction => `NON_DIRECTIONAL_TWO_SIDED`;
+5. fewer than the configured minimum **attributable** trades (condition + outcome) => `INSUFFICIENT_EVIDENCE`;
+6. only the remainder => `DIRECTIONAL_CANDIDATE`.
 
-The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
+The public activity request is bounded to the documented Data API pagination limits and filters to copyability-relevant event types. The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
+
+`outcomeIndex` is preferred for paired-outcome classification. If it is absent, normalized `outcome` is the fallback and is also included in the canonical event hash. Missing/future/zero timestamps cannot authorize a source.
+
+## Temporal authority
+
+The source-strategy cutoff must be strictly earlier than the R4.3 prospective `selection_effective_at`. R4.4 checks that invariant before processing a source trade and again during report reconciliation. A valid profile hash captured too late is therefore still invalid for the active selection.
 
 ## Evidence chain
 
 Each selected source has a deterministic source-strategy profile containing:
 
 - point-in-time cutoff;
+- count of admissible events and invalid timestamp evidence;
+- attributable/unattributable trade counts;
 - activity sample hash;
 - classification and reason;
-- event counts and paired-outcome metrics;
+- maker/taker rebate and full-set event counts;
+- paired-outcome metrics;
 - exact policy thresholds;
 - source-strategy evidence hash.
 
@@ -59,7 +69,7 @@ Each R4.4 prediction then extends the immutable chain:
 
 `R4.2 book/market evidence -> R4.3 prospective-selection evidence -> R4.4 source-strategy evidence`.
 
-A missing, non-directional, or hash-invalid profile fails closed.
+A missing, non-directional, hash-invalid, or temporally invalid profile fails closed.
 
 ## Explicit non-changes
 
