@@ -36,6 +36,7 @@ class SourceStrategyProfile:
     rejection_reason: str | None
     cutoff_at: int
     event_count: int
+    invalid_timestamp_event_count: int
     trade_count: int
     attributable_trade_count: int
     unattributable_trade_count: int
@@ -63,6 +64,7 @@ class SourceStrategyProfile:
             "rejection_reason": self.rejection_reason,
             "cutoff_at": self.cutoff_at,
             "event_count": self.event_count,
+            "invalid_timestamp_event_count": self.invalid_timestamp_event_count,
             "trade_count": self.trade_count,
             "attributable_trade_count": self.attributable_trade_count,
             "unattributable_trade_count": self.unattributable_trade_count,
@@ -93,6 +95,13 @@ def wallet_hash(address: str) -> str:
     return hashlib.sha256(str(address).strip().lower().encode()).hexdigest()
 
 
+def _event_timestamp(event: dict[str, Any]) -> int:
+    try:
+        return int(event.get("timestamp") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _event_identity(event: dict[str, Any]) -> dict[str, Any]:
     outcome_index = event.get("outcomeIndex")
     return {
@@ -102,7 +111,8 @@ def _event_identity(event: dict[str, Any]) -> dict[str, Any]:
         "asset_id": str(event.get("asset") or ""),
         "side": str(event.get("side") or "").upper(),
         "outcome_index": "" if outcome_index is None else str(outcome_index),
-        "timestamp": int(event.get("timestamp") or 0),
+        "outcome": str(event.get("outcome") or "").strip().casefold(),
+        "timestamp": _event_timestamp(event),
         "price": str(event.get("price") or ""),
         "size": str(event.get("size") or ""),
         "usdc_size": str(event.get("usdcSize") or ""),
@@ -120,6 +130,7 @@ def _sample_hash(events: list[dict[str, Any]]) -> str:
             row["asset_id"],
             row["side"],
             row["outcome_index"],
+            row["outcome"],
         )
     )
     return canonical_hash(normalized)
@@ -166,7 +177,8 @@ def fetch_public_activity_events(
         for event in page:
             if not isinstance(event, dict):
                 continue
-            if int(event.get("timestamp") or 0) > cutoff_at:
+            timestamp = _event_timestamp(event)
+            if timestamp <= 0 or timestamp > cutoff_at:
                 continue
             identity_hash = canonical_hash(_event_identity(event))
             if identity_hash in seen:
@@ -185,7 +197,13 @@ def classify_source_strategy(
     cutoff_at: int,
     policy: SourceStrategyPolicy,
 ) -> SourceStrategyProfile:
-    clean = [event for event in events if isinstance(event, dict)]
+    raw = [event for event in events if isinstance(event, dict)]
+    clean = [
+        event
+        for event in raw
+        if 0 < _event_timestamp(event) <= int(cutoff_at)
+    ]
+    invalid_timestamp_event_count = len(raw) - len(clean)
     counts = {event_type: 0 for event_type in _ACTIVITY_TYPES}
     outcomes_by_condition: dict[str, set[str]] = {}
     trade_count_by_condition: dict[str, int] = {}
@@ -250,6 +268,7 @@ def classify_source_strategy(
         "rejection_reason": rejection_reason,
         "cutoff_at": int(cutoff_at),
         "event_count": len(clean),
+        "invalid_timestamp_event_count": invalid_timestamp_event_count,
         "trade_count": trade_count,
         "attributable_trade_count": attributable_trade_count,
         "unattributable_trade_count": unattributable_trade_count,
@@ -275,6 +294,7 @@ def classify_source_strategy(
         rejection_reason=rejection_reason,
         cutoff_at=int(cutoff_at),
         event_count=len(clean),
+        invalid_timestamp_event_count=invalid_timestamp_event_count,
         trade_count=trade_count,
         attributable_trade_count=attributable_trade_count,
         unattributable_trade_count=unattributable_trade_count,
