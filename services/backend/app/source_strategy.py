@@ -132,6 +132,50 @@ def profile_hash_valid(profile: dict[str, Any]) -> bool:
     return len(claimed) == 64 and claimed == canonical_hash(_profile_material(profile))
 
 
+def fetch_public_activity_events(
+    client: Any,
+    wallet: str,
+    *,
+    cutoff_at: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read a bounded, point-in-time public activity sample without trading auth."""
+    target = min(max(int(limit), 0), 5000)
+    if target == 0:
+        return []
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    page_size = min(500, target)
+    for offset in range(0, target, page_size):
+        current_limit = min(page_size, target - offset)
+        data = client._get(
+            f"{client.settings.data_api_base}/activity",
+            {
+                "user": wallet,
+                "start": 0,
+                "end": max(int(cutoff_at), 0),
+                "limit": current_limit,
+                "offset": offset,
+                "sortBy": "TIMESTAMP",
+                "sortDirection": "DESC",
+            },
+        )
+        page = data if isinstance(data, list) else []
+        for event in page:
+            if not isinstance(event, dict):
+                continue
+            if int(event.get("timestamp") or 0) > cutoff_at:
+                continue
+            identity_hash = canonical_hash(_event_identity(event))
+            if identity_hash in seen:
+                continue
+            seen.add(identity_hash)
+            results.append(event)
+        if len(page) < current_limit:
+            break
+    return results
+
+
 def classify_source_strategy(
     wallet: str,
     events: list[dict[str, Any]],
