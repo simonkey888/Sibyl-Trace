@@ -63,7 +63,7 @@ def test_regime_hash_bridge_is_recomputable_and_tamper_evident():
     assert _regime_binding_valid(tampered, child) is False
 
 
-def test_loss_clustering_uses_economic_losses_and_rolling_hour():
+def test_loss_clustering_uses_only_attributable_economic_losses():
     rows = [
         observation(0, -1),
         observation(600, -2),
@@ -74,8 +74,8 @@ def test_loss_clustering_uses_economic_losses_and_rolling_hour():
         observation(5000, -1),
     ]
     metrics = _loss_cluster_metrics(rows)
-    assert metrics["max_consecutive_economic_losses"] == 3
-    assert metrics["max_economic_losses_in_rolling_60m"] == 5
+    assert metrics["max_consecutive_attributable_economic_losses"] == 3
+    assert metrics["max_attributable_economic_losses_in_rolling_60m"] == 5
 
 
 def test_regime_analysis_never_turns_anecdote_into_execution_gate():
@@ -83,12 +83,28 @@ def test_regime_analysis_never_turns_anecdote_into_execution_gate():
     analysis = _regime_analysis_from_observations(rows)
     assert analysis["state"] == "INSUFFICIENT_EVIDENCE"
     assert analysis["settled_observations"] == 10
+    assert analysis["attributable_economic_observations"] == 10
     assert analysis["minimum_settled_for_exploratory_breakdown"] == MIN_EXPLORATORY_SETTLED
     assert analysis["automatic_execution_gate"] is False
     assert analysis["out_of_sample_confirmation_required"] is True
     assert analysis["weekday_weekend_claim_verified"] is False
     assert analysis["time_of_day_claim_verified"] is False
     assert analysis["naive_strategy_inversion_allowed"] is False
+
+
+def test_unattributable_settlements_are_excluded_from_pnl_and_loss_clusters():
+    directional = [
+        observation(1_700_000_000, -1),
+        observation(1_700_000_060, -1),
+        observation(1_700_000_120, -1),
+    ]
+    economic = [directional[0]]
+    analysis = _regime_analysis_from_observations(directional, economic)
+    assert analysis["resolved_directional_observations"] == 3
+    assert analysis["attributable_economic_observations"] == 1
+    assert analysis["unattributable_economic_observations"] == 2
+    assert analysis["loss_clustering"]["max_consecutive_attributable_economic_losses"] == 1
+    assert analysis["economic_by_weekpart"]["WEEKDAY"]["attributable_settled"] == 1
 
 
 def test_even_fifty_settlements_remain_exploratory_not_auto_gated():
