@@ -90,13 +90,14 @@ def wallet_hash(address: str) -> str:
 
 
 def _event_identity(event: dict[str, Any]) -> dict[str, Any]:
+    outcome_index = event.get("outcomeIndex")
     return {
         "type": str(event.get("type") or "").upper(),
         "transaction_hash": str(event.get("transactionHash") or ""),
         "condition_id": str(event.get("conditionId") or ""),
         "asset_id": str(event.get("asset") or ""),
         "side": str(event.get("side") or "").upper(),
-        "outcome_index": str(event.get("outcomeIndex") or ""),
+        "outcome_index": "" if outcome_index is None else str(outcome_index),
         "timestamp": int(event.get("timestamp") or 0),
         "price": str(event.get("price") or ""),
         "size": str(event.get("size") or ""),
