@@ -114,6 +114,8 @@ def truthful_r45():
             "loss_cluster_metrics_settled_only": True,
             "regime_pnl_requires_single_fill_asset_no_exit": True,
             "regime_unattributable_pnl_excluded": True,
+            "regime_provenance_retry_safe": True,
+            "loss_cluster_timestamp_ties_deterministic": True,
             "regime_min_settled_exploratory": 50,
             "regime_filter_requires_out_of_sample_confirmation": True,
         },
@@ -139,6 +141,8 @@ def test_r45_validator_accepts_regime_evidence_without_auto_gate():
         ("loss_cluster_metrics_settled_only", False),
         ("regime_pnl_requires_single_fill_asset_no_exit", False),
         ("regime_unattributable_pnl_excluded", False),
+        ("regime_provenance_retry_safe", False),
+        ("loss_cluster_timestamp_ties_deterministic", False),
         ("regime_filter_requires_out_of_sample_confirmation", False),
     ],
 )
