@@ -131,6 +131,8 @@ jobs:
           grep -q 'weekday_weekend_rule_imported.*False' app/paper_v5_r45.py
           grep -q 'time_of_day_rule_imported.*False' app/paper_v5_r45.py
           grep -q 'naive_strategy_inversion.*False' app/paper_v5_r45.py
+          grep -q 'regime_pnl_requires_single_fill_asset_no_exit' app/paper_v5_r45.py
+          grep -q 'regime_unattributable_pnl_excluded' app/paper_v5_r45.py
           grep -q 'source_strategy_gate' app/paper_v5_r44.py
           grep -q 'execution_evidence_hash_includes_source_strategy' app/paper_v5_r44.py
           grep -q 'maker_or_lp_execution_imported.*False' app/paper_v5_r44.py
@@ -173,6 +175,8 @@ jobs:
           grep -q '"weekday_weekend_rule_imported": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"time_of_day_rule_imported": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"naive_strategy_inversion": false' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"regime_pnl_requires_single_fill_asset_no_exit": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"regime_unattributable_pnl_excluded": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"maker_or_lp_execution_imported": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"live_order_path_added": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
@@ -206,6 +210,11 @@ jobs:
           assert regime_analysis["automatic_execution_gate"] is False
           assert regime_analysis["out_of_sample_confirmation_required"] is True
           assert regime_analysis["naive_strategy_inversion_allowed"] is False
+          resolved = int(regime_analysis.get("resolved_directional_observations") or 0)
+          attributable = int(regime_analysis.get("attributable_economic_observations") or 0)
+          unattributable = int(regime_analysis.get("unattributable_economic_observations") or 0)
+          assert 0 <= attributable <= resolved
+          assert unattributable == resolved - attributable
           assert int(selection["next_selection_effective_at"] or 0) > 0
           assert int(selection.get("selection_provenance_hash_mismatches") or 0) == 0
           assert int(selection.get("selection_execution_evidence_bridge_mismatches") or 0) == 0
@@ -241,6 +250,8 @@ jobs:
           assert method["time_of_day_rule_imported"] is False
           assert method["naive_strategy_inversion"] is False
           assert method["loss_cluster_metrics_settled_only"] is True
+          assert method["regime_pnl_requires_single_fill_asset_no_exit"] is True
+          assert method["regime_unattributable_pnl_excluded"] is True
           assert method["regime_filter_requires_out_of_sample_confirmation"] is True
           assert len(rows) == totals["executions"] == totals["predictions"]
           counts = Counter(row["execution"]["status"] for row in rows)
