@@ -371,11 +371,16 @@ def _regime_analysis_from_observations(
     resolved = len(directional_observations)
     attributable = len(economic_observations)
     return {
-        "state": "INSUFFICIENT_EVIDENCE" if resolved < MIN_EXPLORATORY_SETTLED else "EXPLORATORY_ONLY",
-        "settled_observations": resolved,
+        "state": (
+            "INSUFFICIENT_EVIDENCE"
+            if attributable < MIN_EXPLORATORY_SETTLED
+            else "EXPLORATORY_ONLY"
+        ),
+        "settled_observations": attributable,
         "resolved_directional_observations": resolved,
         "attributable_economic_observations": attributable,
         "unattributable_economic_observations": max(resolved - attributable, 0),
+        "evidence_level_basis": "attributable_economic_observations",
         "economic_attribution_rule": "single filled execution for asset and no filled exit",
         "minimum_settled_for_exploratory_breakdown": MIN_EXPLORATORY_SETTLED,
         "automatic_execution_gate": False,
@@ -490,6 +495,7 @@ def _apply_r45_report(
             "regime_filter_requires_out_of_sample_confirmation": True,
             "regime_provenance_retry_safe": True,
             "loss_cluster_timestamp_ties_deterministic": True,
+            "regime_exploratory_threshold_uses_attributable_economics": True,
         }
     )
     report["regime_provenance"] = {
