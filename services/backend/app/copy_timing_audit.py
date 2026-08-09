@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,10 @@ SOURCE_PRICE_SEMANTICS = (
 def _percentile(values: list[int], fraction: float) -> int | None:
     if not values:
         return None
+    if not 0 <= fraction <= 1:
+        raise ValueError("percentile fraction must be between zero and one")
     ordered = sorted(values)
-    index = round((len(ordered) - 1) * fraction)
+    index = max(math.ceil(fraction * len(ordered)) - 1, 0)
     return ordered[index]
 
 
@@ -70,11 +73,26 @@ def build_copy_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for row in observations
         if row["source_to_arrival_book_ms"] is not None
     ]
-    negative = sum(value < 0 for value in decision_ages) + sum(value < 0 for value in arrival_ages)
-    decision_decay = [
+    negative_rows = sum(
+        1
+        for row in observations
+        if (
+            row.get("source_to_decision_book_ms") is not None
+            and int(row["source_to_decision_book_ms"]) < 0
+        )
+        or (
+            row.get("source_to_arrival_book_ms") is not None
+            and int(row["source_to_arrival_book_ms"]) < 0
+        )
+    )
+    negative_measurements = sum(value < 0 for value in decision_ages) + sum(
+        value < 0 for value in arrival_ages
+    )
+    positive_decision_decay = [
         row
         for row in observations
         if row.get("decision_vs_source") is not None
+        and float(row["decision_vs_source"]) > 0
         and row.get("source_to_decision_book_ms") is not None
     ]
     worst_age = sorted(
@@ -83,13 +101,15 @@ def build_copy_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
         reverse=True,
     )[:10]
     worst_decay = sorted(
-        decision_decay,
+        positive_decision_decay,
         key=lambda row: float(row["decision_vs_source"]),
         reverse=True,
     )[:10]
     return {
         "schema_version": 1,
         "source_price_semantics": SOURCE_PRICE_SEMANTICS,
+        "source_timestamp_resolution_ms": 1000,
+        "percentile_method": "nearest_rank",
         "purpose": "measure copy latency and copy-decay without changing execution eligibility",
         "automatic_execution_gate": False,
         "arbitrary_max_age_filter_imported": False,
@@ -97,7 +117,8 @@ def build_copy_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "rows_with_source_timestamp": len(observations),
         "decision_timing_observations": len(decision_ages),
         "arrival_timing_observations": len(arrival_ages),
-        "negative_clock_age_observations": negative,
+        "negative_clock_age_rows": negative_rows,
+        "negative_clock_age_measurements": negative_measurements,
         "source_to_decision_book_ms": _distribution(decision_ages),
         "source_to_arrival_book_ms": _distribution(arrival_ages),
         "worst_source_to_decision_age": worst_age,
