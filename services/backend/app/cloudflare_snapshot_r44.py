@@ -36,6 +36,7 @@ def _validate_v5_r44(v5: dict[str, Any]) -> None:
         method.get("source_strategy_gate") is not True
         or method.get("source_strategy_public_activity_only") is not True
         or method.get("source_strategy_point_in_time_cutoff") is not True
+        or method.get("source_strategy_cutoff_predates_selection") is not True
         or method.get("source_strategy_fail_closed") is not True
         or method.get("maker_rebate_source_rejected") is not True
         or method.get("split_merge_conversion_source_rejected") is not True
@@ -48,6 +49,7 @@ def _validate_v5_r44(v5: dict[str, Any]) -> None:
         or int(strategy.get("missing_prediction_profiles") or 0) != 0
         or int(strategy.get("profile_hash_mismatches") or 0) != 0
         or int(strategy.get("non_directional_predictions") or 0) != 0
+        or int(strategy.get("profile_selection_temporal_mismatches") or 0) != 0
         or int(strategy.get("execution_evidence_bridge_mismatches") or 0) != 0
     ):
         raise ValueError("PAPER V5 R4.4 snapshot violates source-strategy truth methodology")
