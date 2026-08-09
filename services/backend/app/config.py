@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     activity_fetch_limit: int = Field(default=500, ge=100, le=5000)
     candidate_limit: int = Field(default=20, ge=3, le=50)
     tracked_wallet_limit: int = Field(default=3, ge=1, le=10)
+    source_strategy_activity_limit: int = Field(default=1000, ge=30, le=5000)
+    source_strategy_min_trade_count: int = Field(default=30, ge=5, le=1000)
+    source_strategy_min_paired_conditions: int = Field(default=2, ge=1, le=50)
+    source_strategy_max_paired_trade_fraction: float = Field(default=0.25, gt=0.0, le=1.0)
     mark_interval_seconds: int = Field(default=30, ge=10, le=3600)
     risk_max_signal_age_seconds: int = Field(default=30, ge=1, le=21600)
     admin_token: str = "development-admin-token"
