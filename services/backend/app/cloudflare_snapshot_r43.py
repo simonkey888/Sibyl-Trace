@@ -16,6 +16,7 @@ R42_COHORT_ID = "PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07"
 R42_EXECUTION_MODEL = (
     "L2_TAKER_FAK_ARRIVAL_BOOK_V4_POST_DELAY_REVALIDATION_SHADOW_IMPACT"
 )
+_BASE_VALIDATE_V5 = base._validate_v5
 
 
 def _validate_v5_r43(v5: dict[str, Any]) -> None:
@@ -30,7 +31,7 @@ def _validate_v5_r43(v5: dict[str, Any]) -> None:
     inherited = copy.deepcopy(v5)
     inherited["cohort_id"] = R42_COHORT_ID
     inherited.setdefault("methodology", {})["execution_model"] = R42_EXECUTION_MODEL
-    base._validate_v5(inherited)
+    _BASE_VALIDATE_V5(inherited)
 
     selection = v5.get("selection_provenance") or {}
     if (
