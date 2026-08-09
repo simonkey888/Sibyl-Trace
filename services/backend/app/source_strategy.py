@@ -113,8 +113,13 @@ def _sample_hash(events: list[dict[str, Any]]) -> str:
     normalized = [_event_identity(event) for event in events if isinstance(event, dict)]
     normalized.sort(
         key=lambda row: (
-            row["timestamp"], row["type"], row["transaction_hash"],
-            row["condition_id"], row["asset_id"], row["side"], row["outcome_index"],
+            row["timestamp"],
+            row["type"],
+            row["transaction_hash"],
+            row["condition_id"],
+            row["asset_id"],
+            row["side"],
+            row["outcome_index"],
         )
     )
     return canonical_hash(normalized)
@@ -202,10 +207,14 @@ def classify_source_strategy(
             continue
         attributable_trade_count += 1
         outcomes_by_condition.setdefault(condition_id, set()).add(outcome_key)
-        trade_count_by_condition[condition_id] = trade_count_by_condition.get(condition_id, 0) + 1
+        trade_count_by_condition[condition_id] = (
+            trade_count_by_condition.get(condition_id, 0) + 1
+        )
 
     paired_conditions = {
-        condition_id for condition_id, outcomes in outcomes_by_condition.items() if len(outcomes) >= 2
+        condition_id
+        for condition_id, outcomes in outcomes_by_condition.items()
+        if len(outcomes) >= 2
     }
     paired_trade_count = sum(
         trade_count_by_condition.get(condition_id, 0) for condition_id in paired_conditions
