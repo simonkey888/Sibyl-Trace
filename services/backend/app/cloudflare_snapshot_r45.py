@@ -37,8 +37,13 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
     resolved = int(analysis.get("resolved_directional_observations") or 0)
     attributable = int(analysis.get("attributable_economic_observations") or 0)
     unattributable = int(analysis.get("unattributable_economic_observations") or 0)
+    minimum = int(method.get("regime_min_settled_exploratory") or 0)
+    analysis_minimum = int(analysis.get("minimum_settled_for_exploratory_breakdown") or 0)
+    effective_minimum = max(minimum, 50)
     expected_state = (
-        "INSUFFICIENT_EVIDENCE" if attributable < 50 else "EXPLORATORY_ONLY"
+        "INSUFFICIENT_EVIDENCE"
+        if attributable < effective_minimum
+        else "EXPLORATORY_ONLY"
     )
     if (
         method.get("regime_context_in_ledger") is not True
@@ -56,7 +61,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or method.get("regime_provenance_retry_safe") is not True
         or method.get("loss_cluster_timestamp_ties_deterministic") is not True
         or method.get("regime_exploratory_threshold_uses_attributable_economics") is not True
-        or int(method.get("regime_min_settled_exploratory") or 0) < 50
+        or minimum < 50
+        or analysis_minimum != minimum
         or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
         or provenance.get("state") != "PASS"
         or int(provenance.get("missing_prediction_contexts") or 0) != 0
