@@ -10,6 +10,7 @@ from app.cloudflare_snapshot_r44 import _validate_v5_r44
 def truthful_r44():
     return {
         "schema_version": 5,
+        "evidence_generation": "SIBYL_PAPER_V5_EXECUTION_REALISTIC",
         "cohort_id": "PAPER_V5_R4_4_SOURCE_STRATEGY_TRUTH_2026_08_08",
         "status": "PASS",
         "evidence_reconciliation": {"state": "PASS"},
