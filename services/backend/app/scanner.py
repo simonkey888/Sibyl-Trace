@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import UTC, datetime
 
@@ -9,10 +10,61 @@ from app.models import Wallet, WalletScoreProfile, WalletSnapshot
 from app.polymarket import PolymarketClient
 from app.repository import audit, set_state
 from app.scoring import score_matrix
+from app.source_strategy import (
+    UNAVAILABLE,
+    SourceStrategyPolicy,
+    canonical_hash,
+    classify_source_strategy,
+    fetch_public_activity_events,
+    wallet_hash,
+)
+
+SOURCE_STRATEGY_PROFILES_STATE = "paper_v5_source_strategy_profiles"
+SOURCE_STRATEGY_CUTOFF_STATE = "paper_v5_source_strategy_cutoff_at"
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _unavailable_profile(
+    wallet: str,
+    *,
+    cutoff_at: int,
+    policy: SourceStrategyPolicy,
+    error_type: str,
+) -> dict:
+    material = {
+        "wallet_hash": wallet_hash(wallet),
+        "classification": UNAVAILABLE,
+        "rejection_reason": "source_strategy_unavailable",
+        "cutoff_at": cutoff_at,
+        "event_count": 0,
+        "invalid_timestamp_event_count": 0,
+        "trade_count": 0,
+        "attributable_trade_count": 0,
+        "unattributable_trade_count": 0,
+        "maker_rebate_count": 0,
+        "taker_rebate_count": 0,
+        "split_count": 0,
+        "merge_count": 0,
+        "conversion_count": 0,
+        "paired_condition_count": 0,
+        "paired_trade_count": 0,
+        "paired_trade_fraction": 0.0,
+        "activity_sample_hash": canonical_hash([]),
+        "policy": {
+            "min_trade_count": policy.min_trade_count,
+            "min_paired_conditions": policy.min_paired_conditions,
+            "max_paired_trade_fraction": policy.max_paired_trade_fraction,
+        },
+        "error_type": error_type,
+    }
+    return {
+        **material,
+        "directional": False,
+        "evidence_hash": canonical_hash(material),
+    }
 
 
 def scan_wallets(
@@ -21,7 +73,11 @@ def scan_wallets(
     settings: Settings,
     *,
     prospective: bool = False,
+    source_strategy_gate: bool = False,
 ) -> list[Wallet]:
+    if source_strategy_gate and not prospective:
+        raise ValueError("source strategy truth gate requires prospective selection")
+
     candidates: dict[str, dict] = {}
     for period in ("WEEK", "MONTH", "ALL"):
         for item in client.leaderboard(period, settings.candidate_limit):
@@ -105,20 +161,70 @@ def scan_wallets(
         )
         wallets.append(wallet)
 
-    eligible = sorted(
+    ranked = sorted(
         (wallet for wallet in wallets if wallet.rejection_reason is None),
         key=lambda wallet: wallet.score,
         reverse=True,
-    )[: settings.tracked_wallet_limit]
-    # Source activity timestamps are integer Unix seconds. Prospective selection
-    # begins on the next whole second so a trade from the same wall-clock second
-    # can never be retrospectively authorized by a score computed milliseconds later.
+    )
+
+    strategy_profiles: list[dict] = []
+    if source_strategy_gate:
+        cutoff_at = int(time.time())
+        policy = SourceStrategyPolicy(
+            min_trade_count=settings.source_strategy_min_trade_count,
+            min_paired_conditions=settings.source_strategy_min_paired_conditions,
+            max_paired_trade_fraction=settings.source_strategy_max_paired_trade_fraction,
+        )
+        eligible: list[Wallet] = []
+        for wallet in ranked:
+            if len(eligible) >= settings.tracked_wallet_limit:
+                break
+            try:
+                events = fetch_public_activity_events(
+                    client,
+                    wallet.address,
+                    cutoff_at=cutoff_at,
+                    limit=settings.source_strategy_activity_limit,
+                )
+                strategy = classify_source_strategy(
+                    wallet.address,
+                    events,
+                    cutoff_at=cutoff_at,
+                    policy=policy,
+                )
+                strategy_payload = strategy.to_dict()
+            except Exception as exc:
+                strategy_payload = _unavailable_profile(
+                    wallet.address,
+                    cutoff_at=cutoff_at,
+                    policy=policy,
+                    error_type=type(exc).__name__,
+                )
+            strategy_profiles.append(strategy_payload)
+            audit(
+                db,
+                "wallet_source_strategy_classified",
+                "Classified public source behavior before prospective selection",
+                severity="INFO" if strategy_payload["directional"] else "WARN",
+                **strategy_payload,
+            )
+            if strategy_payload["directional"]:
+                eligible.append(wallet)
+            else:
+                wallet.rejection_reason = strategy_payload["rejection_reason"]
+        set_state(
+            db,
+            SOURCE_STRATEGY_PROFILES_STATE,
+            json.dumps(strategy_profiles, sort_keys=True),
+        )
+        set_state(db, SOURCE_STRATEGY_CUTOFF_STATE, str(cutoff_at))
+    else:
+        eligible = ranked[: settings.tracked_wallet_limit]
+
     selection_effective_at = int(time.time()) + 1 if prospective else None
     for wallet in eligible:
         wallet.selected = True
         if selection_effective_at is not None:
-            # Deliberately sacrifice late-indexed pre-selection activity rather
-            # than backfill it using information unavailable at source-trade time.
             wallet.last_activity_at = max(
                 int(wallet.last_activity_at or 0), selection_effective_at
             )
@@ -135,6 +241,8 @@ def scan_wallets(
         score_contract="GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability only",
         selection_mode="PROSPECTIVE_ONLY" if prospective else "LEGACY_SCAN_THEN_INGEST",
         selection_effective_at=selection_effective_at,
+        source_strategy_gate=source_strategy_gate,
+        source_strategy_profiles=len(strategy_profiles),
     )
     db.commit()
     return eligible
