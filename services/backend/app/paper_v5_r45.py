@@ -131,19 +131,37 @@ class PaperEngineV5R45(_PaperEngineV5R44Base):
     def process(self, db: Session, wallet: Wallet, activity: dict[str, Any]) -> bool:
         source_key, _ = r44.r43.r4.legacy._source_identity(wallet.address, activity)
         handled = super().process(db, wallet, activity)
-        if not handled:
-            return handled
         prediction = db.scalar(
             select(PaperV5Prediction).where(PaperV5Prediction.source_key == source_key)
         )
         if prediction is None:
-            raise RuntimeError("regime_prediction_missing_after_execution")
+            if handled:
+                raise RuntimeError("regime_prediction_missing_after_execution")
+            return False
+
+        evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
+        evidence_hash = evidence.execution_evidence_hash if evidence is not None else None
+        existing = _regime_by_prediction(db).get(prediction.id)
+        if existing is not None:
+            if not _regime_binding_valid(existing, evidence_hash):
+                raise RuntimeError("existing_regime_provenance_invalid")
+            return handled
+
+        # A prior attempt can commit the inherited R4.4 truth chain and then fail
+        # before the R4.5 event is committed. Base dedupe returns False on retry;
+        # repair only when the exact R4.4 terminal parent is still independently
+        # valid. This prevents a transient R4.5 failure from wedging the cohort.
+        strategy = r44._strategy_by_prediction(db).get(prediction.id)
+        if strategy is None or not r44._strategy_binding_valid(strategy, evidence_hash):
+            raise RuntimeError("regime_provenance_requires_valid_r4_4_parent")
+
         context = _regime_context(int(prediction.source_timestamp or 0))
         payload = _bridge_regime_evidence(db, prediction, context)
         audit(
             db,
             REGIME_EVENT,
             "Bind immutable UTC regime context to copied prediction",
+            repaired_after_dedupe=not handled,
             **payload,
         )
         db.commit()
@@ -244,8 +262,9 @@ def _attributable_economic_observations(db: Session) -> list[dict[str, Any]]:
             continue
         asset_fills = filled_by_asset.get(prediction.asset_id) or []
         if len(asset_fills) != 1 or asset_fills[0][0].id != prediction.id:
-            # Multiple fills or an exit on this asset makes per-entry PnL attribution
-            # ambiguous without lot accounting. Exclude rather than fabricate PnL.
+            # Multiple BUYs or any filled SELL/exit create multiple filled
+            # executions for the same asset. Without lot accounting their PnL is
+            # not exactly attributable to this entry, so exclude it.
             continue
         shares = float(execution.filled_shares or 0)
         if shares <= 0:
@@ -315,7 +334,13 @@ def _aggregate_economic(
 
 
 def _loss_cluster_metrics(observations: list[dict[str, Any]]) -> dict[str, int]:
-    ordered = sorted(observations, key=lambda row: int(row["source_timestamp"]))
+    ordered = sorted(
+        observations,
+        key=lambda row: (
+            int(row["source_timestamp"]),
+            int(row.get("prediction_id") or 0),
+        ),
+    )
     max_streak = 0
     streak = 0
     loss_times: deque[int] = deque()
@@ -463,6 +488,8 @@ def _apply_r45_report(
             "regime_unattributable_pnl_excluded": True,
             "regime_min_settled_exploratory": MIN_EXPLORATORY_SETTLED,
             "regime_filter_requires_out_of_sample_confirmation": True,
+            "regime_provenance_retry_safe": True,
+            "loss_cluster_timestamp_ties_deterministic": True,
         }
     )
     report["regime_provenance"] = {
