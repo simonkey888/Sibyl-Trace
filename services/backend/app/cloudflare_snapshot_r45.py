@@ -33,9 +33,11 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
 
     provenance = v5.get("regime_provenance") or {}
     analysis = v5.get("regime_analysis") or {}
+    settled = int(analysis.get("settled_observations") or 0)
     resolved = int(analysis.get("resolved_directional_observations") or 0)
     attributable = int(analysis.get("attributable_economic_observations") or 0)
     unattributable = int(analysis.get("unattributable_economic_observations") or 0)
+    expected_state = "INSUFFICIENT_EVIDENCE" if resolved < 50 else "EXPLORATORY_ONLY"
     if (
         method.get("regime_context_in_ledger") is not True
         or method.get("regime_context_utc_only") is not True
@@ -55,8 +57,12 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or int(provenance.get("missing_prediction_contexts") or 0) != 0
         or int(provenance.get("context_hash_or_timestamp_mismatches") or 0) != 0
         or int(provenance.get("execution_evidence_bridge_mismatches") or 0) != 0
+        or analysis.get("state") != expected_state
+        or settled != resolved
         or analysis.get("automatic_execution_gate") is not False
         or analysis.get("out_of_sample_confirmation_required") is not True
+        or analysis.get("weekday_weekend_claim_verified") is not False
+        or analysis.get("time_of_day_claim_verified") is not False
         or analysis.get("naive_strategy_inversion_allowed") is not False
         or attributable > resolved
         or unattributable != max(resolved - attributable, 0)
