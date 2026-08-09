@@ -16,6 +16,7 @@ def test_accounting_mismatch_is_red() -> None:
         realized_pnl=0,
         unrealized_pnl=0,
     )
+    assert result.watchdog == "ACCOUNTING_RECONCILIATION"
     assert result.state == "RED"
 
 
@@ -28,7 +29,9 @@ def test_accounting_reconciliation_is_green() -> None:
         realized_pnl=1,
         unrealized_pnl=1,
     )
+    assert result.watchdog == "ACCOUNTING_RECONCILIATION"
     assert result.state == "GREEN"
+    assert "FAILURE" not in result.watchdog
 
 
 def test_feed_watchdog_degrades_without_inventing_data() -> None:
