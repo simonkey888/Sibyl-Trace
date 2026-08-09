@@ -14,9 +14,9 @@ That is a source-attribution failure, not an execution-speed problem.
 
 ### Polymarket public mechanics
 
-Official Polymarket documentation describes complete-set mechanics: collateral can be split into complementary outcome tokens and equal complementary quantities can be merged back into collateral. Public user activity exposes event types including `TRADE`, `SPLIT`, `MERGE`, `CONVERSION`, `MAKER_REBATE`, `TAKER_REBATE` and `REDEEM`.
+Official Polymarket documentation describes complete-set mechanics: collateral can be split into complementary outcome tokens and equal complementary quantities can be merged back into collateral. The current public user-activity API exposes, among others, `TRADE`, `SPLIT`, `MERGE`, `CONVERSION`, `MAKER_REBATE` and `REDEEM`.
 
-R4.4 treats `MAKER_REBATE` and `SPLIT/MERGE/CONVERSION` as direct evidence that the observed source behavior is not cleanly represented by Sibyl's directional taker-copy model. `TAKER_REBATE` is retained and hashed as diagnostic evidence, but is **not** by itself used to classify a source as non-directional because its presence does not establish directionality or prove how the scoring PnL accounts for the rebate.
+R4.4 treats `MAKER_REBATE` and `SPLIT/MERGE/CONVERSION` as direct evidence that the observed source behavior is not cleanly represented by Sibyl's directional taker-copy model. The implementation intentionally filters only to activity types currently documented by the public API; it does not invent unsupported event enums.
 
 ### `ohehe` claim supplied for review
 
@@ -43,7 +43,7 @@ For a bounded point-in-time public activity sample captured before selection bec
 5. fewer than the configured minimum **attributable** trades (condition + outcome) => `INSUFFICIENT_EVIDENCE`;
 6. only the remainder => `DIRECTIONAL_CANDIDATE`.
 
-The public activity request is bounded to the documented Data API pagination limits and filters to copyability-relevant event types. The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
+The public activity request is bounded within the documented Data API pagination limits and filters to copyability-relevant supported event types. The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
 
 `outcomeIndex` is preferred for paired-outcome classification. If it is absent, normalized `outcome` is the fallback and is also included in the canonical event hash. Missing/future/zero timestamps cannot authorize a source.
 
@@ -60,7 +60,7 @@ Each selected source has a deterministic source-strategy profile containing:
 - attributable/unattributable trade counts;
 - activity sample hash;
 - classification and reason;
-- maker/taker rebate and full-set event counts;
+- maker/full-set event counts;
 - paired-outcome metrics;
 - exact policy thresholds;
 - source-strategy evidence hash.
