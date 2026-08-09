@@ -42,6 +42,8 @@ def truthful_r45():
             "unattributable_economic_observations": 0,
             "automatic_execution_gate": False,
             "out_of_sample_confirmation_required": True,
+            "weekday_weekend_claim_verified": False,
+            "time_of_day_claim_verified": False,
             "naive_strategy_inversion_allowed": False,
         },
         "safety": {
@@ -165,6 +167,7 @@ def test_r45_validator_rejects_inconsistent_pnl_attribution_counts():
     payload = truthful_r45()
     payload["regime_analysis"].update(
         {
+            "settled_observations": 3,
             "resolved_directional_observations": 3,
             "attributable_economic_observations": 1,
             "unattributable_economic_observations": 1,
@@ -172,6 +175,38 @@ def test_r45_validator_rejects_inconsistent_pnl_attribution_counts():
     )
     with pytest.raises(ValueError, match="regime evidence methodology"):
         _validate_v5_r45(payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["weekday_weekend_claim_verified", "time_of_day_claim_verified"],
+)
+def test_r45_validator_rejects_unverified_regime_claim_promotion(field):
+    payload = truthful_r45()
+    payload["regime_analysis"][field] = True
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
+
+
+def test_r45_validator_rejects_exploratory_state_below_threshold():
+    payload = truthful_r45()
+    payload["regime_analysis"]["state"] = "EXPLORATORY_ONLY"
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
+
+
+def test_r45_validator_accepts_exploratory_state_at_threshold_without_claims():
+    payload = truthful_r45()
+    payload["regime_analysis"].update(
+        {
+            "state": "EXPLORATORY_ONLY",
+            "settled_observations": 50,
+            "resolved_directional_observations": 50,
+            "attributable_economic_observations": 40,
+            "unattributable_economic_observations": 10,
+        }
+    )
+    _validate_v5_r45(payload)
 
 
 def test_r45_validator_does_not_mutate_input():
