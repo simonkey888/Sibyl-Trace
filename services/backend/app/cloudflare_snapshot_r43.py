@@ -37,10 +37,13 @@ def _validate_v5_r43(v5: dict[str, Any]) -> None:
         method.get("prospective_wallet_selection") is not True
         or method.get("preselection_activity_backfill") is not False
         or method.get("selection_provenance_in_ledger") is not True
+        or method.get("execution_evidence_hash_includes_selection_provenance") is not True
         or method.get("end_cycle_mark_uses_shadow_client") is not True
         or method.get("book_state_timestamps_in_ledger") is not True
         or method.get("book_timestamp_freshness_gate") is not False
         or selection.get("state") != "PASS"
+        or int(selection.get("selection_provenance_hash_mismatches") or 0) != 0
+        or int(selection.get("selection_execution_evidence_bridge_mismatches") or 0) != 0
     ):
         raise ValueError("PAPER V5 R4.3 snapshot violates prospective truth methodology")
 
