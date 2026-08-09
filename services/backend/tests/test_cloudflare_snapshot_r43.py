@@ -46,6 +46,8 @@ def truthful_r43():
             "next_selection_effective_at": 1_786_003_600,
             "next_selection": [],
             "predictions_with_selection_provenance": 0,
+            "selection_provenance_hash_mismatches": 0,
+            "selection_execution_evidence_bridge_mismatches": 0,
         },
         "safety": {
             "trading_mode": "PAPER",
@@ -87,6 +89,7 @@ def truthful_r43():
             "prospective_wallet_selection": True,
             "preselection_activity_backfill": False,
             "selection_provenance_in_ledger": True,
+            "execution_evidence_hash_includes_selection_provenance": True,
             "end_cycle_mark_uses_shadow_client": True,
             "book_state_timestamps_in_ledger": True,
             "book_timestamp_freshness_gate": False,
@@ -105,6 +108,9 @@ def test_public_snapshot_accepts_r43_prospective_truth(tmp_path):
     snapshot = build_cloudflare_snapshot(tmp_path)
     assert snapshot["paper_v5"]["canonical_performance"] is True
     assert snapshot["paper_v5"]["methodology"]["prospective_wallet_selection"] is True
+    assert snapshot["paper_v5"]["methodology"][
+        "execution_evidence_hash_includes_selection_provenance"
+    ] is True
     assert snapshot["paper_v5"]["selection_provenance"]["state"] == "PASS"
 
 
@@ -130,6 +136,24 @@ def test_public_snapshot_rejects_r43_with_failed_selection_provenance(tmp_path):
     write_json(tmp_path / "trial-summary.json", legacy_trial())
     v5 = truthful_r43()
     v5["selection_provenance"]["state"] = "FAIL"
+    write_json(tmp_path / "paper-v5-summary.json", v5)
+    with pytest.raises(ValueError, match="prospective truth methodology"):
+        build_cloudflare_snapshot(tmp_path)
+
+
+def test_public_snapshot_rejects_r43_without_selection_evidence_bridge(tmp_path):
+    write_json(tmp_path / "trial-summary.json", legacy_trial())
+    v5 = truthful_r43()
+    v5["methodology"]["execution_evidence_hash_includes_selection_provenance"] = False
+    write_json(tmp_path / "paper-v5-summary.json", v5)
+    with pytest.raises(ValueError, match="prospective truth methodology"):
+        build_cloudflare_snapshot(tmp_path)
+
+
+def test_public_snapshot_rejects_r43_with_selection_hash_mismatch(tmp_path):
+    write_json(tmp_path / "trial-summary.json", legacy_trial())
+    v5 = truthful_r43()
+    v5["selection_provenance"]["selection_provenance_hash_mismatches"] = 1
     write_json(tmp_path / "paper-v5-summary.json", v5)
     with pytest.raises(ValueError, match="prospective truth methodology"):
         build_cloudflare_snapshot(tmp_path)
