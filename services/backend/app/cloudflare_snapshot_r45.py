@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+from pathlib import Path
+from typing import Any
+
+from app import cloudflare_snapshot_r44 as r44
+
+COHORT_ID = "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"
+EXECUTION_MODEL = (
+    "L2_TAKER_FAK_ARRIVAL_BOOK_V7_PROSPECTIVE_DIRECTIONAL_REGIME_EVIDENCE"
+)
+R44_COHORT_ID = "PAPER_V5_R4_4_SOURCE_STRATEGY_TRUTH_2026_08_08"
+R44_EXECUTION_MODEL = (
+    "L2_TAKER_FAK_ARRIVAL_BOOK_V6_PROSPECTIVE_DIRECTIONAL_SOURCE_GATING"
+)
+_BASE_R44_VALIDATE = r44._validate_v5_r44
+
+
+def _validate_v5_r45(v5: dict[str, Any]) -> None:
+    if not v5:
+        return
+    method = v5.get("methodology") or {}
+    if v5.get("cohort_id") != COHORT_ID or method.get("execution_model") != EXECUTION_MODEL:
+        raise ValueError("PAPER V5 snapshot is not R4.5 regime evidence")
+
+    inherited = copy.deepcopy(v5)
+    inherited["cohort_id"] = R44_COHORT_ID
+    inherited.setdefault("methodology", {})["execution_model"] = R44_EXECUTION_MODEL
+    _BASE_R44_VALIDATE(inherited)
+
+    provenance = v5.get("regime_provenance") or {}
+    analysis = v5.get("regime_analysis") or {}
+    if (
+        method.get("regime_context_in_ledger") is not True
+        or method.get("regime_context_utc_only") is not True
+        or method.get("execution_evidence_hash_includes_regime_context") is not True
+        or method.get("regime_analysis_settled_only") is not True
+        or method.get("regime_filters_research_only") is not True
+        or method.get("regime_execution_gate") is not False
+        or method.get("weekday_weekend_rule_imported") is not False
+        or method.get("time_of_day_rule_imported") is not False
+        or method.get("naive_strategy_inversion") is not False
+        or method.get("loss_cluster_metrics_settled_only") is not True
+        or int(method.get("regime_min_settled_exploratory") or 0) < 50
+        or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
+        or provenance.get("state") != "PASS"
+        or int(provenance.get("missing_prediction_contexts") or 0) != 0
+        or int(provenance.get("context_hash_or_timestamp_mismatches") or 0) != 0
+        or int(provenance.get("execution_evidence_bridge_mismatches") or 0) != 0
+        or analysis.get("automatic_execution_gate") is not False
+        or analysis.get("out_of_sample_confirmation_required") is not True
+        or analysis.get("naive_strategy_inversion_allowed") is not False
+    ):
+        raise ValueError("PAPER V5 R4.5 snapshot violates regime evidence methodology")
+
+
+def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
+    original = r44._validate_v5_r44
+    r44._validate_v5_r44 = _validate_v5_r45
+    try:
+        return r44.build_cloudflare_snapshot(input_dir)
+    finally:
+        r44._validate_v5_r44 = original
+
+
+def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
+    snapshot = build_cloudflare_snapshot(input_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    destination = output_dir / "snapshot.json"
+    destination.write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return destination
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Build sanitized Cloudflare PAPER R4.5 regime evidence snapshot"
+    )
+    parser.add_argument("--input-dir", required=True, type=Path)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    args = parser.parse_args()
+    destination = write_cloudflare_snapshot(args.input_dir, args.output_dir)
+    print(destination)
+
+
+if __name__ == "__main__":
+    main()
