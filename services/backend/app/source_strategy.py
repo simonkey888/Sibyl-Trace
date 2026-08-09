@@ -39,6 +39,8 @@ class SourceStrategyProfile:
     cutoff_at: int
     event_count: int
     trade_count: int
+    attributable_trade_count: int
+    unattributable_trade_count: int
     maker_rebate_count: int
     split_count: int
     merge_count: int
@@ -63,6 +65,8 @@ class SourceStrategyProfile:
             "cutoff_at": self.cutoff_at,
             "event_count": self.event_count,
             "trade_count": self.trade_count,
+            "attributable_trade_count": self.attributable_trade_count,
+            "unattributable_trade_count": self.unattributable_trade_count,
             "maker_rebate_count": self.maker_rebate_count,
             "split_count": self.split_count,
             "merge_count": self.merge_count,
@@ -109,13 +113,8 @@ def _sample_hash(events: list[dict[str, Any]]) -> str:
     normalized = [_event_identity(event) for event in events if isinstance(event, dict)]
     normalized.sort(
         key=lambda row: (
-            row["timestamp"],
-            row["type"],
-            row["transaction_hash"],
-            row["condition_id"],
-            row["asset_id"],
-            row["side"],
-            row["outcome_index"],
+            row["timestamp"], row["type"], row["transaction_hash"],
+            row["condition_id"], row["asset_id"], row["side"], row["outcome_index"],
         )
     )
     return canonical_hash(normalized)
@@ -134,13 +133,9 @@ def profile_hash_valid(profile: dict[str, Any]) -> bool:
 
 
 def fetch_public_activity_events(
-    client: Any,
-    wallet: str,
-    *,
-    cutoff_at: int,
-    limit: int,
+    client: Any, wallet: str, *, cutoff_at: int, limit: int
 ) -> list[dict[str, Any]]:
-    """Read a bounded, point-in-time public activity sample without trading auth."""
+    """Read bounded public activity at a fixed cutoff; no auth or trading path."""
     target = min(max(int(limit), 0), 5000)
     if target == 0:
         return []
@@ -188,6 +183,7 @@ def classify_source_strategy(
     counts = {event_type: 0 for event_type in _EVENT_TYPES}
     outcomes_by_condition: dict[str, set[str]] = {}
     trade_count_by_condition: dict[str, int] = {}
+    attributable_trade_count = 0
 
     for event in clean:
         event_type = str(event.get("type") or "").upper()
@@ -196,29 +192,29 @@ def classify_source_strategy(
         if event_type != "TRADE":
             continue
         condition_id = str(event.get("conditionId") or "").strip()
-        if not condition_id:
-            continue
         outcome_index = event.get("outcomeIndex")
         outcome_key = (
             str(outcome_index)
             if outcome_index is not None and str(outcome_index) != ""
             else str(event.get("outcome") or "").strip().casefold()
         )
-        if not outcome_key:
+        if not condition_id or not outcome_key:
             continue
+        attributable_trade_count += 1
         outcomes_by_condition.setdefault(condition_id, set()).add(outcome_key)
         trade_count_by_condition[condition_id] = trade_count_by_condition.get(condition_id, 0) + 1
 
     paired_conditions = {
-        condition_id
-        for condition_id, outcomes in outcomes_by_condition.items()
-        if len(outcomes) >= 2
+        condition_id for condition_id, outcomes in outcomes_by_condition.items() if len(outcomes) >= 2
     }
     paired_trade_count = sum(
         trade_count_by_condition.get(condition_id, 0) for condition_id in paired_conditions
     )
     trade_count = counts["TRADE"]
-    paired_fraction = paired_trade_count / trade_count if trade_count else 0.0
+    unattributable_trade_count = max(trade_count - attributable_trade_count, 0)
+    paired_fraction = (
+        paired_trade_count / attributable_trade_count if attributable_trade_count else 0.0
+    )
 
     classification = DIRECTIONAL_CANDIDATE
     rejection_reason: str | None = None
@@ -234,7 +230,7 @@ def classify_source_strategy(
     ):
         classification = NON_DIRECTIONAL_TWO_SIDED
         rejection_reason = "source_strategy_two_sided"
-    elif trade_count < policy.min_trade_count:
+    elif attributable_trade_count < policy.min_trade_count:
         classification = INSUFFICIENT_EVIDENCE
         rejection_reason = "source_strategy_insufficient_evidence"
 
@@ -245,6 +241,8 @@ def classify_source_strategy(
         "cutoff_at": int(cutoff_at),
         "event_count": len(clean),
         "trade_count": trade_count,
+        "attributable_trade_count": attributable_trade_count,
+        "unattributable_trade_count": unattributable_trade_count,
         "maker_rebate_count": counts["MAKER_REBATE"],
         "split_count": counts["SPLIT"],
         "merge_count": counts["MERGE"],
@@ -267,6 +265,8 @@ def classify_source_strategy(
         cutoff_at=int(cutoff_at),
         event_count=len(clean),
         trade_count=trade_count,
+        attributable_trade_count=attributable_trade_count,
+        unattributable_trade_count=unattributable_trade_count,
         maker_rebate_count=counts["MAKER_REBATE"],
         split_count=counts["SPLIT"],
         merge_count=counts["MERGE"],
