@@ -124,6 +124,7 @@ jobs:
           grep -q 'preselection_activity_backfill' app/paper_v5_r43.py
           grep -q 'end_cycle_mark_uses_shadow_client' app/paper_v5_r43.py
           grep -q 'selection_provenance_in_ledger' app/paper_v5_r43.py
+          grep -q 'execution_evidence_hash_includes_selection_provenance' app/paper_v5_r43.py
           grep -q 'post_delay_market_state_revalidation' app/paper_v5_r42.py
           grep -q 'shadow_self_impact' app/paper_v5_r42.py
           grep -q 'public_book_hash_bridge_persisted' app/paper_v5_r42.py
@@ -166,6 +167,7 @@ jobs:
           grep -q '"preselection_activity_backfill": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"end_cycle_mark_uses_shadow_client": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"selection_provenance_in_ledger": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"execution_evidence_hash_includes_selection_provenance": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
 
@@ -190,6 +192,8 @@ jobs:
           assert summary["execution_health"]["state"] != "RED"
           assert selection["state"] == "PASS"
           assert int(selection["next_selection_effective_at"] or 0) > 0
+          assert int(selection.get("selection_provenance_hash_mismatches") or 0) == 0
+          assert int(selection.get("selection_execution_evidence_bridge_mismatches") or 0) == 0
           assert method["synthetic_canonical_latency"] is False
           assert method["delayed_market_arrival_delay_ms"] is None
           assert method["regular_arrival_delay_ms"] is None
@@ -204,6 +208,7 @@ jobs:
           assert method["prospective_wallet_selection"] is True
           assert method["preselection_activity_backfill"] is False
           assert method["selection_provenance_in_ledger"] is True
+          assert method["execution_evidence_hash_includes_selection_provenance"] is True
           assert method["end_cycle_mark_uses_shadow_client"] is True
           assert method["book_state_timestamps_in_ledger"] is True
           assert method["book_timestamp_freshness_gate"] is False
@@ -218,10 +223,19 @@ jobs:
               selection_provenance = row.get("selection_provenance") or {}
               assert selection_provenance.get("prospective_selection") is True
               assert int(selection_provenance["source_timestamp"]) >= int(selection_provenance["selection_effective_at"])
+              assert len(selection_provenance.get("selection_provenance_hash") or "") == 64
               assert row.get("book_timing") is not None
               assert execution["simulated_latency_ms"] == 0
               assert row.get("copy_decay") is not None
               assert row.get("fee_provenance") is not None
+              evidence = row.get("execution_evidence") or {}
+              if evidence.get("execution_evidence_hash") is not None:
+                  assert row.get("selection_evidence_bound") is True
+                  assert len(selection_provenance.get("r4_2_execution_evidence_hash") or "") == 64
+                  assert len(selection_provenance.get("r4_3_execution_evidence_hash") or "") == 64
+                  assert selection_provenance["r4_3_execution_evidence_hash"] == evidence["execution_evidence_hash"]
+              else:
+                  assert row.get("selection_evidence_bound") is None
               if row.get("shadow_self_impact_applied"):
                   for label in ("decision", "arrival"):
                       execution_hash = execution.get(f"{label}_book_hash")
@@ -232,7 +246,6 @@ jobs:
                           assert public_hash
                           assert not str(public_hash).startswith("shadow-")
               if execution["status"] in {"FILLED", "PARTIAL_FILLED"}:
-                  evidence = row.get("execution_evidence") or {}
                   assert len(evidence.get("execution_evidence_hash") or "") == 64
                   assert evidence.get("decision_received_at_ms") is not None
                   assert evidence.get("arrival_received_at_ms") is not None
