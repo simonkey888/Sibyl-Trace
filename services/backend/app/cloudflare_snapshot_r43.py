@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,7 @@ def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / "snapshot.json"
     destination.write_text(
-        __import__("json").dumps(snapshot, indent=2, sort_keys=True) + "\n",
+        json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return destination
