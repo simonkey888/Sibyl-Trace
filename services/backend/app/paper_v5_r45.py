@@ -21,6 +21,15 @@ EXECUTION_MODEL = (
 )
 REGIME_EVENT = "paper_v5_r45_regime_provenance"
 MIN_EXPLORATORY_SETTLED = 50
+_WEEKDAYS = (
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+)
 _REGIME_MATERIAL_KEYS = (
     "source_timestamp",
     "utc_weekday_index",
@@ -40,15 +49,16 @@ def _regime_context(source_timestamp: int) -> dict[str, Any]:
     if timestamp <= 0:
         raise ValueError("source_timestamp_required_for_regime_context")
     dt = datetime.fromtimestamp(timestamp, UTC)
+    weekday_index = dt.weekday()
     bucket_start = (dt.hour // 4) * 4
     bucket_end = bucket_start + 3
     material = {
         "source_timestamp": timestamp,
-        "utc_weekday_index": dt.weekday(),
-        "utc_weekday": dt.strftime("%A").upper(),
+        "utc_weekday_index": weekday_index,
+        "utc_weekday": _WEEKDAYS[weekday_index],
         "utc_hour": dt.hour,
         "utc_4h_bucket": f"{bucket_start:02d}-{bucket_end:02d}",
-        "weekpart": "WEEKEND" if dt.weekday() >= 5 else "WEEKDAY",
+        "weekpart": "WEEKEND" if weekday_index >= 5 else "WEEKDAY",
     }
     return {
         **material,
@@ -180,7 +190,7 @@ def _restore_r45_evidence(db: Session, saved: dict[int, str | None]) -> None:
             evidence.execution_evidence_hash = evidence_hash
 
 
-def _settled_observations(db: Session) -> list[dict[str, Any]]:
+def _resolved_directional_observations(db: Session) -> list[dict[str, Any]]:
     rows = db.execute(
         select(PaperV5Prediction, PaperV5Execution).join(
             PaperV5Execution, PaperV5Execution.prediction_id == PaperV5Prediction.id
@@ -194,6 +204,49 @@ def _settled_observations(db: Session) -> list[dict[str, Any]]:
             continue
         if prediction.resolution_status != "RESOLVED" or prediction.resolution_price is None:
             continue
+        context = _regime_context(int(prediction.source_timestamp or 0))
+        observations.append(
+            {
+                "prediction_id": prediction.id,
+                "asset_id": prediction.asset_id,
+                "source_timestamp": int(prediction.source_timestamp or 0),
+                "win": prediction.result == "WIN",
+                "loss": prediction.result == "LOSS",
+                "weekpart": context["weekpart"],
+                "utc_hour": context["utc_hour"],
+                "utc_4h_bucket": context["utc_4h_bucket"],
+            }
+        )
+    return observations
+
+
+def _attributable_economic_observations(db: Session) -> list[dict[str, Any]]:
+    rows = db.execute(
+        select(PaperV5Prediction, PaperV5Execution).join(
+            PaperV5Execution, PaperV5Execution.prediction_id == PaperV5Prediction.id
+        )
+    ).all()
+    filled_by_asset: dict[str, list[tuple[PaperV5Prediction, PaperV5Execution]]] = defaultdict(list)
+    for prediction, execution in rows:
+        if (
+            execution.status in {"FILLED", "PARTIAL_FILLED"}
+            and float(execution.filled_shares or 0) > 0
+        ):
+            filled_by_asset[prediction.asset_id].append((prediction, execution))
+
+    observations: list[dict[str, Any]] = []
+    for prediction, execution in rows:
+        if prediction.side != "BUY":
+            continue
+        if execution.status not in {"FILLED", "PARTIAL_FILLED"}:
+            continue
+        if prediction.resolution_status != "RESOLVED" or prediction.resolution_price is None:
+            continue
+        asset_fills = filled_by_asset.get(prediction.asset_id) or []
+        if len(asset_fills) != 1 or asset_fills[0][0].id != prediction.id:
+            # Multiple fills or an exit on this asset makes per-entry PnL attribution
+            # ambiguous without lot accounting. Exclude rather than fabricate PnL.
+            continue
         shares = float(execution.filled_shares or 0)
         if shares <= 0:
             continue
@@ -206,6 +259,7 @@ def _settled_observations(db: Session) -> list[dict[str, Any]]:
         observations.append(
             {
                 "prediction_id": prediction.id,
+                "asset_id": prediction.asset_id,
                 "source_timestamp": int(prediction.source_timestamp or 0),
                 "pnl": pnl,
                 "win": pnl > 0,
@@ -213,12 +267,35 @@ def _settled_observations(db: Session) -> list[dict[str, Any]]:
                 "weekpart": context["weekpart"],
                 "utc_hour": context["utc_hour"],
                 "utc_4h_bucket": context["utc_4h_bucket"],
+                "attribution_basis": "single_filled_execution_for_asset_no_exit",
             }
         )
     return observations
 
 
-def _aggregate(observations: list[dict[str, Any]], key: str) -> dict[str, Any]:
+def _aggregate_directional(
+    observations: list[dict[str, Any]], key: str
+) -> dict[str, Any]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in observations:
+        groups[str(row[key])].append(row)
+    result: dict[str, Any] = {}
+    for label, rows in sorted(groups.items()):
+        wins = sum(1 for row in rows if row["win"])
+        losses = sum(1 for row in rows if row["loss"])
+        decided = wins + losses
+        result[label] = {
+            "resolved": len(rows),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / decided if decided else None,
+        }
+    return result
+
+
+def _aggregate_economic(
+    observations: list[dict[str, Any]], key: str
+) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in observations:
         groups[str(row[key])].append(row)
@@ -228,12 +305,11 @@ def _aggregate(observations: list[dict[str, Any]], key: str) -> dict[str, Any]:
         wins = sum(1 for row in rows if row["win"])
         losses = sum(1 for row in rows if row["loss"])
         result[label] = {
-            "settled": len(rows),
-            "wins": wins,
-            "losses": losses,
+            "attributable_settled": len(rows),
+            "economic_wins": wins,
+            "economic_losses": losses,
             "net_pnl_usd": round(pnl, 8),
             "mean_pnl_usd": round(pnl / len(rows), 8) if rows else None,
-            "win_rate": wins / len(rows) if rows else None,
         }
     return result
 
@@ -256,18 +332,26 @@ def _loss_cluster_metrics(observations: list[dict[str, Any]]) -> dict[str, int]:
         else:
             streak = 0
     return {
-        "max_consecutive_economic_losses": max_streak,
-        "max_economic_losses_in_rolling_60m": max_losses_60m,
+        "max_consecutive_attributable_economic_losses": max_streak,
+        "max_attributable_economic_losses_in_rolling_60m": max_losses_60m,
     }
 
 
 def _regime_analysis_from_observations(
-    observations: list[dict[str, Any]],
+    directional_observations: list[dict[str, Any]],
+    economic_observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    settled = len(observations)
+    if economic_observations is None:
+        economic_observations = [row for row in directional_observations if "pnl" in row]
+    resolved = len(directional_observations)
+    attributable = len(economic_observations)
     return {
-        "state": "INSUFFICIENT_EVIDENCE" if settled < MIN_EXPLORATORY_SETTLED else "EXPLORATORY_ONLY",
-        "settled_observations": settled,
+        "state": "INSUFFICIENT_EVIDENCE" if resolved < MIN_EXPLORATORY_SETTLED else "EXPLORATORY_ONLY",
+        "settled_observations": resolved,
+        "resolved_directional_observations": resolved,
+        "attributable_economic_observations": attributable,
+        "unattributable_economic_observations": max(resolved - attributable, 0),
+        "economic_attribution_rule": "single filled execution for asset and no filled exit",
         "minimum_settled_for_exploratory_breakdown": MIN_EXPLORATORY_SETTLED,
         "automatic_execution_gate": False,
         "out_of_sample_confirmation_required": True,
@@ -277,9 +361,17 @@ def _regime_analysis_from_observations(
         "naive_strategy_inversion_reason": (
             "opposite-side profitability requires opposite executable price, depth, fees and settlement economics"
         ),
-        "by_weekpart": _aggregate(observations, "weekpart"),
-        "by_utc_4h_bucket": _aggregate(observations, "utc_4h_bucket"),
-        "loss_clustering": _loss_cluster_metrics(observations),
+        "directional_by_weekpart": _aggregate_directional(
+            directional_observations, "weekpart"
+        ),
+        "directional_by_utc_4h_bucket": _aggregate_directional(
+            directional_observations, "utc_4h_bucket"
+        ),
+        "economic_by_weekpart": _aggregate_economic(economic_observations, "weekpart"),
+        "economic_by_utc_4h_bucket": _aggregate_economic(
+            economic_observations, "utc_4h_bucket"
+        ),
+        "loss_clustering": _loss_cluster_metrics(economic_observations),
     }
 
 
@@ -367,6 +459,8 @@ def _apply_r45_report(
             "time_of_day_rule_imported": False,
             "naive_strategy_inversion": False,
             "loss_cluster_metrics_settled_only": True,
+            "regime_pnl_requires_single_fill_asset_no_exit": True,
+            "regime_unattributable_pnl_excluded": True,
             "regime_min_settled_exploratory": MIN_EXPLORATORY_SETTLED,
             "regime_filter_requires_out_of_sample_confirmation": True,
         }
@@ -379,7 +473,10 @@ def _apply_r45_report(
         "context_hash_or_timestamp_mismatches": len(context_mismatch),
         "execution_evidence_bridge_mismatches": len(bridge_mismatch),
     }
-    report["regime_analysis"] = _regime_analysis_from_observations(_settled_observations(db))
+    report["regime_analysis"] = _regime_analysis_from_observations(
+        _resolved_directional_observations(db),
+        _attributable_economic_observations(db),
+    )
     if errors:
         report["status"] = "DEGRADED"
         report["run"]["errors"] = list(report["run"].get("errors") or []) + errors
