@@ -37,6 +37,9 @@ def truthful_r45():
         "regime_analysis": {
             "state": "INSUFFICIENT_EVIDENCE",
             "settled_observations": 0,
+            "resolved_directional_observations": 0,
+            "attributable_economic_observations": 0,
+            "unattributable_economic_observations": 0,
             "automatic_execution_gate": False,
             "out_of_sample_confirmation_required": True,
             "naive_strategy_inversion_allowed": False,
@@ -107,6 +110,8 @@ def truthful_r45():
             "time_of_day_rule_imported": False,
             "naive_strategy_inversion": False,
             "loss_cluster_metrics_settled_only": True,
+            "regime_pnl_requires_single_fill_asset_no_exit": True,
+            "regime_unattributable_pnl_excluded": True,
             "regime_min_settled_exploratory": 50,
             "regime_filter_requires_out_of_sample_confirmation": True,
         },
@@ -130,6 +135,8 @@ def test_r45_validator_accepts_regime_evidence_without_auto_gate():
         ("time_of_day_rule_imported", True),
         ("naive_strategy_inversion", True),
         ("loss_cluster_metrics_settled_only", False),
+        ("regime_pnl_requires_single_fill_asset_no_exit", False),
+        ("regime_unattributable_pnl_excluded", False),
         ("regime_filter_requires_out_of_sample_confirmation", False),
     ],
 )
@@ -150,6 +157,19 @@ def test_r45_validator_rejects_regime_hash_bridge_mismatch():
 def test_r45_validator_rejects_automatic_regime_execution_gate():
     payload = truthful_r45()
     payload["regime_analysis"]["automatic_execution_gate"] = True
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
+
+
+def test_r45_validator_rejects_inconsistent_pnl_attribution_counts():
+    payload = truthful_r45()
+    payload["regime_analysis"].update(
+        {
+            "resolved_directional_observations": 3,
+            "attributable_economic_observations": 1,
+            "unattributable_economic_observations": 1,
+        }
+    )
     with pytest.raises(ValueError, match="regime evidence methodology"):
         _validate_v5_r45(payload)
 
