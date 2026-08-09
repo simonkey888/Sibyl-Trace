@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime
 
 from sqlalchemy import update
@@ -14,7 +15,13 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> list[Wallet]:
+def scan_wallets(
+    db: Session,
+    client: PolymarketClient,
+    settings: Settings,
+    *,
+    prospective: bool = False,
+) -> list[Wallet]:
     candidates: dict[str, dict] = {}
     for period in ("WEEK", "MONTH", "ALL"):
         for item in client.leaderboard(period, settings.candidate_limit):
@@ -103,10 +110,22 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
         key=lambda wallet: wallet.score,
         reverse=True,
     )[: settings.tracked_wallet_limit]
+    # Source activity timestamps are integer Unix seconds. Prospective selection
+    # begins on the next whole second so a trade from the same wall-clock second
+    # can never be retrospectively authorized by a score computed milliseconds later.
+    selection_effective_at = int(time.time()) + 1 if prospective else None
     for wallet in eligible:
         wallet.selected = True
+        if selection_effective_at is not None:
+            # Deliberately sacrifice late-indexed pre-selection activity rather
+            # than backfill it using information unavailable at source-trade time.
+            wallet.last_activity_at = max(
+                int(wallet.last_activity_at or 0), selection_effective_at
+            )
 
     set_state(db, "last_scan_at", now_iso())
+    if selection_effective_at is not None:
+        set_state(db, "paper_v5_selection_effective_at", str(selection_effective_at))
     audit(
         db,
         "wallet_scan_completed",
@@ -114,6 +133,8 @@ def scan_wallets(db: Session, client: PolymarketClient, settings: Settings) -> l
         candidates=len(wallets),
         selected=[wallet.address for wallet in eligible],
         score_contract="GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability only",
+        selection_mode="PROSPECTIVE_ONLY" if prospective else "LEGACY_SCAN_THEN_INGEST",
+        selection_effective_at=selection_effective_at,
     )
     db.commit()
     return eligible

@@ -89,8 +89,12 @@ jobs:
           (cd /tmp/sibyl-v5-evidence && sha256sum -c SHA256SUMS --ignore-missing)
           test -s /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"status": "PASS"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"cohort_id": "PAPER_V5_R4_3_PROSPECTIVE_TRUTH_2026_08_08"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"midpoint_fills": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"order_placement": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"prospective_wallet_selection": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"preselection_activity_backfill": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"end_cycle_mark_uses_shadow_client": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
 
       - name: Resolve and verify latest Research V4 anchor
         if: steps.cf.outputs.enabled == 'true'
@@ -118,11 +122,13 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf apps/dashboard/public/data
-          python -m app.cloudflare_snapshot --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
+          python -m app.cloudflare_snapshot_r43 --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
           grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
           grep -q '"canonical_performance": true' apps/dashboard/public/data/snapshot.json
           grep -q '"midpoint_fills": false' apps/dashboard/public/data/snapshot.json
+          grep -q '"prospective_wallet_selection": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"preselection_activity_backfill": false' apps/dashboard/public/data/snapshot.json
           grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
@@ -142,10 +148,13 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Sibyl Trace Cloudflare Terminal V5"
+            echo "### Sibyl Trace Cloudflare Terminal V5 R4.3"
             echo "- Canonical V5 run: ${{ steps.source.outputs.run_id }}"
             echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
+            echo "- Prospective wallet selection: enforced"
+            echo "- Pre-selection activity backfill: forbidden"
+            echo "- End-cycle mark: shadow-consistent"
             echo "- Public surface: sanitized summary only"
             echo "- Raw prediction ledger: private artifact only"
             echo "- Midpoint fills: disabled"
