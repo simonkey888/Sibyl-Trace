@@ -12,7 +12,11 @@ from app import paper_v5 as legacy
 from app import paper_v5_r4 as r4
 from app import paper_v5_r42 as r42
 from app.models import AuditEvent, Wallet
-from app.models_v5 import PaperV5Execution, PaperV5Prediction
+from app.models_v5 import (
+    PaperV5Execution,
+    PaperV5ExecutionEvidence,
+    PaperV5Prediction,
+)
 from app.repository import audit, get_state, set_state
 
 COHORT_ID = "PAPER_V5_R4_3_PROSPECTIVE_TRUTH_2026_08_08"
@@ -41,6 +45,56 @@ def _state_json_list(db: Session, key: str) -> list[dict[str, Any]]:
     except (TypeError, json.JSONDecodeError):
         return []
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _selection_payload(
+    prediction: PaperV5Prediction,
+    wallet: Wallet,
+    selection_effective_at: int,
+) -> dict[str, Any]:
+    material = {
+        "prediction_id": prediction.id,
+        "wallet": wallet.address,
+        "wallet_score": prediction.wallet_score,
+        "selection_effective_at": selection_effective_at,
+        "source_timestamp": prediction.source_timestamp,
+        "prospective_selection": True,
+    }
+    return {
+        **material,
+        "selection_provenance_hash": r4._canonical_hash(material),
+    }
+
+
+def _selection_payload_hash_valid(payload: dict[str, Any]) -> bool:
+    claimed = str(payload.get("selection_provenance_hash") or "")
+    if len(claimed) != 64:
+        return False
+    material = {
+        key: value
+        for key, value in payload.items()
+        if key != "selection_provenance_hash"
+    }
+    return claimed == r4._canonical_hash(material)
+
+
+def _bridge_selection_evidence_hash(
+    db: Session,
+    prediction: PaperV5Prediction,
+    selection_provenance: dict[str, Any],
+) -> None:
+    evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
+    if evidence is None:
+        return
+    evidence.execution_evidence_hash = r4._canonical_hash(
+        {
+            "r4_2_execution_evidence_hash": evidence.execution_evidence_hash,
+            "selection_provenance_hash": selection_provenance[
+                "selection_provenance_hash"
+            ],
+        }
+    )
+    db.add(evidence)
 
 
 class PaperEngineV5R43(r42.PaperEngineV5R42):
@@ -76,17 +130,18 @@ class PaperEngineV5R43(r42.PaperEngineV5R42):
         )
         if prediction is None:
             return handled
+        selection_provenance = _selection_payload(
+            prediction,
+            wallet,
+            selection_effective_at,
+        )
         audit(
             db,
             SELECTION_EVENT,
             "Persist point-in-time wallet-selection basis for copied source activity",
-            prediction_id=prediction.id,
-            wallet=wallet.address,
-            wallet_score=prediction.wallet_score,
-            selection_effective_at=selection_effective_at,
-            source_timestamp=prediction.source_timestamp,
-            prospective_selection=True,
+            **selection_provenance,
         )
+        _bridge_selection_evidence_hash(db, prediction, selection_provenance)
         db.commit()
         return handled
 
@@ -130,7 +185,13 @@ def _write_ledger_r43(original_writer: Any, db: Session, path: Path) -> None:
         arrival_book_ts = (
             execution.arrival_book_timestamp_ms if execution is not None else None
         )
-        row["selection_provenance"] = selection_by_prediction.get(prediction_id)
+        selection = selection_by_prediction.get(prediction_id)
+        row["selection_provenance"] = selection
+        row["selection_evidence_bound"] = bool(
+            selection
+            and _selection_payload_hash_valid(selection)
+            and evidence.get("execution_evidence_hash")
+        )
         row["book_timing"] = {
             "timestamp_semantics": (
                 "CLOB order-book state timestamp; retained for audit, not treated as HTTP freshness"
@@ -162,6 +223,7 @@ def _apply_r43_report(
     prediction_rows = list(db.scalars(select(PaperV5Prediction)).all())
     missing = [row.id for row in prediction_rows if row.id not in selection_by_prediction]
     temporal_violations: list[int] = []
+    hash_violations: list[int] = []
     for row in prediction_rows:
         provenance = selection_by_prediction.get(row.id) or {}
         try:
@@ -170,6 +232,8 @@ def _apply_r43_report(
             effective = 0
         if effective <= 0 or int(row.source_timestamp or 0) < effective:
             temporal_violations.append(row.id)
+        if provenance and not _selection_payload_hash_valid(provenance):
+            hash_violations.append(row.id)
 
     errors: list[str] = []
     if missing:
@@ -178,6 +242,8 @@ def _apply_r43_report(
         errors.append(
             f"prediction_predates_selection_effective_at:{len(temporal_violations)}"
         )
+    if hash_violations:
+        errors.append(f"selection_provenance_hash_mismatch:{len(hash_violations)}")
 
     report["cohort_id"] = COHORT_ID
     report["methodology"].update(
@@ -189,6 +255,7 @@ def _apply_r43_report(
             ),
             "preselection_activity_backfill": False,
             "selection_provenance_in_ledger": True,
+            "execution_evidence_hash_includes_selection_provenance": True,
             "end_cycle_mark_uses_shadow_client": True,
             "book_state_timestamps_in_ledger": True,
             "book_timestamp_freshness_gate": False,
@@ -209,6 +276,7 @@ def _apply_r43_report(
         ),
         "next_selection": _state_json_list(db, NEXT_SELECTION_STATE),
         "predictions_with_selection_provenance": len(selection_by_prediction),
+        "selection_provenance_hash_mismatches": len(hash_violations),
     }
     report["selected_wallets"] = report["selection_provenance"]["active_selection"]
     if errors:
