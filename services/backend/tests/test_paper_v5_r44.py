@@ -13,6 +13,7 @@ from app.models import Wallet
 from app.paper_v5_r44 import (
     ACTIVE_PROFILES_STATE,
     PaperEngineV5R44,
+    _profile_predates_selection,
     _strategy_binding_valid,
 )
 from app.repository import initialize_state, set_state
@@ -91,7 +92,12 @@ class ScanClient:
     def leaderboard(self, _period, _limit):
         return [
             {"proxyWallet": self.maker, "pnl": 200, "vol": 2000, "userName": "maker"},
-            {"proxyWallet": self.directional, "pnl": 100, "vol": 1000, "userName": "directional"},
+            {
+                "proxyWallet": self.directional,
+                "pnl": 100,
+                "vol": 1000,
+                "userName": "directional",
+            },
         ]
 
     def closed_positions(self, _address):
@@ -143,6 +149,14 @@ def test_r44_engine_fails_closed_without_directional_profile():
             assert "source_strategy_directional_provenance" in str(exc)
         else:
             raise AssertionError("R4.4 must fail closed without strategy provenance")
+
+
+def test_source_profile_must_predate_selection_effective_time():
+    profile = {"cutoff_at": 1_800_000_000}
+    assert _profile_predates_selection(profile, 1_800_000_001) is True
+    assert _profile_predates_selection(profile, 1_800_000_000) is False
+    assert _profile_predates_selection(profile, 1_799_999_999) is False
+    assert _profile_predates_selection({"cutoff_at": 0}, 1_800_000_001) is False
 
 
 def test_strategy_hash_bridge_is_recomputable_and_tamper_evident():
