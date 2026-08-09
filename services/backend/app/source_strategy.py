@@ -7,7 +7,6 @@ from typing import Any
 
 DIRECTIONAL_CANDIDATE = "DIRECTIONAL_CANDIDATE"
 NON_DIRECTIONAL_MAKER = "NON_DIRECTIONAL_MAKER"
-NON_DIRECTIONAL_REBATE = "NON_DIRECTIONAL_REBATE"
 NON_DIRECTIONAL_FULL_SET = "NON_DIRECTIONAL_FULL_SET"
 NON_DIRECTIONAL_TWO_SIDED = "NON_DIRECTIONAL_TWO_SIDED"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
@@ -232,9 +231,6 @@ def classify_source_strategy(
     if counts["MAKER_REBATE"] > 0:
         classification = NON_DIRECTIONAL_MAKER
         rejection_reason = "source_strategy_maker_rebate"
-    elif counts["TAKER_REBATE"] > 0:
-        classification = NON_DIRECTIONAL_REBATE
-        rejection_reason = "source_strategy_taker_rebate"
     elif counts["SPLIT"] > 0 or counts["MERGE"] > 0 or counts["CONVERSION"] > 0:
         classification = NON_DIRECTIONAL_FULL_SET
         rejection_reason = "source_strategy_full_set_or_conversion"
