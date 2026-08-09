@@ -25,6 +25,7 @@ def truthful_r44():
             "missing_prediction_profiles": 0,
             "profile_hash_mismatches": 0,
             "non_directional_predictions": 0,
+            "profile_selection_temporal_mismatches": 0,
             "execution_evidence_bridge_mismatches": 0,
         },
         "safety": {
@@ -74,6 +75,7 @@ def truthful_r44():
             "source_strategy_gate": True,
             "source_strategy_public_activity_only": True,
             "source_strategy_point_in_time_cutoff": True,
+            "source_strategy_cutoff_predates_selection": True,
             "source_strategy_fail_closed": True,
             "maker_rebate_source_rejected": True,
             "split_merge_conversion_source_rejected": True,
@@ -96,6 +98,7 @@ def test_r44_validator_accepts_complete_source_strategy_truth_contract():
         "source_strategy_gate",
         "source_strategy_public_activity_only",
         "source_strategy_point_in_time_cutoff",
+        "source_strategy_cutoff_predates_selection",
         "source_strategy_fail_closed",
         "maker_rebate_source_rejected",
         "split_merge_conversion_source_rejected",
@@ -114,6 +117,13 @@ def test_r44_validator_rejects_missing_truth_gate(field):
 def test_r44_validator_rejects_non_directional_prediction_leak():
     payload = truthful_r44()
     payload["source_strategy_provenance"]["non_directional_predictions"] = 1
+    with pytest.raises(ValueError, match="source-strategy truth methodology"):
+        _validate_v5_r44(payload)
+
+
+def test_r44_validator_rejects_strategy_selection_temporal_mismatch():
+    payload = truthful_r44()
+    payload["source_strategy_provenance"]["profile_selection_temporal_mismatches"] = 1
     with pytest.raises(ValueError, match="source-strategy truth methodology"):
         _validate_v5_r44(payload)
 
