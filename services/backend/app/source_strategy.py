@@ -18,7 +18,6 @@ _ACTIVITY_TYPES = (
     "MERGE",
     "CONVERSION",
     "MAKER_REBATE",
-    "TAKER_REBATE",
 )
 
 
@@ -41,7 +40,6 @@ class SourceStrategyProfile:
     attributable_trade_count: int
     unattributable_trade_count: int
     maker_rebate_count: int
-    taker_rebate_count: int
     split_count: int
     merge_count: int
     conversion_count: int
@@ -69,7 +67,6 @@ class SourceStrategyProfile:
             "attributable_trade_count": self.attributable_trade_count,
             "unattributable_trade_count": self.unattributable_trade_count,
             "maker_rebate_count": self.maker_rebate_count,
-            "taker_rebate_count": self.taker_rebate_count,
             "split_count": self.split_count,
             "merge_count": self.merge_count,
             "conversion_count": self.conversion_count,
@@ -273,7 +270,6 @@ def classify_source_strategy(
         "attributable_trade_count": attributable_trade_count,
         "unattributable_trade_count": unattributable_trade_count,
         "maker_rebate_count": counts["MAKER_REBATE"],
-        "taker_rebate_count": counts["TAKER_REBATE"],
         "split_count": counts["SPLIT"],
         "merge_count": counts["MERGE"],
         "conversion_count": counts["CONVERSION"],
@@ -299,7 +295,6 @@ def classify_source_strategy(
         attributable_trade_count=attributable_trade_count,
         unattributable_trade_count=unattributable_trade_count,
         maker_rebate_count=counts["MAKER_REBATE"],
-        taker_rebate_count=counts["TAKER_REBATE"],
         split_count=counts["SPLIT"],
         merge_count=counts["MERGE"],
         conversion_count=counts["CONVERSION"],
