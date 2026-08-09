@@ -177,7 +177,7 @@ def test_prospective_scan_arms_only_future_activity(monkeypatch):
         selected = scan_wallets(db, ScanClient(), settings(), prospective=True)
         assert len(selected) == 1
         effective = int(get_state(db, "paper_v5_selection_effective_at", "0"))
-        assert effective >= before
+        assert effective > before
         assert selected[0].last_activity_at >= effective
 
 
@@ -262,7 +262,7 @@ def test_r43_mark_client_applies_run_local_shadow_debt():
         assert marked == 1
         position = db.get(PaperV5Position, "asset-r43")
         assert position is not None
-        assert position.mark_value_usd > 0
+        assert position.mark_value_usd == pytest.approx(1.91002, abs=1e-5)
         assert position.mark_value_usd < 5 * 0.49
 
 
