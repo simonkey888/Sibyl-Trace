@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.source_strategy import (
@@ -7,9 +9,11 @@ from app.source_strategy import (
     INSUFFICIENT_EVIDENCE,
     NON_DIRECTIONAL_FULL_SET,
     NON_DIRECTIONAL_MAKER,
+    NON_DIRECTIONAL_REBATE,
     NON_DIRECTIONAL_TWO_SIDED,
     SourceStrategyPolicy,
     classify_source_strategy,
+    fetch_public_activity_events,
     profile_hash_valid,
 )
 
@@ -61,6 +65,14 @@ def test_maker_rebate_rejects_profitable_looking_wallet():
     profile = classify(events)
     assert profile.classification == NON_DIRECTIONAL_MAKER
     assert profile.rejection_reason == "source_strategy_maker_rebate"
+
+
+def test_taker_rebate_is_not_silently_called_directional_alpha():
+    events = [trade(i, f"condition-{i}") for i in range(6)]
+    events.append({"type": "TAKER_REBATE", "timestamp": 1_800_000_100})
+    profile = classify(events)
+    assert profile.classification == NON_DIRECTIONAL_REBATE
+    assert profile.rejection_reason == "source_strategy_taker_rebate"
 
 
 def test_split_merge_or_conversion_rejects_full_set_strategy():
@@ -132,6 +144,35 @@ def test_outcome_zero_and_one_are_distinct_in_activity_evidence():
     zero = classify([trade(i, f"condition-{i}", 0) for i in range(6)])
     one = classify([trade(i, f"condition-{i}", 1) for i in range(6)])
     assert zero.activity_sample_hash != one.activity_sample_hash
+
+
+def test_activity_fetch_uses_full_history_cutoff_and_copyability_types():
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def __init__(self):
+            self.params = None
+
+        def _get(self, url, params=None):
+            assert url == "https://data.test/activity"
+            self.params = params
+            return [trade(1, "a")]
+
+    client = Client()
+    rows = fetch_public_activity_events(
+        client,
+        WALLET,
+        cutoff_at=1_900_000_000,
+        limit=30,
+    )
+    assert len(rows) == 1
+    assert client.params["start"] == 1
+    assert client.params["end"] == 1_900_000_000
+    assert client.params["limit"] == 30
+    assert "TRADE" in client.params["type"]
+    assert "MERGE" in client.params["type"]
+    assert "MAKER_REBATE" in client.params["type"]
+    assert "TAKER_REBATE" in client.params["type"]
 
 
 def test_event_order_does_not_change_sample_or_evidence_hash():
