@@ -89,7 +89,7 @@ jobs:
           (cd /tmp/sibyl-v5-evidence && sha256sum -c SHA256SUMS --ignore-missing)
           test -s /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"status": "PASS"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"cohort_id": "PAPER_V5_R4_4_SOURCE_STRATEGY_TRUTH_2026_08_08"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"cohort_id": "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"midpoint_fills": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"order_placement": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"prospective_wallet_selection": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
@@ -97,7 +97,11 @@ jobs:
           grep -q '"end_cycle_mark_uses_shadow_client": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"source_strategy_gate": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"source_strategy_fail_closed": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"execution_evidence_hash_includes_source_strategy": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"regime_context_in_ledger": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"regime_execution_gate": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"weekday_weekend_rule_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"time_of_day_rule_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"naive_strategy_inversion": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"maker_or_lp_execution_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"live_order_path_added": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
 
@@ -127,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf apps/dashboard/public/data
-          python -m app.cloudflare_snapshot_r44 --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
+          python -m app.cloudflare_snapshot_r45 --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
           grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
           grep -q '"canonical_performance": true' apps/dashboard/public/data/snapshot.json
@@ -136,6 +140,8 @@ jobs:
           grep -q '"preselection_activity_backfill": false' apps/dashboard/public/data/snapshot.json
           grep -q '"source_strategy_gate": true' apps/dashboard/public/data/snapshot.json
           grep -q '"source_strategy_fail_closed": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"regime_context_in_ledger": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"regime_execution_gate": false' apps/dashboard/public/data/snapshot.json
           grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
@@ -155,12 +161,16 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Sibyl Trace Cloudflare Terminal V5 R4.4"
+            echo "### Sibyl Trace Cloudflare Terminal V5 R4.5"
             echo "- Canonical V5 run: ${{ steps.source.outputs.run_id }}"
             echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
             echo "- Prospective wallet selection: enforced"
             echo "- Non-directional maker/full-set/two-sided sources: fail-closed"
+            echo "- Regime labels: immutable UTC evidence only"
+            echo "- Automatic weekday/hour filters: disabled"
+            echo "- Naive losing-strategy inversion: disabled"
+            echo "- Regime promotion: requires settled out-of-sample evidence"
             echo "- Pre-selection activity backfill: forbidden"
             echo "- End-cycle mark: shadow-consistent"
             echo "- Public surface: sanitized summary only"
