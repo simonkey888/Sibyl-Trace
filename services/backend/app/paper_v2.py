@@ -16,7 +16,7 @@ from app.repository import current_portfolio
 from app.research_cycle import checkpoint, run_research_cycle
 from app.research_dashboard import render_research_dashboard
 from app.trial import run_cycle as run_legacy_cycle
-from app.watchdogs import accounting_watchdog
+from app.watchdogs import ACCOUNTING_WATCHDOG, accounting_watchdog
 
 BASELINE_SHA = "e4676c8d494a9d83f42749a0b85eac2288de5a54"
 PROTECTED_PATHS = [
@@ -126,7 +126,7 @@ def run(output_dir: Path) -> int:
     research_error: str | None = None
     research: dict[str, Any] = {"status": "SKIPPED"}
     accounting_payload: dict[str, Any] = {
-        "watchdog": "ACCOUNTING_RECONCILIATION_FAILURE",
+        "watchdog": ACCOUNTING_WATCHDOG,
         "state": "RED",
         "message": "Accounting reconciliation did not complete",
         "payload": {},

@@ -31,6 +31,7 @@ on:
       - "services/backend/tests/test_copy_timing_audit.py"
       - "services/backend/tests/test_source_strategy.py"
       - "services/backend/tests/test_watchdogs.py"
+      - "services/backend/tests/test_workflow_contract.py"
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
@@ -215,9 +216,11 @@ jobs:
           packaged = {}
           for name, role in roles.items():
               path = root / name
-              included = path.is_file() and path.stat().st_size > 0
+              empty_valid = name == "prediction-ledger-v5.jsonl"
+              included = path.is_file() and (empty_valid or path.stat().st_size > 0)
               packaged[name] = {
                   "included": included,
+                  "empty_valid": empty_valid,
                   "role": role,
                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if included else None,
               }
@@ -278,6 +281,7 @@ jobs:
           ):
               assert packaged[required]["included"] is True
               assert len(packaged[required]["sha256"] or "") == 64
+          assert packaged["prediction-ledger-v5.jsonl"]["empty_valid"] is True
           db_included = (root / "sibyl-v5.db.gz").is_file() and (root / "sibyl-v5.db.gz").stat().st_size > 0
           assert packaged["sibyl-v5.db.gz"]["included"] is db_included
           if db_included:

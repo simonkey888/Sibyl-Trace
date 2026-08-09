@@ -1,10 +1,16 @@
 from app.watchdogs import (
+    ACCOUNTING_WATCHDOG,
     accounting_watchdog,
     edge_decay_watchdog,
     feed_watchdog,
     global_watchdog_state,
     sample_watchdog,
 )
+
+
+def test_accounting_watchdog_identity_is_status_neutral() -> None:
+    assert ACCOUNTING_WATCHDOG == "ACCOUNTING_RECONCILIATION"
+    assert "FAILURE" not in ACCOUNTING_WATCHDOG
 
 
 def test_accounting_mismatch_is_red() -> None:
@@ -16,7 +22,7 @@ def test_accounting_mismatch_is_red() -> None:
         realized_pnl=0,
         unrealized_pnl=0,
     )
-    assert result.watchdog == "ACCOUNTING_RECONCILIATION"
+    assert result.watchdog == ACCOUNTING_WATCHDOG
     assert result.state == "RED"
 
 
@@ -29,7 +35,7 @@ def test_accounting_reconciliation_is_green() -> None:
         realized_pnl=1,
         unrealized_pnl=1,
     )
-    assert result.watchdog == "ACCOUNTING_RECONCILIATION"
+    assert result.watchdog == ACCOUNTING_WATCHDOG
     assert result.state == "GREEN"
     assert "FAILURE" not in result.watchdog
 
