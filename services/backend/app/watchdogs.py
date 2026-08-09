@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 STATE_ORDER = {"GREEN": 0, "YELLOW": 1, "RED": 2}
+ACCOUNTING_WATCHDOG = "ACCOUNTING_RECONCILIATION"
 
 
 @dataclass(frozen=True)
@@ -36,14 +37,14 @@ def accounting_watchdog(
     error_two = abs(identity_two - equity)
     if max(error_one, error_two) > tolerance:
         return _assessment(
-            "ACCOUNTING_RECONCILIATION",
+            ACCOUNTING_WATCHDOG,
             "RED",
             "Portfolio identities do not reconcile",
             identity_one_error=error_one,
             identity_two_error=error_two,
         )
     return _assessment(
-        "ACCOUNTING_RECONCILIATION",
+        ACCOUNTING_WATCHDOG,
         "GREEN",
         "Portfolio identities reconcile",
         identity_one_error=error_one,
