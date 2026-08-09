@@ -66,15 +66,6 @@ def test_maker_rebate_rejects_profitable_looking_wallet():
     assert profile.rejection_reason == "source_strategy_maker_rebate"
 
 
-def test_taker_rebate_is_recorded_without_inventing_direction_semantics():
-    events = [trade(i, f"condition-{i}") for i in range(6)]
-    events.append({"type": "TAKER_REBATE", "timestamp": 1_800_000_100})
-    profile = classify(events)
-    assert profile.taker_rebate_count == 1
-    assert profile.classification == DIRECTIONAL_CANDIDATE
-    assert profile.rejection_reason is None
-
-
 def test_split_merge_or_conversion_rejects_full_set_strategy():
     for event_type in ("SPLIT", "MERGE", "CONVERSION"):
         events = [trade(i, f"condition-{i}") for i in range(6)]
@@ -200,7 +191,7 @@ def test_activity_fetch_uses_full_history_cutoff_and_copyability_types():
     assert "TRADE" in client.params["type"]
     assert "MERGE" in client.params["type"]
     assert "MAKER_REBATE" in client.params["type"]
-    assert "TAKER_REBATE" in client.params["type"]
+    assert "TAKER_REBATE" not in client.params["type"]
 
 
 def test_activity_fetch_drops_timestampless_rows_before_hashing():
