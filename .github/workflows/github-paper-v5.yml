@@ -11,6 +11,8 @@ on:
       - "services/backend/app/paper_v5_r3.py"
       - "services/backend/app/paper_v5_r4.py"
       - "services/backend/app/paper_v5_r42.py"
+      - "services/backend/app/paper_v5_r43.py"
+      - "services/backend/app/scanner.py"
       - "services/backend/app/polymarket.py"
       - "services/backend/app/db.py"
       - "services/backend/tests/test_execution_v5.py"
@@ -18,12 +20,13 @@ on:
       - "services/backend/tests/test_paper_v5_r3.py"
       - "services/backend/tests/test_paper_v5_r4.py"
       - "services/backend/tests/test_paper_v5_r42.py"
+      - "services/backend/tests/test_paper_v5_r43.py"
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
     inputs:
       reset_state:
-        description: "Start a new clean V5 cohort instead of restoring rolling V5 state"
+        description: "Start a new clean R4.3 cohort instead of restoring rolling V5 state"
         required: false
         type: boolean
         default: false
@@ -43,7 +46,7 @@ jobs:
     env:
       STATE_DIR: ${{ github.workspace }}/.paper-v5-state
       OUTPUT_DIR: ${{ github.workspace }}/paper-v5-output
-      RELEASE_TAG: github-paper-v5-state-v4-2
+      RELEASE_TAG: github-paper-v5-state-v4-3
       DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-state/sibyl-v5.db
       APP_ENV: github-trial
       APP_VERSION: ${{ github.sha }}
@@ -86,11 +89,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
           if [[ "$RESET_STATE" == "true" ]]; then
-            echo "Explicit clean R4.2 cohort requested."
+            echo "Explicit clean R4.3 cohort requested."
             exit 0
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "No R4.2 V5 state exists yet; starting clean."
+            echo "No R4.3 V5 state exists yet; starting clean and arming only future activity."
             exit 0
           fi
           gh release download "$RELEASE_TAG" \
@@ -107,7 +110,7 @@ jobs:
           gzip -t "$STATE_DIR/sibyl-v5.db.gz"
           gzip -dc "$STATE_DIR/sibyl-v5.db.gz" > "$STATE_DIR/sibyl-v5.db"
           rm -f "$STATE_DIR/sibyl-v5.db.gz" "$STATE_DIR/SHA256SUMS"
-          echo "Verified R4.2 V5 state restored."
+          echo "Verified R4.3 V5 state restored."
 
       - name: Verify import and truth contract
         working-directory: services/backend
@@ -115,13 +118,15 @@ jobs:
         run: |
           set -euo pipefail
           python -m compileall -q app
-          ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py app/paper_v5_r4.py app/paper_v5_r42.py
-          grep -q 'PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07' app/paper_v5_r42.py
+          ! grep -nE '\.midpoint\(' app/paper_v5.py app/paper_v5_r3.py app/paper_v5_r4.py app/paper_v5_r42.py app/paper_v5_r43.py
+          grep -q 'PAPER_V5_R4_3_PROSPECTIVE_TRUTH_2026_08_08' app/paper_v5_r43.py
+          grep -q 'prospective_wallet_selection' app/paper_v5_r43.py
+          grep -q 'preselection_activity_backfill' app/paper_v5_r43.py
+          grep -q 'end_cycle_mark_uses_shadow_client' app/paper_v5_r43.py
+          grep -q 'selection_provenance_in_ledger' app/paper_v5_r43.py
           grep -q 'post_delay_market_state_revalidation' app/paper_v5_r42.py
           grep -q 'shadow_self_impact' app/paper_v5_r42.py
           grep -q 'public_book_hash_bridge_persisted' app/paper_v5_r42.py
-          grep -q 'execution_evidence_hash_includes_book_provenance' app/paper_v5_r42.py
-          grep -q 'copy_decay_metrics_in_ledger' app/paper_v5_r42.py
           grep -q 'Gamma market.secondsDelay' app/paper_v5_r4.py
           grep -q 'markets/slug/' app/paper_v5_r4.py
           grep -q 'systemic_market_data_adapter_failure' app/paper_v5.py
@@ -130,7 +135,7 @@ jobs:
         id: cycle
         continue-on-error: true
         working-directory: services/backend
-        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5_r42 --output-dir "$OUTPUT_DIR"
+        run: timeout --signal=TERM --kill-after=30s 12m python -m app.paper_v5_r43 --output-dir "$OUTPUT_DIR"
 
       - name: Package diagnostic state and evidence
         if: always()
@@ -145,7 +150,7 @@ jobs:
           test -s "$OUTPUT_DIR/paper-v5-summary.md"
           test -f "$OUTPUT_DIR/prediction-ledger-v5.jsonl"
           test -s "$OUTPUT_DIR/evidence-manifest-v5.json"
-          grep -q '"cohort_id": "PAPER_V5_R4_2_AUDIT_CORRECTIONS_2026_08_07"' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"cohort_id": "PAPER_V5_R4_3_PROSPECTIVE_TRUTH_2026_08_08"' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"midpoint_fills": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"legacy_history_rewritten": false' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"order_placement": false' "$OUTPUT_DIR/paper-v5-summary.json"
@@ -157,9 +162,12 @@ jobs:
           grep -q '"public_book_hash_bridge_persisted": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"execution_evidence_hash_includes_book_provenance": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"copy_decay_metrics_in_ledger": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"prospective_wallet_selection": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"preselection_activity_backfill": false' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"end_cycle_mark_uses_shadow_client": true' "$OUTPUT_DIR/paper-v5-summary.json"
+          grep -q '"selection_provenance_in_ledger": true' "$OUTPUT_DIR/paper-v5-summary.json"
           grep -q '"state": "PASS"' "$OUTPUT_DIR/paper-v5-summary.json"
           ! grep -q '"state": "RED"' "$OUTPUT_DIR/paper-v5-summary.json"
-          ! grep -q 'official 250ms CLOB itode window' "$OUTPUT_DIR/paper-v5-summary.json"
 
       - name: Reconcile summary ledger and execution evidence
         if: always()
@@ -177,8 +185,11 @@ jobs:
           rows = [json.loads(line) for line in (root / "prediction-ledger-v5.jsonl").read_text().splitlines() if line.strip()]
           totals = summary["totals"]
           method = summary["methodology"]
+          selection = summary["selection_provenance"]
           assert summary["evidence_reconciliation"]["state"] == "PASS"
           assert summary["execution_health"]["state"] != "RED"
+          assert selection["state"] == "PASS"
+          assert int(selection["next_selection_effective_at"] or 0) > 0
           assert method["synthetic_canonical_latency"] is False
           assert method["delayed_market_arrival_delay_ms"] is None
           assert method["regular_arrival_delay_ms"] is None
@@ -190,6 +201,12 @@ jobs:
           assert method["execution_evidence_hash_includes_book_provenance"] is True
           assert method["copy_decay_metrics_in_ledger"] is True
           assert method["fee_provenance_in_ledger"] is True
+          assert method["prospective_wallet_selection"] is True
+          assert method["preselection_activity_backfill"] is False
+          assert method["selection_provenance_in_ledger"] is True
+          assert method["end_cycle_mark_uses_shadow_client"] is True
+          assert method["book_state_timestamps_in_ledger"] is True
+          assert method["book_timestamp_freshness_gate"] is False
           assert len(rows) == totals["executions"] == totals["predictions"]
           counts = Counter(row["execution"]["status"] for row in rows)
           assert counts["FILLED"] + counts["PARTIAL_FILLED"] == totals["filled_orders"]
@@ -197,10 +214,14 @@ jobs:
           assert counts["REJECTED"] == totals["rejected"]
           for row in rows:
               execution = row["execution"]
+              provenance = row.get("book_provenance") or {}
+              selection_provenance = row.get("selection_provenance") or {}
+              assert selection_provenance.get("prospective_selection") is True
+              assert int(selection_provenance["source_timestamp"]) >= int(selection_provenance["selection_effective_at"])
+              assert row.get("book_timing") is not None
               assert execution["simulated_latency_ms"] == 0
               assert row.get("copy_decay") is not None
               assert row.get("fee_provenance") is not None
-              provenance = row.get("book_provenance") or {}
               if row.get("shadow_self_impact_applied"):
                   for label in ("decision", "arrival"):
                       execution_hash = execution.get(f"{label}_book_hash")
@@ -259,8 +280,8 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
-              --title "Sibyl Trace rolling PAPER V5 R4.2 state" \
-              --notes "Private audit-corrected R4.2 PAPER state. No keys, no LIVE, zero authorized cost." \
+              --title "Sibyl Trace rolling PAPER V5 R4.3 state" \
+              --notes "Private prospective-truth R4.3 PAPER state. No keys, no LIVE, zero authorized cost." \
               --prerelease
           else
             gh api --method PATCH \
@@ -279,5 +300,5 @@ jobs:
       - name: Fail closed on degraded V5 cycle
         if: steps.cycle.outcome != 'success'
         run: |
-          echo "V5 R4.2 evidence was retained for audit, but canonical rolling state was NOT advanced."
+          echo "V5 R4.3 evidence was retained for audit, but canonical rolling state was NOT advanced."
           exit 1
