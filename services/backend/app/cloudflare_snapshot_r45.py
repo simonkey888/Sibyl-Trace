@@ -51,6 +51,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or method.get("loss_cluster_metrics_settled_only") is not True
         or method.get("regime_pnl_requires_single_fill_asset_no_exit") is not True
         or method.get("regime_unattributable_pnl_excluded") is not True
+        or method.get("regime_provenance_retry_safe") is not True
+        or method.get("loss_cluster_timestamp_ties_deterministic") is not True
         or int(method.get("regime_min_settled_exploratory") or 0) < 50
         or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
         or provenance.get("state") != "PASS"
