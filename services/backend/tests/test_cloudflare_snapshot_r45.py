@@ -40,6 +40,7 @@ def truthful_r45():
             "resolved_directional_observations": 0,
             "attributable_economic_observations": 0,
             "unattributable_economic_observations": 0,
+            "evidence_level_basis": "attributable_economic_observations",
             "automatic_execution_gate": False,
             "out_of_sample_confirmation_required": True,
             "weekday_weekend_claim_verified": False,
@@ -116,6 +117,7 @@ def truthful_r45():
             "regime_unattributable_pnl_excluded": True,
             "regime_provenance_retry_safe": True,
             "loss_cluster_timestamp_ties_deterministic": True,
+            "regime_exploratory_threshold_uses_attributable_economics": True,
             "regime_min_settled_exploratory": 50,
             "regime_filter_requires_out_of_sample_confirmation": True,
         },
@@ -143,6 +145,7 @@ def test_r45_validator_accepts_regime_evidence_without_auto_gate():
         ("regime_unattributable_pnl_excluded", False),
         ("regime_provenance_retry_safe", False),
         ("loss_cluster_timestamp_ties_deterministic", False),
+        ("regime_exploratory_threshold_uses_attributable_economics", False),
         ("regime_filter_requires_out_of_sample_confirmation", False),
     ],
 )
@@ -171,7 +174,7 @@ def test_r45_validator_rejects_inconsistent_pnl_attribution_counts():
     payload = truthful_r45()
     payload["regime_analysis"].update(
         {
-            "settled_observations": 3,
+            "settled_observations": 1,
             "resolved_directional_observations": 3,
             "attributable_economic_observations": 1,
             "unattributable_economic_observations": 1,
@@ -192,25 +195,40 @@ def test_r45_validator_rejects_unverified_regime_claim_promotion(field):
         _validate_v5_r45(payload)
 
 
-def test_r45_validator_rejects_exploratory_state_below_threshold():
-    payload = truthful_r45()
-    payload["regime_analysis"]["state"] = "EXPLORATORY_ONLY"
-    with pytest.raises(ValueError, match="regime evidence methodology"):
-        _validate_v5_r45(payload)
-
-
-def test_r45_validator_accepts_exploratory_state_at_threshold_without_claims():
+def test_r45_validator_rejects_exploratory_state_without_50_attributable_settlements():
     payload = truthful_r45()
     payload["regime_analysis"].update(
         {
             "state": "EXPLORATORY_ONLY",
-            "settled_observations": 50,
+            "settled_observations": 40,
             "resolved_directional_observations": 50,
             "attributable_economic_observations": 40,
             "unattributable_economic_observations": 10,
         }
     )
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
+
+
+def test_r45_validator_accepts_exploratory_state_at_50_attributable_settlements():
+    payload = truthful_r45()
+    payload["regime_analysis"].update(
+        {
+            "state": "EXPLORATORY_ONLY",
+            "settled_observations": 50,
+            "resolved_directional_observations": 60,
+            "attributable_economic_observations": 50,
+            "unattributable_economic_observations": 10,
+        }
+    )
     _validate_v5_r45(payload)
+
+
+def test_r45_validator_rejects_wrong_evidence_level_basis():
+    payload = truthful_r45()
+    payload["regime_analysis"]["evidence_level_basis"] = "resolved_directional_observations"
+    with pytest.raises(ValueError, match="regime evidence methodology"):
+        _validate_v5_r45(payload)
 
 
 def test_r45_validator_does_not_mutate_input():
