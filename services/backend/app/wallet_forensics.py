@@ -23,6 +23,8 @@ STRUCTURAL_FULL_SET_RESEARCH = "STRUCTURAL_FULL_SET_RESEARCH"
 STRUCTURAL_TWO_SIDED_RESEARCH = "STRUCTURAL_TWO_SIDED_RESEARCH"
 INSUFFICIENT_EVIDENCE_RESEARCH = "INSUFFICIENT_EVIDENCE_RESEARCH"
 UNAVAILABLE_RESEARCH = "UNAVAILABLE_RESEARCH"
+MAKER_STYLE_VETO_MIN_SAMPLE = 20
+MAKER_STYLE_VETO_RATIO = 0.80
 
 
 @dataclass(frozen=True)
@@ -233,9 +235,7 @@ def compute_wallet_forensics(
         for event in clean_events
         if str(event.get("type") or "").upper() == "TRADE"
     ]
-    buy_trades = [
-        event for event in trades if str(event.get("side") or "").upper() == "BUY"
-    ]
+    buy_trades = [event for event in trades if str(event.get("side") or "").upper() == "BUY"]
     sell_trades = [
         event for event in trades if str(event.get("side") or "").upper() == "SELL"
     ]
@@ -253,9 +253,7 @@ def compute_wallet_forensics(
             continue
         sides_by_asset.setdefault(asset, set()).add(side)
 
-    round_trip_assets = sum(
-        1 for sides in sides_by_asset.values() if sides == {"BUY", "SELL"}
-    )
+    round_trip_assets = sum(1 for sides in sides_by_asset.values() if sides == {"BUY", "SELL"})
     buy_only_assets = sum(1 for sides in sides_by_asset.values() if sides == {"BUY"})
     sell_only_assets = sum(1 for sides in sides_by_asset.values() if sides == {"SELL"})
 
@@ -274,9 +272,21 @@ def compute_wallet_forensics(
 
     source_classification = str(source_strategy_profile.get("classification") or UNAVAILABLE)
     lane = _lane_for_classification(source_classification)
-    copyable_directional = source_classification == DIRECTIONAL_CANDIDATE
     mix = execution_mix if isinstance(execution_mix, dict) else {}
     mix_proven = bool(mix.get("proven"))
+    maker_ratio = mix.get("maker_ratio") if mix_proven else None
+    maker_style_veto = bool(
+        source_classification == DIRECTIONAL_CANDIDATE
+        and mix_proven
+        and int(mix.get("sample_total") or 0) >= MAKER_STYLE_VETO_MIN_SAMPLE
+        and maker_ratio is not None
+        and float(maker_ratio) >= MAKER_STYLE_VETO_RATIO
+    )
+    if maker_style_veto:
+        lane = STRUCTURAL_MAKER_RESEARCH
+    copyable_directional = (
+        source_classification == DIRECTIONAL_CANDIDATE and not maker_style_veto
+    )
 
     material: dict[str, Any] = {
         "schema_version": FORENSICS_SCHEMA_VERSION,
@@ -286,6 +296,12 @@ def compute_wallet_forensics(
         "copyable_directional": copyable_directional,
         "research_only": not copyable_directional,
         "execution_gate": False,
+        "selection_veto": maker_style_veto,
+        "selection_veto_reason": (
+            "execution_mix_structural_maker" if maker_style_veto else None
+        ),
+        "maker_style_veto_min_sample": MAKER_STYLE_VETO_MIN_SAMPLE,
+        "maker_style_veto_ratio": MAKER_STYLE_VETO_RATIO,
         "source_strategy_classification": source_classification,
         "source_strategy_evidence_hash": source_strategy_profile.get("evidence_hash"),
         "activity_event_count": len(clean_events),
@@ -297,13 +313,9 @@ def compute_wallet_forensics(
         "round_trip_asset_count": round_trip_assets,
         "buy_only_asset_count": buy_only_assets,
         "sell_only_asset_count": sell_only_assets,
-        "paired_condition_count": int(
-            source_strategy_profile.get("paired_condition_count") or 0
-        ),
+        "paired_condition_count": int(source_strategy_profile.get("paired_condition_count") or 0),
         "paired_trade_count": int(source_strategy_profile.get("paired_trade_count") or 0),
-        "paired_trade_fraction": float(
-            source_strategy_profile.get("paired_trade_fraction") or 0.0
-        ),
+        "paired_trade_fraction": float(source_strategy_profile.get("paired_trade_fraction") or 0.0),
         "split_count": event_counts.get("SPLIT", 0),
         "merge_count": event_counts.get("MERGE", 0),
         "redeem_count": event_counts.get("REDEEM", 0),
@@ -322,7 +334,7 @@ def compute_wallet_forensics(
         "reported_realized_pnl": reported_realized_pnl,
         "reported_pnl_source": "DATA_API_CLOSED_POSITIONS_REPORTED",
         "cashflow_pnl_reconstructed": False,
-        "maker_ratio": mix.get("maker_ratio") if mix_proven else None,
+        "maker_ratio": maker_ratio,
         "taker_ratio": mix.get("taker_ratio") if mix_proven else None,
         "maker_taker_ratio_proven": mix_proven,
         "maker_taker_scope": mix.get("scope") if mix else None,
