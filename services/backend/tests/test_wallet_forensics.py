@@ -87,7 +87,7 @@ def test_activity_fetch_uses_only_current_official_activity_enums() -> None:
 
     fetch_public_activity_events(Client(), DIRECTIONAL, cutoff_at=1_000, limit=30)
     assert len(calls) == 1
-    requested = set(calls[0]["type"].split(","))
+    requested = set(calls[0]["type"])
     assert requested == {
         "TRADE",
         "SPLIT",
