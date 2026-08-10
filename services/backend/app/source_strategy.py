@@ -166,7 +166,6 @@ def fetch_public_activity_events(
             f"{client.settings.data_api_base}/activity",
             {
                 "user": wallet,
-                "type": list(_ACTIVITY_TYPES),
                 "start": 1,
                 "end": max(int(cutoff_at), 1),
                 "limit": current_limit,
@@ -175,7 +174,9 @@ def fetch_public_activity_events(
                 "sortDirection": "DESC",
             },
         )
-        page = data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            raise ValueError("public_activity_response_not_list")
+        page = data
         for event in page:
             if not isinstance(event, dict):
                 continue
