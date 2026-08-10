@@ -26,6 +26,7 @@ from app.wallet_forensics import (
     STRUCTURAL_MAKER_RESEARCH,
     compute_execution_mix,
     compute_wallet_forensics,
+    fetch_public_execution_mix,
 )
 
 MAKER = "0x" + "a" * 40
@@ -75,7 +76,7 @@ def session() -> Session:
     return Session(engine)
 
 
-def test_activity_fetch_avoids_ambiguous_type_filter_and_reads_all_activity() -> None:
+def test_activity_fetch_uses_corrected_csv_activity_enum_filter() -> None:
     calls: list[dict] = []
 
     class Client:
@@ -87,7 +88,18 @@ def test_activity_fetch_avoids_ambiguous_type_filter_and_reads_all_activity() ->
 
     fetch_public_activity_events(Client(), DIRECTIONAL, cutoff_at=1_000, limit=30)
     assert len(calls) == 1
-    assert "type" not in calls[0]
+    requested = set(calls[0]["type"].split(","))
+    assert requested == {
+        "TRADE",
+        "SPLIT",
+        "MERGE",
+        "REDEEM",
+        "REWARD",
+        "CONVERSION",
+        "MAKER_REBATE",
+        "REFERRAL_REWARD",
+    }
+    assert "TAKER_REBATE" not in requested
     assert calls[0]["sortBy"] == "TIMESTAMP"
     assert calls[0]["sortDirection"] == "DESC"
 
@@ -107,6 +119,8 @@ def test_execution_mix_uses_only_comparable_window_and_reconciles_taker_subset()
     assert mix["taker"] == 2
     assert mix["maker_ratio"] == pytest.approx(0.6)
     assert mix["taker_ratio"] == pytest.approx(0.4)
+    assert len(mix["all_sample_hash"]) == 64
+    assert len(mix["taker_sample_hash"]) == 64
 
 
 def test_execution_mix_fails_closed_when_taker_page_is_not_subset() -> None:
@@ -129,6 +143,17 @@ def test_execution_mix_fails_closed_if_full_raw_page_contains_invalid_rows() -> 
     assert mix["maker_ratio"] is None
     assert mix["invalid_taker_rows"] == 1
     assert mix["truncated"] is True
+
+
+def test_public_execution_mix_rejects_non_list_api_shapes() -> None:
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data-api.polymarket.com")
+
+        def _get(self, _url: str, params: dict):
+            return {} if params.get("takerOnly") is False else []
+
+    with pytest.raises(ValueError, match="public_execution_mix_all_response_not_list"):
+        fetch_public_execution_mix(Client(), DIRECTIONAL)
 
 
 def test_forensics_routes_maker_to_research_without_inventing_maker_ratio() -> None:
@@ -233,6 +258,51 @@ def test_forensics_rejects_tampered_source_strategy_evidence() -> None:
             cutoff_at=cutoff,
             source_strategy_profile=source,
         )
+
+
+def test_maker_heavy_execution_style_does_not_rewrite_directionality() -> None:
+    cutoff = 2_000
+    events = [
+        event(
+            "TRADE",
+            1_900 + index,
+            asset=f"asset-{index}",
+            condition=f"condition-{index}",
+        )
+        for index in range(5)
+    ]
+    source = classify_source_strategy(
+        DIRECTIONAL,
+        events,
+        cutoff_at=cutoff,
+        policy=SourceStrategyPolicy(min_trade_count=5),
+    ).to_dict()
+    forensic = compute_wallet_forensics(
+        DIRECTIONAL,
+        events,
+        closed_positions(),
+        cutoff_at=cutoff,
+        source_strategy_profile=source,
+        execution_mix={
+            "proven": True,
+            "scope": "RECENT_OVERLAP_SAMPLE",
+            "sample_total": 100,
+            "maker": 90,
+            "taker": 10,
+            "maker_ratio": 0.90,
+            "taker_ratio": 0.10,
+            "orphan_taker_fills": 0,
+            "truncated": False,
+            "window_from": 1_000,
+            "window_to": 2_000,
+            "reason": None,
+        },
+    ).to_dict()
+    assert forensic["lane"] == DIRECTIONAL_COPY_RESEARCH
+    assert forensic["copyable_directional"] is True
+    assert forensic["execution_style"] == "MAKER_HEAVY"
+    assert forensic["selection_veto"] is False
+    assert forensic["execution_gate"] is False
 
 
 class ScannerClient:
