@@ -18,10 +18,13 @@ def test_dashboard_and_live_gate() -> None:
         semantics = payload["system"]["score_semantics"]
         assert semantics["kind"] == "HEURISTIC_QUALITY_RANKING"
         assert semantics["global_formula"] == "0.60*SHORT+0.40*LONG"
+        assert semantics["history_basis"] == "DECIDED_OUTCOMES"
         assert semantics["calibrated_probability"] is False
         assert semantics["expected_return_claim"] is False
         assert semantics["alpha_claim"] is False
         assert semantics["win_rate_denominator"] == "wins_plus_losses"
+        assert semantics["break_even_scoring_weight"] == 0
+        assert semantics["break_even_reported_in_closed_count"] is True
         assert payload["portfolio"]["initial_bankroll"] == 300
 
         readiness = client.get("/api/v1/live/readiness")
