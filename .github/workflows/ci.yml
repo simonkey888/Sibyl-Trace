@@ -79,6 +79,7 @@ jobs:
       actions: write
       contents: read
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Dispatch repaired canonical PAPER V5
         env:
           GH_TOKEN: ${{ github.token }}
