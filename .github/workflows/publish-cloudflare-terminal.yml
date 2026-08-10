@@ -1,131 +1,19 @@
-name: Publish Cloudflare Terminal
+name: Retired Cloudflare Terminal Legacy Publisher
 
 on:
-  workflow_run:
-    workflows: ["Research Lab V3"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
 
-concurrency:
-  group: sibyl-cloudflare-terminal
-  cancel-in-progress: true
-
 jobs:
-  publish:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Resolve source Research V3 run
-        id: source
-        shell: bash
+      - name: Legacy publisher is permanently read-only
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          else
-            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v3.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
-            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
-            [[ -n "$run_id" && -n "$sha" ]]
-            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-            echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check Cloudflare configuration
-        id: config
-        shell: bash
-        run: |
-          set -euo pipefail
-          enabled=true
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
-            if [[ -z "${!name:-}" ]]; then enabled=false; fi
-          done
-          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
-          if [[ "$enabled" != "true" ]]; then
-            echo "Cloudflare terminal publish skipped: CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing."
-          fi
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        if: steps.config.outputs.enabled == 'true'
-        with:
-          ref: ${{ steps.source.outputs.sha }}
-          fetch-depth: 1
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: steps.config.outputs.enabled == 'true'
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: steps.config.outputs.enabled == 'true'
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/gateway/package-lock.json
-
-      - name: Download exact combined V2 + V3 evidence
-        if: steps.config.outputs.enabled == 'true'
-        env:
-          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/sibyl-evidence
-          gh run download "$SOURCE_RUN_ID" \
-            --name "sibyl-research-v3-$SOURCE_RUN_ID" \
-            --dir /tmp/sibyl-evidence
-          test -s /tmp/sibyl-evidence/trial-summary.json
-          test -s /tmp/sibyl-evidence/research-v3-summary.json
-          test -s /tmp/sibyl-evidence/SHA256SUMS
-          (cd /tmp/sibyl-evidence && sha256sum -c SHA256SUMS --ignore-missing)
-
-      - name: Build sanitized terminal snapshot
-        if: steps.config.outputs.enabled == 'true'
-        shell: bash
-        env:
-          PYTHONPATH: services/backend
-        run: |
-          set -euo pipefail
-          rm -rf apps/dashboard/public/data
-          python -m app.cloudflare_snapshot \
-            --input-dir /tmp/sibyl-evidence \
-            --output-dir apps/dashboard/public/data
-          test -s apps/dashboard/public/data/snapshot.json
-          grep -q '"research_v3"' apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
-
-      - name: Install pinned gateway dependencies
-        if: steps.config.outputs.enabled == 'true'
-        working-directory: apps/gateway
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Deploy public read-only PAPER terminal
-        if: steps.config.outputs.enabled == 'true'
-        working-directory: apps/gateway
-        run: npx --no-install wrangler deploy
-
-      - name: Publish summary
-        if: steps.config.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          {
-            echo "### Sibyl Trace Cloudflare Terminal"
-            echo "- Source Research V3 run: ${{ steps.source.outputs.run_id }}"
-            echo "- Source SHA: ${{ steps.source.outputs.sha }}"
-            echo "- Mode: public read-only sanitized PAPER V2 + Research V3 snapshot"
-            echo "- API/control routes: disabled"
-            echo "- LIVE: absent"
-            echo "- Paid APIs: none"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "RETIRED: this workflow cannot deploy sibyl-trace."
+          echo "Canonical public publisher: publish-cloudflare-terminal-v5.yml"
+          echo "Historical PAPER V2 + Research V3 evidence remains in GitHub artifacts only."
+          echo "No Cloudflare credentials or deployment command are present here."

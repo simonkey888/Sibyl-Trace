@@ -1,4 +1,10 @@
 from app.domain import (
+    QUALITY_SCORE_ALPHA_CLAIM,
+    QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_HISTORY_BASIS,
+    QUALITY_SCORE_KIND,
     PortfolioState,
     RiskPolicy,
     RiskRequest,
@@ -15,6 +21,50 @@ def test_wallet_metrics_and_score_reward_repeatable_profit() -> None:
     assert metrics.win_rate == 0.75
     assert metrics.profit_factor == 5.0
     assert score >= 60
+
+
+def test_break_even_closes_do_not_silently_count_as_losses() -> None:
+    positions = [{"realizedPnl": value} for value in ([2.0] * 6 + [-1.0] * 4 + [0.0] * 10)]
+    metrics = compute_wallet_metrics(positions)
+    assert metrics.closed_count == 20
+    assert metrics.decided_count == 10
+    assert metrics.win_rate == 0.6
+
+
+def test_break_even_padding_cannot_authorize_quality_score() -> None:
+    positions = [{"realizedPnl": 0.0} for _ in range(100)] + [
+        {"realizedPnl": value} for value in ([2.0] * 12 + [-1.0] * 7)
+    ]
+    metrics = compute_wallet_metrics(positions)
+    score, rejection = wallet_score(metrics)
+    assert metrics.closed_count == 119
+    assert metrics.decided_count == 19
+    assert score == 0
+    assert rejection == "insufficient_decided_history"
+
+
+def test_quality_history_component_uses_decided_outcomes_not_flat_closes() -> None:
+    decided = [{"realizedPnl": 2.0} for _ in range(15)] + [
+        {"realizedPnl": -1.0} for _ in range(5)
+    ]
+    base = compute_wallet_metrics(decided)
+    padded = compute_wallet_metrics(decided + [{"realizedPnl": 0.0} for _ in range(80)])
+    base_score, base_rejection = wallet_score(base)
+    padded_score, padded_rejection = wallet_score(padded)
+    assert base_rejection is None
+    assert padded_rejection is None
+    assert padded.closed_count > base.closed_count
+    assert padded.decided_count == base.decided_count == 20
+    assert padded_score == base_score
+
+
+def test_quality_score_contract_is_explicitly_non_calibrated() -> None:
+    assert QUALITY_SCORE_KIND == "HEURISTIC_QUALITY_RANKING"
+    assert QUALITY_SCORE_GLOBAL_FORMULA == "0.60*SHORT+0.40*LONG"
+    assert QUALITY_SCORE_HISTORY_BASIS == "DECIDED_OUTCOMES"
+    assert QUALITY_SCORE_CALIBRATED_PROBABILITY is False
+    assert QUALITY_SCORE_EXPECTED_RETURN_CLAIM is False
+    assert QUALITY_SCORE_ALPHA_CLAIM is False
 
 
 def test_wallet_score_rejects_concentrated_outlier() -> None:

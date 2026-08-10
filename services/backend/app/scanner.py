@@ -6,6 +6,14 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
+from app.domain import (
+    QUALITY_SCORE_ALPHA_CLAIM,
+    QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_HISTORY_BASIS,
+    QUALITY_SCORE_KIND,
+)
 from app.models import Wallet, WalletScoreProfile, WalletSnapshot
 from app.polymarket import PolymarketClient
 from app.repository import audit, set_state
@@ -143,10 +151,33 @@ def scan_wallets(
         profile.execution_edge_score = matrix.execution_edge_score
         profile.execution_edge_sample_size = matrix.execution_edge_sample_size
         profile.average_execution_edge = matrix.average_execution_edge
-        profile.short_sample_size = matrix.short_metrics.closed_count
-        profile.long_sample_size = matrix.long_metrics.closed_count
+        # These fields are the score-bearing samples, not raw closed-row counts.
+        profile.short_sample_size = matrix.short_metrics.decided_count
+        profile.long_sample_size = matrix.long_metrics.decided_count
         profile.updated_at = datetime.now(UTC)
         db.add(profile)
+
+        audit(
+            db,
+            "wallet_quality_scored",
+            "Persist reconstructable heuristic source-quality evidence",
+            wallet=address,
+            score_kind=QUALITY_SCORE_KIND,
+            score_global_formula=QUALITY_SCORE_GLOBAL_FORMULA,
+            score_history_basis=QUALITY_SCORE_HISTORY_BASIS,
+            calibrated_probability=QUALITY_SCORE_CALIBRATED_PROBABILITY,
+            expected_return_claim=QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+            alpha_claim=QUALITY_SCORE_ALPHA_CLAIM,
+            short_closed_count=matrix.short_metrics.closed_count,
+            short_decided_count=matrix.short_metrics.decided_count,
+            short_score=matrix.short_score,
+            long_closed_count=matrix.long_metrics.closed_count,
+            long_decided_count=matrix.long_metrics.decided_count,
+            long_score=matrix.long_score,
+            global_score=matrix.global_score,
+            win_rate_denominator="wins_plus_losses",
+            rejection_reason=matrix.rejection_reason,
+        )
 
         db.add(
             WalletSnapshot(
@@ -238,7 +269,10 @@ def scan_wallets(
         f"Scored {len(wallets)} wallets; selected {len(eligible)}",
         candidates=len(wallets),
         selected=[wallet.address for wallet in eligible],
-        score_contract="GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability only",
+        score_contract="HEURISTIC GLOBAL=60% SHORT + 40% LONG; HISTORY=DECIDED_OUTCOMES; EDGE=execution copyability only",
+        score_calibrated_probability=False,
+        score_expected_return_claim=False,
+        score_alpha_claim=False,
         selection_mode="PROSPECTIVE_ONLY" if prospective else "LEGACY_SCAN_THEN_INGEST",
         selection_effective_at=selection_effective_at,
         source_strategy_gate=source_strategy_gate,
