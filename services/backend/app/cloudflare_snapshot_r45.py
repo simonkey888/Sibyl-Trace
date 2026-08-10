@@ -16,6 +16,18 @@ R44_COHORT_ID = "PAPER_V5_R4_4_SOURCE_STRATEGY_TRUTH_2026_08_08"
 R44_EXECUTION_MODEL = (
     "L2_TAKER_FAK_ARRIVAL_BOOK_V6_PROSPECTIVE_DIRECTIONAL_SOURCE_GATING"
 )
+CANONICAL_PUBLISHER_WORKFLOW = "publish-cloudflare-terminal-v5.yml"
+PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 10_800
+SCORE_SEMANTICS = {
+    "kind": "HEURISTIC_QUALITY_RANKING",
+    "calibrated_probability": False,
+    "expected_return_claim": False,
+    "alpha_claim": False,
+    "global_formula": "0.60*SHORT+0.40*LONG",
+    "short_horizon": "most recent 50 closed positions",
+    "long_horizon": "up to 200 closed positions",
+    "edge_semantics": "execution copyability evidence, not outcome alpha",
+}
 _BASE_R44_VALIDATE = r44._validate_v5_r44
 
 
@@ -86,9 +98,23 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     original = r44._validate_v5_r44
     r44._validate_v5_r44 = _validate_v5_r45
     try:
-        return r44.build_cloudflare_snapshot(input_dir)
+        snapshot = r44.build_cloudflare_snapshot(input_dir)
     finally:
         r44._validate_v5_r44 = original
+
+    # Public truth is deliberately self-describing. A consumer must not infer
+    # calibration, alpha, freshness, or publisher authority from a numeric score.
+    snapshot["truth_contract"] = {
+        "canonical_cohort_id": COHORT_ID,
+        "canonical_execution_model": EXECUTION_MODEL,
+        "canonical_publisher_workflow": CANONICAL_PUBLISHER_WORKFLOW,
+        "single_public_writer_required": True,
+        "max_public_snapshot_age_seconds": PUBLIC_SNAPSHOT_MAX_AGE_SECONDS,
+        "quality_score": dict(SCORE_SEMANTICS),
+        "profitability_proven": False,
+        "live_available": False,
+    }
+    return snapshot
 
 
 def write_cloudflare_snapshot(input_dir: Path, output_dir: Path) -> Path:
