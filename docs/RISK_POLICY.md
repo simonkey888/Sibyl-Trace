@@ -23,14 +23,22 @@ The 5,400-second GitHub values are an explicit delayed-scheduler profile. They m
 
 Wallet eligibility and ranking are deterministic heuristics used to choose sources for PAPER evidence collection.
 
-- `SHORT`: most recent 50 closed positions.
-- `LONG`: up to 200 closed positions.
+- `SHORT`: examines the most recent 50 closed positions and scores decided outcomes.
+- `LONG`: examines up to 200 closed positions and scores decided outcomes.
 - `GLOBAL`: `0.60 × SHORT + 0.40 × LONG`.
 - `EDGE`: execution-copyability evidence after observed price movement.
 
 The numeric 0–100 values are **heuristic quality rankings only**. They are not calibrated probabilities, expected returns, or alpha estimates. A value of 80 does not mean 80% success probability.
 
-A horizon fails closed when it has fewer than 20 closed positions, non-positive realized PnL, or more than 65% of positive PnL concentrated in its best three positive closes. Break-even/zero-PnL closes contribute to history depth but not to the directional win-rate denominator; win rate is `wins / (wins + losses)` when there are decided outcomes.
+A decided outcome is a close with strictly positive or negative realized PnL. Each SHORT/LONG horizon fails closed with fewer than 20 decided outcomes, non-positive realized PnL, or more than 65% of positive PnL concentrated in its best three positive closes. Break-even/zero-PnL closes remain reported in total `closed_count` but have zero quality-scoring weight: they do not satisfy the minimum history requirement, do not increase the history component, and do not enter win rate. Directional win rate is `wins / (wins + losses)`.
+
+The quality-score history component is:
+
+```text
+history = min(decided_outcomes / 100, 1)
+```
+
+not `closed_count / 100`. This prevents flat-close padding from manufacturing apparent evidence maturity.
 
 ## Prospective source selection
 
