@@ -324,16 +324,10 @@ def scan_wallets(
                     "cashflow_pnl_reconstructed", False
                 ),
             )
-            if (
-                strategy_payload["directional"]
-                and forensics_payload["copyable_directional"]
-            ):
+            if strategy_payload["directional"]:
                 eligible.append(wallet)
             else:
-                wallet.rejection_reason = (
-                    forensics_payload.get("selection_veto_reason")
-                    or strategy_payload["rejection_reason"]
-                )
+                wallet.rejection_reason = strategy_payload["rejection_reason"]
         set_state(
             db,
             SOURCE_STRATEGY_PROFILES_STATE,
