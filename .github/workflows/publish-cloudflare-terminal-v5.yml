@@ -127,6 +127,7 @@ jobs:
           rm -rf apps/dashboard/public/data
           python -m app.cloudflare_snapshot_r45 --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
+          grep -q '"schema_version": 5' apps/dashboard/public/data/snapshot.json
           grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
           grep -q '"canonical_performance": true' apps/dashboard/public/data/snapshot.json
           grep -q '"midpoint_fills": false' apps/dashboard/public/data/snapshot.json
@@ -141,6 +142,7 @@ jobs:
           grep -q '"single_public_writer_required": true' apps/dashboard/public/data/snapshot.json
           grep -q '"max_public_snapshot_age_seconds": 10800' apps/dashboard/public/data/snapshot.json
           grep -q '"kind": "HEURISTIC_QUALITY_RANKING"' apps/dashboard/public/data/snapshot.json
+          grep -q '"history_basis": "DECIDED_OUTCOMES"' apps/dashboard/public/data/snapshot.json
           grep -q '"calibrated_probability": false' apps/dashboard/public/data/snapshot.json
           grep -q '"expected_return_claim": false' apps/dashboard/public/data/snapshot.json
           grep -q '"alpha_claim": false' apps/dashboard/public/data/snapshot.json
@@ -174,12 +176,14 @@ jobs:
           source = snapshot.get('source') or {}
           contract = snapshot.get('truth_contract') or {}
           score = contract.get('quality_score') or {}
+          assert snapshot.get('schema_version') == 5
           assert source.get('github_sha') == os.environ['SOURCE_SHA']
           assert contract.get('canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'
           assert contract.get('canonical_publisher_workflow') == 'publish-cloudflare-terminal-v5.yml'
           assert contract.get('single_public_writer_required') is True
           assert contract.get('max_public_snapshot_age_seconds') == 10800
           assert score.get('kind') == 'HEURISTIC_QUALITY_RANKING'
+          assert score.get('history_basis') == 'DECIDED_OUTCOMES'
           assert score.get('calibrated_probability') is False
           assert score.get('expected_return_claim') is False
           assert score.get('alpha_claim') is False
@@ -197,8 +201,9 @@ jobs:
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
             echo "- Single public writer: this workflow only"
             echo "- Post-deploy public snapshot verification: PASS"
+            echo "- Public schema: 5"
             echo "- Public freshness TTL: 10800 seconds"
-            echo "- Quality score: heuristic ranking; not probability/expected return/alpha"
+            echo "- Quality score: heuristic decided-outcome ranking; not probability/expected return/alpha"
             echo "- Prospective wallet selection: enforced"
             echo "- Non-directional maker/full-set/two-sided sources: fail-closed"
             echo "- Regime labels: immutable UTC evidence only"
