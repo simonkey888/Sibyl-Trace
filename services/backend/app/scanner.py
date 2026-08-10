@@ -29,6 +29,7 @@ from app.source_strategy import (
 from app.wallet_forensics import (
     FORENSICS_SCHEMA_VERSION,
     compute_wallet_forensics,
+    fetch_public_execution_mix,
     unavailable_wallet_forensics,
 )
 
@@ -243,6 +244,16 @@ def scan_wallets(
                     policy=policy,
                 )
                 strategy_payload = strategy.to_dict()
+
+                execution_mix = None
+                execution_mix_error = None
+                try:
+                    execution_mix = fetch_public_execution_mix(
+                        client, wallet.address, limit=500
+                    )
+                except Exception as mix_exc:
+                    execution_mix_error = type(mix_exc).__name__
+
                 forensics_payload = compute_wallet_forensics(
                     wallet.address,
                     events,
@@ -253,6 +264,8 @@ def scan_wallets(
                     scan_realized_pnl_percentile=_reported_pnl_percentile(
                         wallets, wallet
                     ),
+                    execution_mix=execution_mix,
+                    execution_mix_error=execution_mix_error,
                 ).to_dict()
             except Exception as exc:
                 strategy_payload = _unavailable_profile(
