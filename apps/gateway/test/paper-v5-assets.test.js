@@ -18,13 +18,23 @@ test("dashboard presents PAPER V5 as truthful canonical cohort", () => {
 });
 
 
-test("dashboard selects PASS paper_v5 before legacy trial performance", () => {
+test("dashboard selects PASS paper_v5 but fails closed on stale freshness", () => {
   assert.match(app, /snapshot\.paper_v5\?\.status === "PASS"/);
   assert.match(app, /const canonical = v5 \|\| trial/);
   assert.match(app, /midpoint_fills === false/);
-  assert.match(app, /V5 TRUTH ONLINE/);
-  assert.match(app, /LEGACY ONLY/);
+  assert.match(app, /function snapshotFreshness\(snapshot\)/);
+  assert.match(app, /DEFAULT_PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 3 \* 60 \* 60/);
+  assert.match(app, /V5 VERIFIED · FRESH/);
+  assert.match(app, /V5 VERIFIED · STALE/);
+  assert.doesNotMatch(app, /V5 TRUTH ONLINE/);
   assert.match(html, /resolved BUY entries/i);
+});
+
+
+test("wallet ranking is labeled as heuristic quality not probability", () => {
+  assert.match(app, /QUALITY\*/);
+  assert.match(app, /Heuristic quality ranking; not a probability or expected-return estimate/);
+  assert.match(app, /not calibrated/);
 });
 
 
