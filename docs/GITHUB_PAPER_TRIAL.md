@@ -1,106 +1,117 @@
-# GitHub-only delayed PAPER trial
+# GitHub delayed PAPER — canonical V5 R4.5
 
-This mode runs Sibyl Trace without Oracle, Cloudflare, a VPS, or an end-user PC.
+Two GitHub PAPER workflows exist for historical reasons. They are not equivalent.
 
-## What it does
+## Canonical workflow
 
-The `GitHub PAPER Trial` workflow runs one bounded cycle every hour:
+The current canonical unattended experiment is:
 
-1. Restores the previous SQLite state and verifies its SHA-256 digest.
-2. Reconciles the persisted runtime mode with the explicit PAPER configuration.
-3. Scans the public Polymarket leaderboards.
-4. Calculates `SHORT`, `LONG`, `GLOBAL`, and execution `EDGE` scores.
-5. Selects up to three eligible sources using `GLOBAL`.
-6. Settles resolved PAPER positions from terminal public market outcomes.
-7. Marks remaining open PAPER positions at the current CLOB midpoint.
-8. Ingests unseen wallet trades using bounded, deduplicated pagination.
-9. Rejects invalid or stale signals before requesting external prices.
-10. Applies deterministic PAPER risk rules and caches midpoint per asset per cycle.
-11. Optionally creates a read-only GPT advisory report.
-12. Writes a Markdown and JSON report.
-13. Packages the last committed SQLite state even when the bounded cycle times out.
-14. Moves the rolling private state tag to the exact run SHA and replaces its assets.
+```text
+GitHub PAPER V5 Truthful Execution
+.github/workflows/github-paper-v5.yml
+cohort=PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09
+```
 
-The workflow can also be started manually from **Actions → GitHub PAPER Trial → Run workflow**.
+It runs hourly at minute 47 when GitHub Actions provisions a runner.
 
-## Delayed profile
+The older `GitHub PAPER Trial` workflow is **legacy V2**. Its midpoint-based evidence is retained for provenance and must never be presented as canonical V5 execution-realistic performance.
 
-This is explicitly a `GITHUB_DELAYED_PAPER` experiment.
+## R4.5 cycle order
 
-GitHub-hosted runners are ephemeral and scheduled workflows can start late. Therefore:
+A canonical cycle:
 
-- schedule: hourly, at minute 17;
-- activity lookback: 90 minutes;
-- maximum simulated signal age: 90 minutes;
-- activity ceiling: 2,000 records per tracked wallet and cycle;
-- internal cycle budget: 12 minutes;
-- job budget: 20 minutes;
-- LIVE trading: unavailable;
-- no signer, private key, CLOB credentials, or live order endpoint exists.
+1. Checks out canonical `main`.
+2. Restores the private rolling R4.5 SQLite state only after SHA-256 verification.
+3. Uses the wallet selection armed by the previous cycle.
+4. Ignores copied activity predating `selection_effective_at`.
+5. Requires a pre-selection directional source-strategy profile.
+6. Resolves exact market identity and supported official market-delay metadata.
+7. Fetches decision and arrival CLOB books.
+8. Simulates FAK execution against arrival-book L2 depth using asks for BUY and bids for SELL.
+9. Applies supported per-market fees, price limits, partial fills and explicit no-fill outcomes.
+10. Marks and settles PAPER inventory from public market evidence.
+11. Reconciles summary, ledger, execution evidence and accounting identities.
+12. Binds selection, source-strategy and immutable UTC regime provenance into the evidence chain.
+13. Rescores current public source history only after the active cycle and arms the next prospective selection.
+14. Packages immutable hashes and advances private rolling state only when every required gate passes.
 
-The delayed values are applied only through workflow environment variables. The normal application signal-age default remains 30 seconds.
+A clean first R4.5 cycle may legitimately have zero predictions/executions while it arms the next prospective selection. A present zero-byte `prediction-ledger-v5.jsonl` is valid only for that reconciled zero-activity state and is still SHA-256 hashed.
 
-Results from this mode measure delayed-copy behavior, settlement accounting, and operational resilience. They are not evidence that a low-latency strategy or any wallet source will be profitable.
+## Delayed GitHub profile
 
-## Score definitions
+GitHub scheduled runners are not continuous infrastructure. R4.5 therefore uses an explicit delayed profile:
 
-- `SHORT`: most recent 50 closed positions.
-- `LONG`: up to 200 closed positions.
-- `GLOBAL`: `60% SHORT + 40% LONG`; deterministic risk consumes this value.
-- `EDGE`: observed ability to copy at an equal or better price, confidence-weighted toward neutral until 30 observations. EDGE does not measure eventual market correctness.
+```text
+schedule                       = 47 * * * *
+ACTIVITY_LOOKBACK_SECONDS      = 5400
+RISK_MAX_SIGNAL_AGE_SECONDS    = 5400
+ACTIVITY_FETCH_LIMIT           = 2000
+job timeout                    = 20 minutes
+TRADING_MODE                   = PAPER
+PAPER_TRADING_ENABLED          = true
+LIVE_TRADING_ENABLED           = false
+COST_AUTHORIZED_USD            = 0
+AI_ANALYSIS_ENABLED            = false
+RESEARCH_ENABLED               = false
+```
 
-Each score includes sample sizes in the JSON/Markdown evidence.
+The normal application default remains 30 seconds for maximum signal age. The 5,400-second GitHub value is evidence collection for delayed copyability, not a low-latency claim.
+
+## Source quality
+
+- `SHORT`: heuristic quality over the latest 50 closed positions.
+- `LONG`: heuristic quality over up to 200 closed positions.
+- `GLOBAL`: `60% SHORT + 40% LONG`.
+- `EDGE`: execution copyability evidence.
+
+These are not calibrated probabilities, expected-return estimates or proof of alpha. Break-even closes count toward history depth but not the directional `wins / (wins + losses)` rate.
 
 ## Persistent state
 
-The repository remains private. The rolling state is stored in the private prerelease:
+The private rolling R4.5 release is:
 
 ```text
-github-paper-state-v1
+github-paper-v5-state-v4-5
 ```
 
-Assets:
+It contains only PAPER/public-source state and integrity material. It contains no trading private key, signer, exchange credential, paid API authorization or LIVE adapter.
 
-- `sibyl.db.gz` — current SQLite PAPER ledger;
-- `trial-summary.json` — machine-readable latest report;
-- `trial-summary.md` — human-readable latest report;
-- `SHA256SUMS` — archive integrity digest.
+A degraded or failed cycle may retain audit artifacts, but it **does not advance canonical rolling state**.
 
-The database contains public wallet activity and simulated accounting only. It contains no wallet private keys, exchange credentials, API keys, or GitHub secrets.
+## Public terminal publication
 
-Each run also creates a small audit artifact retained for 14 days. The database itself is not included in the per-run artifact.
+A successful PAPER cycle does not itself make a public deployment canonical. The only workflow allowed to write the `sibyl-trace` Cloudflare Worker is:
 
-## Timeout recovery
+```text
+.github/workflows/publish-cloudflare-terminal-v5.yml
+```
 
-The Python cycle is terminated before the outer GitHub job limit. If it does not finish, the workflow creates a failure report, packages the last transactionally committed SQLite file, uploads the evidence, and then fails closed. A failed run never becomes a false PASS.
+That publisher:
 
-## Optional GPT advisory
+- accepts only a successful V5 workflow-run event from `main`;
+- requires the successful run SHA still to equal current `main`;
+- verifies V5 artifact hashes and exact R4.5 cohort/methodology gates;
+- combines Research V4 only as a noncanonical research anchor;
+- emits a machine-readable public truth contract;
+- publishes no raw prediction ledger;
+- marks public data stale client-side after 10,800 seconds without a fresh verified snapshot.
 
-The scheduled trial does not require OpenAI.
+Legacy V2/V3, V4 and generic Cloudflare workflows are retired from deployment authority.
 
-To enable the optional read-only report:
+## Runtime failure semantics
 
-1. Add the repository secret `OPENAI_API_KEY`.
-2. Add the repository variable `SIBYL_AI_ENABLED=true`.
-3. Optionally set `SIBYL_OPENAI_MODEL`.
+GitHub can delay, skip, or refuse scheduled jobs. A run that never receives a runner has executed no application code and provides no CI/runtime evidence. It must not be described as a product failure or a PASS.
 
-GPT remains unable to place, approve, or size an order.
-
-## Resetting the experiment
-
-Run the workflow manually and enable `reset_state`.
-
-This discards the restored database for that cycle and replaces the rolling release asset with a new ledger. The old database is overwritten, so download it first when historical preservation is required.
+If runner provisioning is unavailable, Sibyl remains PAPER-only and fail-closed. No billing/spending change, paid fallback, manual LIVE path or strategy weakening is authorized by this profile.
 
 ## Limits
 
-This mode is suitable for unattended PAPER observation and delayed execution evidence. It is not suitable for:
+R4.5 GitHub PAPER is suitable for delayed, unattended evidence collection. It is not evidence of:
 
+- guaranteed hourly execution;
 - continuous WebSocket monitoring;
-- guaranteed execution times;
-- real-time copy trading;
-- a continuously available dashboard;
-- PostgreSQL durability;
+- low-latency copy trading;
+- profitability;
+- calibrated score probabilities;
+- continuously fresh public state;
 - LIVE execution.
-
-GitHub Actions can delay or drop scheduled jobs under load. Private repositories consume the account's included Actions minutes. The hourly cadence is an evidence experiment, not an always-on server.
