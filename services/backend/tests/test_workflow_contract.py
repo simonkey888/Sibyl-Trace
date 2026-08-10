@@ -55,6 +55,27 @@ def test_r45_publisher_rejects_stale_successful_source_sha() -> None:
     assert '"max_public_snapshot_age_seconds": 10800' in source
 
 
+def test_r45_publisher_cannot_succeed_by_skipping_missing_cloudflare_credentials() -> None:
+    source = (WORKFLOWS / "publish-cloudflare-terminal-v5.yml").read_text(encoding="utf-8")
+    assert "Require Cloudflare configuration" in source
+    assert "Refusing false-success publish" in source
+    assert "Cloudflare publish skipped" not in source
+    assert "steps.cf.outputs.enabled" not in source
+
+
+def test_r45_publisher_verifies_the_deployed_worker_after_wrangler() -> None:
+    source = (WORKFLOWS / "publish-cloudflare-terminal-v5.yml").read_text(encoding="utf-8")
+    deploy_index = source.index("wrangler deploy")
+    verify_index = source.index("Verify deployed public truth")
+    assert verify_index > deploy_index
+    assert "published-snapshot.json" in source
+    assert "source.get('github_sha') == os.environ['SOURCE_SHA']" in source
+    assert "canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'" in source
+    assert "single_public_writer_required') is True" in source
+    assert "profitability_proven') is False" in source
+    assert "live_available') is False" in source
+
+
 def test_legacy_paper_v2_is_not_a_scheduled_or_writable_truth_source() -> None:
     source = (WORKFLOWS / "github-paper-trial.yml").read_text(encoding="utf-8")
     assert "schedule:" not in source
