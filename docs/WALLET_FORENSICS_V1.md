@@ -33,17 +33,28 @@ including BUY/SELL counts, paired-condition evidence, round-trip assets,
 SPLIT/MERGE/REDEEM activity, maker rebates, rewards, and reported closed-position
 PnL.
 
+V1 also measures a bounded recent maker/taker sample using the public Data API
+`/trades` endpoint twice: once with `takerOnly=false` and once with
+`takerOnly=true`. The taker rows must reconcile as a multiset subset of the
+all-trades rows inside a comparable time window. If the taker page is row-limited,
+the comparison is restricted to the shared covered window. Any orphan taker row
+fails the metric closed. The resulting ratio is explicitly labelled
+`RECENT_OVERLAP_SAMPLE`; it is not a lifetime maker/taker claim.
+
 ## Claims deliberately not made
 
 V1 does **not** manufacture fields that require evidence Sibyl does not possess.
 The profile therefore leaves these values null/unproven:
 
-- maker/taker ratio;
 - 10s/30s/60s markout;
 - audit-grade cashflow PnL reconstruction;
 - population/control-group percentile;
 - hold-to-resolution and scratch-exit ratios;
 - alpha, expected return, or profitability proof.
+
+Maker/taker remains null/unproven whenever the two public trade pages cannot be
+reconciled safely. A successful recent maker/taker sample is execution-style
+evidence only; it is not alpha, expected return, or profitability evidence.
 
 `reported_realized_pnl` is explicitly labelled as Data API closed-position
 reported PnL. It is not a reconstructed cash ledger.
