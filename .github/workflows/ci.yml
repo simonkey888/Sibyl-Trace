@@ -72,3 +72,14 @@ jobs:
           test "$worker_image" = "$api_image"
       - name: Verify digest-pinned tunnel image
         run: docker compose pull tunnel
+  paper-v5-dispatch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch repaired canonical PAPER V5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run github-paper-v5.yml --ref main -f reset_state=false
