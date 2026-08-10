@@ -81,30 +81,23 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Dispatch canonical PAPER V5 clean cohort
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run github-paper-v5.yml --ref main -f reset_state=true
-      - name: Resolve and wait for current-main PAPER V5
-        id: paper
+        id: dispatch_paper
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          target_sha="$GITHUB_SHA"
-          for _ in {1..30}; do
-            run_id=$(gh run list --workflow github-paper-v5.yml --branch main --event workflow_dispatch --limit 20 --json databaseId,headSha,status --jq --arg sha "$target_sha" '.[] | select(.headSha == $sha) | .databaseId' | head -1)
-            if [[ -n "$run_id" ]]; then
-              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-              gh run watch "$run_id" --interval 5 --exit-status
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "Unable to resolve a PAPER V5 run for current main SHA $target_sha" >&2
-          exit 1
+          run_url=$(gh workflow run github-paper-v5.yml --ref main -f reset_state=true)
+          run_id="${run_url##*/}"
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - name: Wait for exact dispatched PAPER V5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.dispatch_paper.outputs.run_id }}
+        run: gh run watch "$SOURCE_RUN_ID" --interval 5 --exit-status
       - name: Dispatch verified public V5 publisher
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ steps.paper.outputs.run_id }}
+          SOURCE_RUN_ID: ${{ steps.dispatch_paper.outputs.run_id }}
         run: gh workflow run publish-cloudflare-terminal-v5.yml --ref main -f source_run_id="$SOURCE_RUN_ID"
