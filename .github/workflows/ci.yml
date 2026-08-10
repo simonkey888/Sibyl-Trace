@@ -88,31 +88,17 @@ jobs:
           from pathlib import Path
           p = Path('.github/workflows/github-paper-v5.yml')
           s = p.read_text(encoding='utf-8')
-          old = '''          gh release delete-asset "$RELEASE_TAG" prediction-ledger-v5.jsonl --yes >/dev/null 2>&1 || true
-          gh release upload "$RELEASE_TAG" \\
-            sibyl-v5.db.gz \\
-            paper-v5-summary.json \\
-            paper-v5-summary.md \\
-            evidence-manifest-v5.json \\
-            copy-timing-analysis.json \\
-            RELEASE_SHA256SUMS#SHA256SUMS \\
-            --clobber
-          '''
-          new = '''          gh release delete-asset "$RELEASE_TAG" prediction-ledger-v5.jsonl --yes >/dev/null 2>&1 || true
-          gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS --yes >/dev/null 2>&1 || true
-          mv RELEASE_SHA256SUMS SHA256SUMS
-          gh release upload "$RELEASE_TAG" \\
-            sibyl-v5.db.gz \\
-            paper-v5-summary.json \\
-            paper-v5-summary.md \\
-            evidence-manifest-v5.json \\
-            copy-timing-analysis.json \\
-            SHA256SUMS \\
-            --clobber
-          '''
-          if old not in s:
-              raise SystemExit('canonical release upload block not found; refusing to patch')
-          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          marker = 'RELEASE_SHA256SUMS#SHA256SUMS'
+          if marker not in s:
+              raise SystemExit('expected unrepaired checksum upload marker not found; refusing to patch')
+          s = s.replace(marker, 'SHA256SUMS', 1)
+          delete_marker = 'gh release delete-asset "$RELEASE_TAG" prediction-ledger-v5.jsonl --yes >/dev/null 2>&1 || true\n'
+          if 'gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS' not in s:
+              s = s.replace(delete_marker, delete_marker + '          gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS --yes >/dev/null 2>&1 || true\n', 1)
+          upload_marker = 'printf \'%s  %s\\n\' "$(sha256sum sibyl-v5.db.gz | awk \'{print $1}\')" sibyl-v5.db.gz > RELEASE_SHA256SUMS\n'
+          if 'mv RELEASE_SHA256SUMS SHA256SUMS' not in s:
+              s = s.replace(upload_marker, upload_marker + '          mv RELEASE_SHA256SUMS SHA256SUMS\n', 1)
+          p.write_text(s, encoding='utf-8')
           PY
           grep -q 'mv RELEASE_SHA256SUMS SHA256SUMS' .github/workflows/github-paper-v5.yml
           ! grep -q 'RELEASE_SHA256SUMS#SHA256SUMS' .github/workflows/github-paper-v5.yml
