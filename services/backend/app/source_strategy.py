@@ -16,9 +16,11 @@ _ACTIVITY_TYPES = (
     "TRADE",
     "SPLIT",
     "MERGE",
+    "REDEEM",
+    "REWARD",
     "CONVERSION",
     "MAKER_REBATE",
-    "TAKER_REBATE",
+    "REFERRAL_REWARD",
 )
 
 
@@ -173,7 +175,9 @@ def fetch_public_activity_events(
                 "sortDirection": "DESC",
             },
         )
-        page = data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            raise ValueError("public_activity_response_not_list")
+        page = data
         for event in page:
             if not isinstance(event, dict):
                 continue
@@ -273,7 +277,7 @@ def classify_source_strategy(
         "attributable_trade_count": attributable_trade_count,
         "unattributable_trade_count": unattributable_trade_count,
         "maker_rebate_count": counts["MAKER_REBATE"],
-        "taker_rebate_count": counts["TAKER_REBATE"],
+        "taker_rebate_count": 0,
         "split_count": counts["SPLIT"],
         "merge_count": counts["MERGE"],
         "conversion_count": counts["CONVERSION"],
@@ -299,7 +303,7 @@ def classify_source_strategy(
         attributable_trade_count=attributable_trade_count,
         unattributable_trade_count=unattributable_trade_count,
         maker_rebate_count=counts["MAKER_REBATE"],
-        taker_rebate_count=counts["TAKER_REBATE"],
+        taker_rebate_count=0,
         split_count=counts["SPLIT"],
         merge_count=counts["MERGE"],
         conversion_count=counts["CONVERSION"],

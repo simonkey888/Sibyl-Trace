@@ -23,6 +23,7 @@ from app.models import (
     PortfolioSnapshot,
     Signal,
     Wallet,
+    WalletForensicsProfile,
     WalletScoreProfile,
 )
 from app.repository import audit, current_portfolio, get_state, set_state
@@ -83,6 +84,38 @@ def score_profiles(db: Session, wallets: list[Wallet]) -> dict[str, WalletScoreP
     return {row.wallet_address: row for row in rows}
 
 
+def forensics_profiles(
+    db: Session, wallets: list[Wallet]
+) -> dict[str, WalletForensicsProfile]:
+    addresses = [wallet.address for wallet in wallets]
+    if not addresses:
+        return {}
+    rows = db.scalars(
+        select(WalletForensicsProfile).where(
+            WalletForensicsProfile.wallet_address.in_(addresses)
+        )
+    ).all()
+    return {row.wallet_address: row for row in rows}
+
+
+def serialize_forensics(profile: WalletForensicsProfile | None) -> dict | None:
+    if profile is None:
+        return None
+    try:
+        payload = json.loads(profile.payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return {
+        **payload,
+        "schema_version": profile.schema_version,
+        "lane": profile.lane,
+        "copyable_directional": profile.copyable_directional,
+        "research_only": profile.research_only,
+        "cutoff_at": profile.cutoff_at,
+        "evidence_hash": profile.evidence_hash,
+    }
+
+
 @router.get("/dashboard", dependencies=[Depends(verify_gateway)])
 def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
     portfolio = current_portfolio(db, settings.initial_bankroll_usd)
@@ -93,6 +126,7 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
     )
     wallet_rows = list(db.scalars(wallet_query))
     profiles = score_profiles(db, wallet_rows)
+    forensic_profiles = forensics_profiles(db, wallet_rows)
     signals = list(db.scalars(select(Signal).order_by(desc(Signal.id)).limit(30)))
     orders = list(db.scalars(select(PaperOrder).order_by(desc(PaperOrder.id)).limit(30)))
     history = list(
@@ -115,7 +149,12 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
         },
         "portfolio": portfolio,
         "wallets": [
-            serialize_wallet(row, profiles.get(row.address)) for row in wallet_rows
+            serialize_wallet(
+                row,
+                profiles.get(row.address),
+                forensic_profiles.get(row.address),
+            )
+            for row in wallet_rows
         ],
         "signals": [serialize_signal(row) for row in signals],
         "orders": [serialize_order(row) for row in orders],
@@ -149,7 +188,23 @@ def wallets(db: DatabaseDep, selected: SelectedQuery = None) -> list[dict]:
         query = query.where(Wallet.selected.is_(selected))
     wallet_rows = list(db.scalars(query).all())
     profiles = score_profiles(db, wallet_rows)
-    return [serialize_wallet(row, profiles.get(row.address)) for row in wallet_rows]
+    forensic_profiles = forensics_profiles(db, wallet_rows)
+    return [
+        serialize_wallet(row, profiles.get(row.address), forensic_profiles.get(row.address))
+        for row in wallet_rows
+    ]
+
+
+@router.get("/wallet-forensics", dependencies=[Depends(verify_gateway)])
+def wallet_forensics(db: DatabaseDep) -> list[dict]:
+    rows = list(
+        db.scalars(
+            select(WalletForensicsProfile).order_by(
+                desc(WalletForensicsProfile.updated_at)
+            )
+        ).all()
+    )
+    return [serialize_forensics(row) or {} for row in rows]
 
 
 @router.post("/control/pause", dependencies=[Depends(verify_gateway), Depends(verify_admin)])
@@ -210,7 +265,11 @@ def live_readiness() -> dict:
     }
 
 
-def serialize_wallet(row: Wallet, profile: WalletScoreProfile | None = None) -> dict:
+def serialize_wallet(
+    row: Wallet,
+    profile: WalletScoreProfile | None = None,
+    forensic_profile: WalletForensicsProfile | None = None,
+) -> dict:
     return {
         "address": row.address,
         "username": row.username,
@@ -240,6 +299,7 @@ def serialize_wallet(row: Wallet, profile: WalletScoreProfile | None = None) -> 
         "rejection_reason": row.rejection_reason,
         "last_activity_at": row.last_activity_at,
         "updated_at": row.updated_at.isoformat(),
+        "forensics": serialize_forensics(forensic_profile),
     }
 
 

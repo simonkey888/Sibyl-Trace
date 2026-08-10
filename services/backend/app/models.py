@@ -59,6 +59,20 @@ class WalletScoreProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class WalletForensicsProfile(Base):
+    __tablename__ = "wallet_forensics_profiles"
+
+    wallet_address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    lane: Mapped[str] = mapped_column(String(64), index=True)
+    copyable_directional: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    research_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    cutoff_at: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_hash: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Signal(Base):
     __tablename__ = "signals"
     __table_args__ = (UniqueConstraint("source_key", name="uq_signal_source_key"),)

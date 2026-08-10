@@ -14,7 +14,7 @@ from app.domain import (
     QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
-from app.models import Wallet, WalletScoreProfile, WalletSnapshot
+from app.models import Wallet, WalletForensicsProfile, WalletScoreProfile, WalletSnapshot
 from app.polymarket import PolymarketClient
 from app.repository import audit, set_state
 from app.scoring import score_matrix
@@ -26,13 +26,30 @@ from app.source_strategy import (
     fetch_public_activity_events,
     wallet_hash,
 )
+from app.wallet_forensics import (
+    FORENSICS_SCHEMA_VERSION,
+    compute_wallet_forensics,
+    fetch_public_execution_mix,
+    unavailable_wallet_forensics,
+)
 
 SOURCE_STRATEGY_PROFILES_STATE = "paper_v5_source_strategy_profiles"
+WALLET_FORENSICS_PROFILES_STATE = "paper_v5_wallet_forensics_profiles"
 SOURCE_STRATEGY_CUTOFF_STATE = "paper_v5_source_strategy_cutoff_at"
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _reported_pnl_percentile(wallets: list[Wallet], target: Wallet) -> float | None:
+    if not wallets:
+        return None
+    value = float(target.realized_pnl or 0.0)
+    less_or_equal = sum(
+        float(wallet.realized_pnl or 0.0) <= value for wallet in wallets
+    )
+    return round(less_or_equal / len(wallets), 6)
 
 
 def _unavailable_profile(
@@ -108,6 +125,7 @@ def scan_wallets(
 
     db.execute(update(Wallet).values(selected=False))
     wallets: list[Wallet] = []
+    closed_positions_by_wallet: dict[str, list[dict]] = {}
     for address, candidate in candidates.items():
         try:
             closed = client.closed_positions(address)
@@ -121,6 +139,7 @@ def scan_wallets(
             )
             continue
 
+        closed_positions_by_wallet[address] = closed
         matrix = score_matrix(
             db,
             address,
@@ -199,6 +218,7 @@ def scan_wallets(
     )
 
     strategy_profiles: list[dict] = []
+    forensics_profiles: list[dict] = []
     if source_strategy_gate:
         cutoff_at = int(time.time())
         policy = SourceStrategyPolicy(
@@ -231,13 +251,86 @@ def scan_wallets(
                     policy=policy,
                     error_type=type(exc).__name__,
                 )
+                forensics_payload = unavailable_wallet_forensics(
+                    wallet.address,
+                    cutoff_at=cutoff_at,
+                    source_strategy_profile=strategy_payload,
+                    error_type=type(exc).__name__,
+                ).to_dict()
+            else:
+                execution_mix = None
+                execution_mix_error = None
+                try:
+                    execution_mix = fetch_public_execution_mix(
+                        client, wallet.address, limit=500
+                    )
+                except Exception as mix_exc:
+                    execution_mix_error = type(mix_exc).__name__
+                try:
+                    forensics_payload = compute_wallet_forensics(
+                        wallet.address,
+                        events,
+                        closed_positions_by_wallet.get(wallet.address, []),
+                        cutoff_at=cutoff_at,
+                        source_strategy_profile=strategy_payload,
+                        scan_candidate_count=len(wallets),
+                        scan_realized_pnl_percentile=_reported_pnl_percentile(
+                            wallets, wallet
+                        ),
+                        execution_mix=execution_mix,
+                        execution_mix_error=execution_mix_error,
+                    ).to_dict()
+                except Exception as forensic_exc:
+                    forensics_payload = unavailable_wallet_forensics(
+                        wallet.address,
+                        cutoff_at=cutoff_at,
+                        source_strategy_profile=strategy_payload,
+                        error_type=type(forensic_exc).__name__,
+                    ).to_dict()
             strategy_profiles.append(strategy_payload)
+            forensics_profiles.append(forensics_payload)
+
+            forensic_row = db.get(
+                WalletForensicsProfile, wallet.address
+            ) or WalletForensicsProfile(wallet_address=wallet.address)
+            forensic_row.schema_version = FORENSICS_SCHEMA_VERSION
+            forensic_row.lane = forensics_payload["lane"]
+            forensic_row.copyable_directional = bool(
+                forensics_payload["copyable_directional"]
+            )
+            forensic_row.research_only = bool(forensics_payload["research_only"])
+            forensic_row.cutoff_at = cutoff_at
+            forensic_row.evidence_hash = forensics_payload["evidence_hash"]
+            forensic_row.payload_json = json.dumps(forensics_payload, sort_keys=True)
+            forensic_row.updated_at = datetime.now(UTC)
+            db.add(forensic_row)
+
             audit(
                 db,
                 "wallet_source_strategy_classified",
                 "Classified public source behavior before prospective selection",
                 severity="INFO" if strategy_payload["directional"] else "WARN",
                 **strategy_payload,
+            )
+            audit(
+                db,
+                "wallet_forensics_profiled",
+                "Persisted read-only wallet forensics without changing the execution gate",
+                severity="INFO",
+                wallet=wallet.address,
+                schema_version=forensics_payload["schema_version"],
+                lane=forensics_payload["lane"],
+                copyable_directional=forensics_payload["copyable_directional"],
+                research_only=forensics_payload["research_only"],
+                execution_gate=forensics_payload["execution_gate"],
+                evidence_hash=forensics_payload["evidence_hash"],
+                maker_taker_ratio_proven=forensics_payload.get(
+                    "maker_taker_ratio_proven", False
+                ),
+                markout_proven=forensics_payload.get("markout_proven", False),
+                cashflow_pnl_reconstructed=forensics_payload.get(
+                    "cashflow_pnl_reconstructed", False
+                ),
             )
             if strategy_payload["directional"]:
                 eligible.append(wallet)
@@ -247,6 +340,11 @@ def scan_wallets(
             db,
             SOURCE_STRATEGY_PROFILES_STATE,
             json.dumps(strategy_profiles, sort_keys=True),
+        )
+        set_state(
+            db,
+            WALLET_FORENSICS_PROFILES_STATE,
+            json.dumps(forensics_profiles, sort_keys=True),
         )
         set_state(db, SOURCE_STRATEGY_CUTOFF_STATE, str(cutoff_at))
     else:
@@ -277,6 +375,8 @@ def scan_wallets(
         selection_effective_at=selection_effective_at,
         source_strategy_gate=source_strategy_gate,
         source_strategy_profiles=len(strategy_profiles),
+        wallet_forensics_profiles=len(forensics_profiles),
+        wallet_forensics_execution_gate=False,
     )
     db.commit()
     return eligible
