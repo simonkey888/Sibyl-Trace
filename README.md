@@ -20,12 +20,14 @@ A successful historical snapshot is not automatically “online.” The public t
 
 Sibyl exposes source-quality rankings; they are not probabilities.
 
-- `SHORT`: heuristic quality over the most recent 50 closed positions.
-- `LONG`: heuristic quality over up to 200 closed positions.
+- `SHORT`: examines the most recent 50 closed positions and scores only decided outcomes.
+- `LONG`: examines up to 200 closed positions and scores only decided outcomes.
 - `GLOBAL`: `60% SHORT + 40% LONG`; deterministic PAPER risk uses this ranking.
 - `EDGE`: confidence-weighted execution copyability after observed price movement.
 
-`SHORT`, `LONG`, `GLOBAL` and `EDGE` are **not calibrated probabilities, expected-return estimates, or alpha claims**. Break-even/zero-PnL closes count toward history depth but are excluded from the directional win-rate denominator (`wins / (wins + losses)`). Profitability remains unproven until sufficient attributable settled out-of-sample evidence exists.
+A decided outcome is a close with strictly positive or negative realized PnL. Break-even/zero-PnL closes remain visible in `closed_count`, but have zero score-history weight, do not satisfy the minimum 20-outcome eligibility requirement, and do not enter the directional win-rate denominator. Directional win rate is `wins / (wins + losses)`.
+
+`SHORT`, `LONG`, `GLOBAL` and `EDGE` are **not calibrated probabilities, expected-return estimates, or alpha claims**. Profitability remains unproven until sufficient attributable settled out-of-sample evidence exists.
 
 ## Canonical GitHub PAPER R4.5 cycle
 
@@ -62,9 +64,9 @@ There is exactly one workflow authorized to write the public `sibyl-trace` Worke
 .github/workflows/publish-cloudflare-terminal-v5.yml
 ```
 
-The legacy V2/V3 publisher, V4 publisher and generic Cloudflare deploy workflow are retired/read-only and contain no Cloudflare credentials or `wrangler deploy` command. The V5 publisher accepts only a successful `main` R4.5 run whose source SHA still equals current `main`; stale successful SHAs fail closed.
+The legacy V2/V3 publisher, V4 publisher and generic Cloudflare deploy workflow are retired/read-only and contain no Cloudflare credentials or deployment command. The V5 publisher accepts only a successful `main` R4.5 run whose source SHA still equals current `main`; stale successful SHAs fail closed. Missing Cloudflare credentials also fail the publisher rather than producing a false green. After deployment, the publisher fetches the public snapshot and verifies its exact source SHA and R4.5 truth contract.
 
-The public snapshot carries a machine-readable `truth_contract` containing the canonical cohort, execution model, publisher identity, 10,800-second freshness TTL and non-calibrated score semantics.
+The public snapshot uses schema version 5 and carries a machine-readable `truth_contract` containing the canonical cohort, execution model, publisher identity, 10,800-second freshness TTL and non-calibrated score semantics.
 
 ## Full cloud architecture
 
