@@ -166,6 +166,7 @@ def fetch_public_activity_events(
             f"{client.settings.data_api_base}/activity",
             {
                 "user": wallet,
+                "type": ",".join(_ACTIVITY_TYPES),
                 "start": 1,
                 "end": max(int(cutoff_at), 1),
                 "limit": current_limit,
