@@ -26,23 +26,30 @@ maker ratio alone never rewrites R4.4 directionality or selection.
 ## Public evidence used
 
 V1 reuses the bounded point-in-time Data API activity sample and the closed
-positions already fetched by the scanner. The activity request is restricted to
-the currently documented Polymarket activity enums:
+positions already fetched by the scanner. To avoid relying on ambiguous
+multi-value query serialization, the activity fetch does not send a `type`
+filter. It reads the bounded public activity stream and classifies the currently
+recognized event types locally:
 
 `TRADE,SPLIT,MERGE,REDEEM,REWARD,CONVERSION,MAKER_REBATE,REFERRAL_REWARD`.
 
-For each profiled wallet it records descriptive counts and observed USDC fields,
+Unknown future event types may be present in the source sample but do not acquire
+meaning silently. A non-list activity response fails the source-strategy fetch
+closed.
+
+For each profiled wallet V1 records descriptive counts and observed USDC fields,
 including BUY/SELL counts, paired-condition evidence, round-trip assets,
-SPLIT/MERGE/REDEEM activity, maker rebates, rewards, and reported closed-position
-PnL.
+SPLIT/MERGE/REDEEM activity, maker rebates, rewards, and the bounded
+closed-position PnL sample already used by the scanner.
 
 V1 also measures a bounded recent maker/taker sample using the public Data API
 `/trades` endpoint twice: once with `takerOnly=false` and once with
 `takerOnly=true`. Taker rows must reconcile as a multiset subset of all-trade
-rows inside a comparable time window. If the taker page is row-limited, the
-comparison is restricted to the shared covered window. Any orphan taker row
-fails the metric closed. Both reconciled samples receive deterministic hashes.
-The ratio is labelled `RECENT_OVERLAP_SAMPLE`; it is not a lifetime claim.
+rows inside a comparable time window. Truncation is detected from the raw page
+length before filtering. Any malformed row or orphan taker row makes the ratio
+unproven rather than estimating through the gap. Both reconciled samples receive
+deterministic hashes. The ratio is labelled `RECENT_OVERLAP_SAMPLE`; it is not a
+lifetime claim.
 
 When at least 20 reconciled fills are available, V1 labels execution style as
 `MAKER_HEAVY` (maker ratio >= 80%), `TAKER_HEAVY` (maker ratio <= 20%), or
@@ -64,11 +71,21 @@ be reconciled safely. A successful maker/taker sample is execution-style evidenc
 only; it is not alpha, expected return, or profitability evidence.
 
 `reported_realized_pnl` is explicitly labelled as Data API closed-position
-reported PnL. It is not a reconstructed cash ledger.
+reported PnL. It is not a reconstructed cash ledger and must not be read as a
+lifetime total when the upstream closed-position sample is bounded.
 
 A scanner-cohort realized-PnL percentile may be emitted as descriptive context.
 It is labelled `CURRENT_SCANNER_CANDIDATES_REPORTED_REALIZED_PNL` and must never
 be presented as a randomized control group.
+
+## Failure isolation
+
+Source-strategy evidence remains the R4.4 selection authority. If the activity
+fetch or classification fails, selection fails closed. If only the optional
+forensics calculation fails after a valid R4.4 classification, Sibyl persists an
+`UNAVAILABLE_RESEARCH` forensic profile but preserves the valid source-strategy
+classification. Optional forensics therefore cannot become an accidental new
+selection blocker.
 
 ## Persistence and API
 
