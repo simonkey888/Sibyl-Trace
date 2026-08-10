@@ -292,19 +292,21 @@ jobs:
           test -s "$OUTPUT_DIR/sibyl-v5.db.gz"
           cd "$OUTPUT_DIR"
           printf '%s  %s\n' "$(sha256sum sibyl-v5.db.gz | awk '{print $1}')" sibyl-v5.db.gz > RELEASE_SHA256SUMS
+          mv RELEASE_SHA256SUMS SHA256SUMS
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Sibyl Trace rolling PAPER V5 R4.5 state" --notes "Rolling R4.5 PAPER state. No keys, no LIVE, zero authorized cost." --prerelease
           else
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
           fi
           gh release delete-asset "$RELEASE_TAG" prediction-ledger-v5.jsonl --yes >/dev/null 2>&1 || true
+          gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS --yes >/dev/null 2>&1 || true
           gh release upload "$RELEASE_TAG" \
             sibyl-v5.db.gz \
             paper-v5-summary.json \
             paper-v5-summary.md \
             evidence-manifest-v5.json \
             copy-timing-analysis.json \
-            RELEASE_SHA256SUMS#SHA256SUMS \
+            SHA256SUMS \
             --clobber
 
       - name: Confirm rolling state is readable
