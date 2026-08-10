@@ -24,6 +24,7 @@ from app.source_strategy import (
 from app.wallet_forensics import (
     DIRECTIONAL_COPY_RESEARCH,
     STRUCTURAL_MAKER_RESEARCH,
+    compute_execution_mix,
     compute_wallet_forensics,
 )
 
@@ -98,6 +99,32 @@ def test_activity_fetch_uses_only_current_official_activity_enums() -> None:
         "REFERRAL_REWARD",
     }
     assert "TAKER_REBATE" not in requested
+
+
+def test_execution_mix_uses_only_comparable_window_and_reconciles_taker_subset() -> None:
+    all_rows = [
+        event("TRADE", 100 + index, asset=f"asset-{index}")
+        for index in range(5)
+    ]
+    taker_rows = [all_rows[1], all_rows[2], event("TRADE", 50, asset="older-taker")]
+    mix = compute_execution_mix(all_rows, taker_rows, row_limit=500)
+    assert mix["proven"] is True
+    assert mix["window_from"] == 100
+    assert mix["window_to"] == 104
+    assert mix["sample_total"] == 5
+    assert mix["maker"] == 3
+    assert mix["taker"] == 2
+    assert mix["maker_ratio"] == pytest.approx(0.6)
+    assert mix["taker_ratio"] == pytest.approx(0.4)
+
+
+def test_execution_mix_fails_closed_when_taker_page_is_not_subset() -> None:
+    all_rows = [event("TRADE", 100, asset="all-only")]
+    taker_rows = [event("TRADE", 100, asset="orphan-taker")]
+    mix = compute_execution_mix(all_rows, taker_rows, row_limit=500)
+    assert mix["proven"] is False
+    assert mix["maker_ratio"] is None
+    assert mix["orphan_taker_fills"] == 1
 
 
 def test_forensics_routes_maker_to_research_without_inventing_maker_ratio() -> None:
@@ -224,6 +251,17 @@ class ScannerClient:
 
     def _get(self, _url: str, params: dict) -> list[dict]:
         wallet = params["user"]
+        if _url.endswith("/trades"):
+            all_rows = [
+                event(
+                    "TRADE",
+                    700 + index,
+                    asset=f"mix-{wallet[-1]}-{index}",
+                    condition=f"mix-condition-{wallet[-1]}-{index}",
+                )
+                for index in range(4)
+            ]
+            return all_rows[:1] if params.get("takerOnly") is True else all_rows
         if wallet == MAKER:
             rows = [
                 event(
@@ -300,7 +338,9 @@ def test_scanner_persists_forensics_but_does_not_let_it_bypass_directional_gate(
         assert serialized["forensics"]["scan_candidate_count"] == 2
         assert serialized["forensics"]["scan_realized_pnl_percentile"] is not None
         assert serialized["forensics"]["control_group_percentile_proven"] is False
-        assert serialize_forensics(maker_profile)["maker_ratio"] is None
+        assert serialized["forensics"]["maker_taker_ratio_proven"] is True
+        assert serialized["forensics"]["maker_ratio"] == pytest.approx(0.75)
+        assert serialize_forensics(maker_profile)["maker_ratio"] == pytest.approx(0.75)
 
 
 class BrokenActivityClient(ScannerClient):
