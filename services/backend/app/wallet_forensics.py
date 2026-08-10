@@ -111,12 +111,40 @@ def compute_execution_mix(
     *,
     row_limit: int,
 ) -> dict[str, Any]:
+    raw_all_count = len(all_trades)
+    raw_taker_count = len(taker_trades)
     all_rows = [
         row for row in all_trades if isinstance(row, dict) and _event_timestamp(row) > 0
     ]
     taker_rows = [
         row for row in taker_trades if isinstance(row, dict) and _event_timestamp(row) > 0
     ]
+    invalid_all_rows = raw_all_count - len(all_rows)
+    invalid_taker_rows = raw_taker_count - len(taker_rows)
+    all_truncated = raw_all_count >= row_limit
+    taker_truncated = raw_taker_count >= row_limit
+    truncated = all_truncated or taker_truncated
+
+    if invalid_all_rows or invalid_taker_rows:
+        return {
+            "proven": False,
+            "reason": "INVALID_PUBLIC_TRADE_ROWS",
+            "scope": "RECENT_OVERLAP_SAMPLE",
+            "sample_total": len(all_rows),
+            "maker": None,
+            "taker": len(taker_rows),
+            "maker_ratio": None,
+            "taker_ratio": None,
+            "orphan_taker_fills": 0,
+            "invalid_all_rows": invalid_all_rows,
+            "invalid_taker_rows": invalid_taker_rows,
+            "truncated": truncated,
+            "window_from": None,
+            "window_to": None,
+            "all_sample_hash": _trade_sample_hash(all_rows),
+            "taker_sample_hash": _trade_sample_hash(taker_rows),
+        }
+
     if not all_rows:
         return {
             "proven": False,
@@ -128,7 +156,9 @@ def compute_execution_mix(
             "maker_ratio": None,
             "taker_ratio": None,
             "orphan_taker_fills": 0,
-            "truncated": False,
+            "invalid_all_rows": 0,
+            "invalid_taker_rows": 0,
+            "truncated": truncated,
             "window_from": None,
             "window_to": None,
             "all_sample_hash": canonical_hash([]),
@@ -137,7 +167,6 @@ def compute_execution_mix(
 
     all_min = min(_event_timestamp(row) for row in all_rows)
     all_max = max(_event_timestamp(row) for row in all_rows)
-    taker_truncated = len(taker_rows) >= row_limit
     if taker_rows and taker_truncated:
         taker_min = min(_event_timestamp(row) for row in taker_rows)
         window_from = max(all_min, taker_min)
@@ -178,7 +207,9 @@ def compute_execution_mix(
             "maker_ratio": None,
             "taker_ratio": None,
             "orphan_taker_fills": orphan_taker_fills,
-            "truncated": len(all_rows) >= row_limit or len(taker_rows) >= row_limit,
+            "invalid_all_rows": 0,
+            "invalid_taker_rows": 0,
+            "truncated": truncated,
             "window_from": window_from,
             "window_to": window_to,
             "all_sample_hash": all_sample_hash,
@@ -196,7 +227,9 @@ def compute_execution_mix(
         "maker_ratio": round(maker / total, 6),
         "taker_ratio": round(taker / total, 6),
         "orphan_taker_fills": 0,
-        "truncated": len(all_rows) >= row_limit or len(taker_rows) >= row_limit,
+        "invalid_all_rows": 0,
+        "invalid_taker_rows": 0,
+        "truncated": truncated,
         "window_from": window_from,
         "window_to": window_to,
         "all_sample_hash": all_sample_hash,
@@ -251,9 +284,7 @@ def compute_wallet_forensics(
         for event in clean_events
         if str(event.get("type") or "").upper() == "TRADE"
     ]
-    buy_trades = [
-        event for event in trades if str(event.get("side") or "").upper() == "BUY"
-    ]
+    buy_trades = [event for event in trades if str(event.get("side") or "").upper() == "BUY"]
     sell_trades = [
         event for event in trades if str(event.get("side") or "").upper() == "SELL"
     ]
@@ -271,9 +302,7 @@ def compute_wallet_forensics(
             continue
         sides_by_asset.setdefault(asset, set()).add(side)
 
-    round_trip_assets = sum(
-        1 for sides in sides_by_asset.values() if sides == {"BUY", "SELL"}
-    )
+    round_trip_assets = sum(1 for sides in sides_by_asset.values() if sides == {"BUY", "SELL"})
     buy_only_assets = sum(1 for sides in sides_by_asset.values() if sides == {"BUY"})
     sell_only_assets = sum(1 for sides in sides_by_asset.values() if sides == {"SELL"})
 
@@ -332,13 +361,9 @@ def compute_wallet_forensics(
         "round_trip_asset_count": round_trip_assets,
         "buy_only_asset_count": buy_only_assets,
         "sell_only_asset_count": sell_only_assets,
-        "paired_condition_count": int(
-            source_strategy_profile.get("paired_condition_count") or 0
-        ),
+        "paired_condition_count": int(source_strategy_profile.get("paired_condition_count") or 0),
         "paired_trade_count": int(source_strategy_profile.get("paired_trade_count") or 0),
-        "paired_trade_fraction": float(
-            source_strategy_profile.get("paired_trade_fraction") or 0.0
-        ),
+        "paired_trade_fraction": float(source_strategy_profile.get("paired_trade_fraction") or 0.0),
         "split_count": event_counts.get("SPLIT", 0),
         "merge_count": event_counts.get("MERGE", 0),
         "redeem_count": event_counts.get("REDEEM", 0),
@@ -368,6 +393,8 @@ def compute_wallet_forensics(
         "maker_taker_window_to": mix.get("window_to"),
         "maker_taker_truncated": bool(mix.get("truncated", False)),
         "maker_taker_orphan_taker_fills": int(mix.get("orphan_taker_fills") or 0),
+        "maker_taker_invalid_all_rows": int(mix.get("invalid_all_rows") or 0),
+        "maker_taker_invalid_taker_rows": int(mix.get("invalid_taker_rows") or 0),
         "maker_taker_all_sample_hash": mix.get("all_sample_hash"),
         "maker_taker_taker_sample_hash": mix.get("taker_sample_hash"),
         "maker_taker_reason": (
