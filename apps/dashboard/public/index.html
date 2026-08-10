@@ -45,7 +45,7 @@
         <div class="topbar-copy">
           <p class="eyebrow">PREDICTION-MARKET EVIDENCE / READ-ONLY</p>
           <h1>Sibyl <span>Research Terminal</span></h1>
-          <p class="lede">Canonical PAPER V5 performance uses executable order-book depth, per-market fees, arrival-book rechecks and explicit no-fill evidence. Legacy midpoint simulation remains visible only as history.</p>
+          <p class="lede">Canonical PAPER V5 evidence uses executable order-book depth, per-market fees, arrival-book rechecks and explicit no-fill evidence. A verified snapshot is marked stale automatically after its public freshness window; legacy midpoint simulation remains history only.</p>
         </div>
         <div class="top-status">
           <time id="utcClock">--:--:-- UTC</time>
@@ -64,8 +64,8 @@
 
       <section id="overview" class="view active" aria-labelledby="overviewTitle">
         <div class="view-heading">
-          <div><span class="kicker">CANONICAL PAPER V5 / CURRENT STATE</span><h2 id="overviewTitle">What actually survived execution</h2></div>
-          <p>Signals are not wins. Only a simulated FAK fill against arrival L2 can become an open prediction, and only terminal market resolution can become WIN or LOSS.</p>
+          <div><span class="kicker">CANONICAL PAPER V5 / VERIFIED SNAPSHOT</span><h2 id="overviewTitle">What actually survived execution</h2></div>
+          <p>Signals are not wins. Only a simulated FAK fill against arrival L2 can become an open prediction, and only terminal market resolution can become WIN or LOSS. Historical verified evidence is not labeled online once stale.</p>
         </div>
 
         <div class="metric-grid">
@@ -134,10 +134,10 @@
       </section>
 
       <section id="wallets" class="view" aria-labelledby="walletsTitle">
-        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2 id="walletsTitle">Source quality is not Sibyl accuracy</h2></div><p>Wallet win rate describes the copied public source. Sibyl V5 accuracy is computed separately from resolved BUY entries that actually received a simulated fill.</p></div>
+        <div class="section-head"><div><span class="kicker">WALLET INTELLIGENCE</span><h2 id="walletsTitle">Source quality is not Sibyl accuracy</h2></div><p><strong>QUALITY*</strong> is a bounded heuristic ranking, not a calibrated probability, expected-return estimate or alpha claim. Wallet win rate describes the copied public source; Sibyl V5 outcomes are separate.</p></div>
         <article class="panel table-panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Source</th><th>Score</th><th>Closed n</th><th>Win rate</th><th>Profit factor</th><th>Source realized PnL</th></tr></thead>
+            <thead><tr><th>Source</th><th>Quality*</th><th>Closed n</th><th>Win rate</th><th>Profit factor</th><th>Source realized PnL</th></tr></thead>
             <tbody id="walletTable"></tbody>
           </table></div>
         </article>
@@ -184,7 +184,7 @@
       </section>
 
       <footer>
-        <span>SIBYL TRACE / PAPER V5 + LEGACY V2 + RESEARCH V3/V4</span>
+        <span>SIBYL TRACE / PAPER V5 R4.5 + LEGACY EVIDENCE</span>
         <span id="footerVersion">—</span>
         <span>READ-ONLY · NO LIVE · $0 AUTHORIZED</span>
       </footer>
