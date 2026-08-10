@@ -14,7 +14,7 @@ cohort=PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09
 
 It runs hourly at minute 47 when GitHub Actions provisions a runner.
 
-The older `GitHub PAPER Trial` workflow is **legacy V2**. Its midpoint-based evidence is retained for provenance and must never be presented as canonical V5 execution-realistic performance.
+The older `GitHub PAPER Trial` workflow is **legacy V2**. It is retired from push, schedule and issue-comment execution. Its existing midpoint-based evidence is retained for provenance and must never be presented as canonical V5 execution-realistic performance.
 
 ## R4.5 cycle order
 
@@ -59,12 +59,12 @@ The normal application default remains 30 seconds for maximum signal age. The 5,
 
 ## Source quality
 
-- `SHORT`: heuristic quality over the latest 50 closed positions.
-- `LONG`: heuristic quality over up to 200 closed positions.
+- `SHORT`: examines the latest 50 closed positions and scores decided outcomes.
+- `LONG`: examines up to 200 closed positions and scores decided outcomes.
 - `GLOBAL`: `60% SHORT + 40% LONG`.
 - `EDGE`: execution copyability evidence.
 
-These are not calibrated probabilities, expected-return estimates or proof of alpha. Break-even closes count toward history depth but not the directional `wins / (wins + losses)` rate.
+These are not calibrated probabilities, expected-return estimates or proof of alpha. A decided outcome has strictly positive or negative realized PnL. Break-even closes remain reported in `closed_count` but have zero score-history weight, cannot satisfy the 20-outcome minimum, and do not enter directional `wins / (wins + losses)`.
 
 ## Persistent state
 
@@ -90,10 +90,12 @@ That publisher:
 
 - accepts only a successful V5 workflow-run event from `main`;
 - requires the successful run SHA still to equal current `main`;
+- fails if required Cloudflare credentials are unavailable;
 - verifies V5 artifact hashes and exact R4.5 cohort/methodology gates;
 - combines Research V4 only as a noncanonical research anchor;
-- emits a machine-readable public truth contract;
+- emits public schema v5 with a machine-readable truth contract;
 - publishes no raw prediction ledger;
+- fetches the deployed Worker after publication and verifies exact source SHA/truth contract;
 - marks public data stale client-side after 10,800 seconds without a fresh verified snapshot.
 
 Legacy V2/V3, V4 and generic Cloudflare workflows are retired from deployment authority.
