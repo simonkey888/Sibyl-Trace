@@ -26,16 +26,15 @@ maker ratio alone never rewrites R4.4 directionality or selection.
 ## Public evidence used
 
 V1 reuses the bounded point-in-time Data API activity sample and the closed
-positions already fetched by the scanner. To avoid relying on ambiguous
-multi-value query serialization, the activity fetch does not send a `type`
-filter. It reads the bounded public activity stream and classifies the currently
-recognized event types locally:
+positions already fetched by the scanner. The activity filter preserves the
+existing R4.4 comma-separated encoding while using only the currently documented
+Polymarket activity enums:
 
 `TRADE,SPLIT,MERGE,REDEEM,REWARD,CONVERSION,MAKER_REBATE,REFERRAL_REWARD`.
 
-Unknown future event types may be present in the source sample but do not acquire
-meaning silently. A non-list activity response fails the source-strategy fetch
-closed.
+The obsolete `TAKER_REBATE` value is no longer requested; its legacy schema field
+remains zero for compatibility. A non-list activity response fails the
+source-strategy fetch closed.
 
 For each profiled wallet V1 records descriptive counts and observed USDC fields,
 including BUY/SELL counts, paired-condition evidence, round-trip assets,
