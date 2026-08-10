@@ -12,6 +12,7 @@ def utcnow() -> datetime:
 
 class Wallet(Base):
     __tablename__ = "wallets"
+
     address: Mapped[str] = mapped_column(String(42), primary_key=True)
     username: Mapped[str | None] = mapped_column(String(120))
     score: Mapped[float] = mapped_column(Float, default=0)
@@ -29,6 +30,7 @@ class Wallet(Base):
 
 class WalletSnapshot(Base):
     __tablename__ = "wallet_snapshots"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     wallet_address: Mapped[str] = mapped_column(String(42), index=True)
     score: Mapped[float] = mapped_column(Float)
@@ -37,11 +39,14 @@ class WalletSnapshot(Base):
     realized_pnl: Mapped[float] = mapped_column(Float)
     concentration: Mapped[float] = mapped_column(Float)
     closed_count: Mapped[int] = mapped_column(Integer)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class WalletScoreProfile(Base):
     __tablename__ = "wallet_score_profiles"
+
     wallet_address: Mapped[str] = mapped_column(String(42), primary_key=True)
     short_score: Mapped[float] = mapped_column(Float, default=0)
     long_score: Mapped[float] = mapped_column(Float, default=0)
@@ -71,6 +76,7 @@ class WalletForensicsProfile(Base):
 class Signal(Base):
     __tablename__ = "signals"
     __table_args__ = (UniqueConstraint("source_key", name="uq_signal_source_key"),)
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_key: Mapped[str] = mapped_column(String(220))
     wallet_address: Mapped[str] = mapped_column(String(42), index=True)
@@ -92,6 +98,7 @@ class Signal(Base):
 
 class PaperOrder(Base):
     __tablename__ = "paper_orders"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     signal_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     asset_id: Mapped[str] = mapped_column(String(90), index=True)
@@ -107,11 +114,14 @@ class PaperOrder(Base):
     slippage: Mapped[float | None] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(24))
     rejection_reason: Mapped[str | None] = mapped_column(String(240))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class PaperPosition(Base):
     __tablename__ = "paper_positions"
+
     asset_id: Mapped[str] = mapped_column(String(90), primary_key=True)
     condition_id: Mapped[str] = mapped_column(String(66), index=True)
     market_title: Mapped[str] = mapped_column(Text)
@@ -125,6 +135,7 @@ class PaperPosition(Base):
 
 class PortfolioSnapshot(Base):
     __tablename__ = "portfolio_snapshots"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     cash: Mapped[float] = mapped_column(Float)
     exposure: Mapped[float] = mapped_column(Float)
@@ -132,11 +143,14 @@ class PortfolioSnapshot(Base):
     realized_pnl: Mapped[float] = mapped_column(Float)
     unrealized_pnl: Mapped[float] = mapped_column(Float)
     drawdown: Mapped[float] = mapped_column(Float)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class SystemState(Base):
     __tablename__ = "system_state"
+
     key: Mapped[str] = mapped_column(String(60), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -144,12 +158,15 @@ class SystemState(Base):
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True)
     severity: Mapped[str] = mapped_column(String(16), default="INFO")
     message: Mapped[str] = mapped_column(Text)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 Index("ix_wallet_score_selected", Wallet.selected, Wallet.score)
@@ -157,6 +174,7 @@ Index("ix_wallet_score_selected", Wallet.selected, Wallet.score)
 
 class AIAnalysis(Base):
     __tablename__ = "ai_analyses"
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     model: Mapped[str] = mapped_column(String(80))
     input_hash: Mapped[str] = mapped_column(String(64), index=True)
@@ -164,4 +182,6 @@ class AIAnalysis(Base):
     report_json: Mapped[str] = mapped_column(Text)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
