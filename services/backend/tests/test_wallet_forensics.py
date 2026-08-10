@@ -75,7 +75,7 @@ def session() -> Session:
     return Session(engine)
 
 
-def test_activity_fetch_uses_only_current_official_activity_enums() -> None:
+def test_activity_fetch_avoids_ambiguous_type_filter_and_reads_all_activity() -> None:
     calls: list[dict] = []
 
     class Client:
@@ -87,18 +87,9 @@ def test_activity_fetch_uses_only_current_official_activity_enums() -> None:
 
     fetch_public_activity_events(Client(), DIRECTIONAL, cutoff_at=1_000, limit=30)
     assert len(calls) == 1
-    requested = set(calls[0]["type"])
-    assert requested == {
-        "TRADE",
-        "SPLIT",
-        "MERGE",
-        "REDEEM",
-        "REWARD",
-        "CONVERSION",
-        "MAKER_REBATE",
-        "REFERRAL_REWARD",
-    }
-    assert "TAKER_REBATE" not in requested
+    assert "type" not in calls[0]
+    assert calls[0]["sortBy"] == "TIMESTAMP"
+    assert calls[0]["sortDirection"] == "DESC"
 
 
 def test_execution_mix_uses_only_comparable_window_and_reconciles_taker_subset() -> None:
@@ -125,6 +116,19 @@ def test_execution_mix_fails_closed_when_taker_page_is_not_subset() -> None:
     assert mix["proven"] is False
     assert mix["maker_ratio"] is None
     assert mix["orphan_taker_fills"] == 1
+
+
+def test_execution_mix_fails_closed_if_full_raw_page_contains_invalid_rows() -> None:
+    all_rows = [
+        event("TRADE", 100 + index, asset=f"all-{index}") for index in range(5)
+    ]
+    taker_rows = [all_rows[0], all_rows[1], {"timestamp": 0}]
+    mix = compute_execution_mix(all_rows, taker_rows, row_limit=3)
+    assert mix["proven"] is False
+    assert mix["reason"] == "INVALID_PUBLIC_TRADE_ROWS"
+    assert mix["maker_ratio"] is None
+    assert mix["invalid_taker_rows"] == 1
+    assert mix["truncated"] is True
 
 
 def test_forensics_routes_maker_to_research_without_inventing_maker_ratio() -> None:
@@ -341,6 +345,48 @@ def test_scanner_persists_forensics_but_does_not_let_it_bypass_directional_gate(
         assert serialized["forensics"]["maker_taker_ratio_proven"] is True
         assert serialized["forensics"]["maker_ratio"] == pytest.approx(0.75)
         assert serialize_forensics(maker_profile)["maker_ratio"] == pytest.approx(0.75)
+
+
+def test_forensics_failure_does_not_discard_valid_directional_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.scanner.time.time", lambda: 1_000.0)
+
+    class DirectionalOnlyClient(ScannerClient):
+        def leaderboard(self, _period: str, _limit: int) -> list[dict]:
+            return [{
+                "proxyWallet": DIRECTIONAL,
+                "pnl": 500,
+                "vol": 50_000,
+                "userName": "directional",
+            }]
+
+    def broken_forensics(*_args, **_kwargs):
+        raise RuntimeError("forensics exploded")
+
+    monkeypatch.setattr("app.scanner.compute_wallet_forensics", broken_forensics)
+    with session() as db:
+        selected = scan_wallets(
+            db,
+            DirectionalOnlyClient(),
+            Settings(
+                candidate_limit=3,
+                tracked_wallet_limit=1,
+                source_strategy_min_trade_count=5,
+                source_strategy_activity_limit=30,
+            ),
+            prospective=True,
+            source_strategy_gate=True,
+        )
+        assert [row.address for row in selected] == [DIRECTIONAL]
+        wallet = db.get(Wallet, DIRECTIONAL)
+        profile = db.get(WalletForensicsProfile, DIRECTIONAL)
+        assert wallet is not None and wallet.selected is True
+        assert wallet.rejection_reason is None
+        assert profile is not None
+        assert profile.lane == "UNAVAILABLE_RESEARCH"
+        assert profile.copyable_directional is False
+        assert profile.research_only is True
 
 
 class BrokenActivityClient(ScannerClient):
