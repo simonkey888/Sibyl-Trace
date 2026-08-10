@@ -53,6 +53,7 @@ def test_r45_publisher_rejects_stale_successful_source_sha() -> None:
     assert "Refusing stale V5 publish" in source
     assert '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' in source
     assert '"max_public_snapshot_age_seconds": 10800' in source
+    assert '"history_basis": "DECIDED_OUTCOMES"' in source
 
 
 def test_r45_publisher_cannot_succeed_by_skipping_missing_cloudflare_credentials() -> None:
@@ -69,9 +70,12 @@ def test_r45_publisher_verifies_the_deployed_worker_after_wrangler() -> None:
     verify_index = source.index("Verify deployed public truth")
     assert verify_index > deploy_index
     assert "published-snapshot.json" in source
+    assert "snapshot.get('schema_version') == 5" in source
     assert "source.get('github_sha') == os.environ['SOURCE_SHA']" in source
     assert "canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'" in source
     assert "single_public_writer_required') is True" in source
+    assert "score.get('history_basis') == 'DECIDED_OUTCOMES'" in source
+    assert "score.get('calibrated_probability') is False" in source
     assert "profitability_proven') is False" in source
     assert "live_available') is False" in source
 
