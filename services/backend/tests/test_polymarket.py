@@ -39,6 +39,29 @@ def test_midpoint_fails_closed_without_price() -> None:
         client.close()
 
 
+def test_closed_positions_are_requested_newest_first_for_short_horizon() -> None:
+    client = PolymarketClient(Settings())
+    calls: list[dict[str, Any]] = []
+
+    def fake_get(url: str, params: dict[str, Any]) -> list[dict]:
+        calls.append({"url": url, **params})
+        return [{"realizedPnl": "1", "timestamp": 1234}]
+
+    client._get = fake_get
+    try:
+        rows = client.closed_positions("0x" + "a" * 40, limit=50)
+    finally:
+        client.close()
+
+    assert len(rows) == 1
+    assert len(calls) == 1
+    assert calls[0]["url"].endswith("/closed-positions")
+    assert calls[0]["limit"] == 50
+    assert calls[0]["offset"] == 0
+    assert calls[0]["sortBy"] == "TIMESTAMP"
+    assert calls[0]["sortDirection"] == "DESC"
+
+
 def test_activity_paginates_with_documented_offset_and_deduplicates() -> None:
     client = PolymarketClient(Settings())
     calls: list[dict[str, Any]] = []
