@@ -77,43 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Patch canonical V5 release checksum asset name
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('.github/workflows/github-paper-v5.yml')
-          s = p.read_text(encoding='utf-8')
-          marker = 'RELEASE_SHA256SUMS#SHA256SUMS'
-          if marker not in s:
-              raise SystemExit('expected unrepaired checksum upload marker not found; refusing to patch')
-          s = s.replace(marker, 'SHA256SUMS', 1)
-          delete_marker = 'gh release delete-asset "$RELEASE_TAG" prediction-ledger-v5.jsonl --yes >/dev/null 2>&1 || true\n'
-          if 'gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS' not in s:
-              s = s.replace(delete_marker, delete_marker + '          gh release delete-asset "$RELEASE_TAG" RELEASE_SHA256SUMS --yes >/dev/null 2>&1 || true\n', 1)
-          upload_marker = 'printf \'%s  %s\\n\' "$(sha256sum sibyl-v5.db.gz | awk \'{print $1}\')" sibyl-v5.db.gz > RELEASE_SHA256SUMS\n'
-          if 'mv RELEASE_SHA256SUMS SHA256SUMS' not in s:
-              s = s.replace(upload_marker, upload_marker + '          mv RELEASE_SHA256SUMS SHA256SUMS\n', 1)
-          p.write_text(s, encoding='utf-8')
-          PY
-          grep -q 'mv RELEASE_SHA256SUMS SHA256SUMS' .github/workflows/github-paper-v5.yml
-          ! grep -q 'RELEASE_SHA256SUMS#SHA256SUMS' .github/workflows/github-paper-v5.yml
-      - name: Commit canonical V5 workflow repair without recursive push trigger
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/github-paper-v5.yml
-          git diff --cached --quiet && exit 0
-          git commit -m 'fix: publish V5 checksum asset under canonical filename'
-          git push origin HEAD:main
       - name: Dispatch repaired canonical PAPER V5 with clean cohort
         env:
           GH_TOKEN: ${{ github.token }}
