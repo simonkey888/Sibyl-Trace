@@ -2,6 +2,13 @@ from dataclasses import dataclass
 from math import isfinite
 
 
+QUALITY_SCORE_KIND = "HEURISTIC_QUALITY_RANKING"
+QUALITY_SCORE_GLOBAL_FORMULA = "0.60*SHORT+0.40*LONG"
+QUALITY_SCORE_CALIBRATED_PROBABILITY = False
+QUALITY_SCORE_EXPECTED_RETURN_CLAIM = False
+QUALITY_SCORE_ALPHA_CLAIM = False
+
+
 @dataclass(frozen=True)
 class WalletMetrics:
     closed_count: int
@@ -14,8 +21,15 @@ class WalletMetrics:
     volume: float
 
     @property
+    def decided_count(self) -> int:
+        """Closed positions with a strictly positive or negative realized outcome."""
+        return self.wins + self.losses
+
+    @property
     def win_rate(self) -> float:
-        return self.wins / self.closed_count if self.closed_count else 0.0
+        # Break-even/zero-PnL closes still contribute to history depth but are not
+        # silently counted as losses in the directional win-rate denominator.
+        return self.wins / self.decided_count if self.decided_count else 0.0
 
     @property
     def profit_factor(self) -> float:
@@ -46,6 +60,7 @@ def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) ->
 
 
 def wallet_score(metrics: WalletMetrics) -> tuple[float, str | None]:
+    """Return a bounded heuristic quality ranking, never a probability or ER claim."""
     if metrics.closed_count < 20:
         return 0.0, "insufficient_closed_history"
     if metrics.realized_pnl <= 0:
@@ -151,6 +166,9 @@ class RiskPolicy:
                 return RiskDecision(False, 0.0, "insufficient_paper_position")
             return RiskDecision(True, round(amount, 2), "approved")
 
+        # Exposure limits are intentionally mark-to-market liquidation limits.
+        # They are not a statement about historical capital committed; cash and
+        # drawdown controls remain separate fail-closed constraints.
         position_room = max(
             portfolio.equity * self.maximum_position_fraction - portfolio.asset_exposure,
             0.0,
