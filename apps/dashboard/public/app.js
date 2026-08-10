@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const DEFAULT_PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 3 * 60 * 60;
 const money = (value) => new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -27,6 +28,20 @@ function relativeAge(value) {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
   return `${Math.floor(seconds / 86400)}d`;
+}
+
+function snapshotFreshness(snapshot) {
+  const contract = snapshot?.truth_contract || {};
+  const configured = Number(contract.max_public_snapshot_age_seconds);
+  const maxAgeSeconds = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_PUBLIC_SNAPSHOT_MAX_AGE_SECONDS;
+  const capturedAt = new Date(snapshot?.snapshot_at || "").getTime();
+  if (!Number.isFinite(capturedAt)) {
+    return { fresh: false, ageSeconds: null, maxAgeSeconds };
+  }
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - capturedAt) / 1000));
+  return { fresh: ageSeconds <= maxAgeSeconds, ageSeconds, maxAgeSeconds };
 }
 
 function statusClass(value) {
@@ -58,7 +73,7 @@ function renderWallets(wallets) {
           <small>${escapeHtml(wallet.wallet || "—")} · source n=${number(wallet.closed_count)}</small>
         </div>
         <div class="score-cluster">
-          <span><i>SCORE</i><b>${score(wallet.score ?? wallet.global_score)}</b></span>
+          <span title="Heuristic quality ranking; not a probability or expected-return estimate"><i>QUALITY*</i><b>${score(wallet.score ?? wallet.global_score)}</b></span>
           <span><i>WR</i><b>${wallet.win_rate == null ? "—" : pct(wallet.win_rate, 1)}</b></span>
         </div>
       </div>`).join("")
@@ -68,13 +83,13 @@ function renderWallets(wallets) {
     ? list.map((wallet) => `
       <tr>
         <td><strong>${escapeHtml(wallet.username || "Anonymous")}</strong><br><small class="mono">${escapeHtml(wallet.wallet || "—")}</small></td>
-        <td class="mono emphasis">${score(wallet.score ?? wallet.global_score)}</td>
+        <td class="mono emphasis" title="Heuristic quality ranking; not calibrated probability">${score(wallet.score ?? wallet.global_score)}</td>
         <td>${number(wallet.closed_count)}</td>
         <td>${wallet.win_rate == null ? "—" : pct(wallet.win_rate)}</td>
         <td>${wallet.profit_factor == null ? "—" : Number(wallet.profit_factor).toFixed(2)}</td>
         <td class="${Number(wallet.realized_pnl || 0) >= 0 ? "good" : "bad"}">${money(wallet.realized_pnl)}</td>
       </tr>`).join("")
-    : '<tr><td colspan="6" class="empty-cell">No wallet scores available.</td></tr>';
+    : '<tr><td colspan="6" class="empty-cell">No wallet quality evidence available.</td></tr>';
 }
 
 function resultText(order) {
@@ -201,7 +216,7 @@ function renderReferences(research) {
     : '<div class="empty">No preregistered hypotheses.</div>';
 }
 
-function renderTruth(v5) {
+function renderTruth(v5, freshness) {
   if (!v5) {
     setText("truthTitle", "LEGACY V2 only — not canonical performance");
     setText("truthState", "LEGACY");
@@ -213,10 +228,17 @@ function renderTruth(v5) {
     return;
   }
   const method = v5.methodology || {};
-  setText("truthTitle", "PAPER V5 is canonical");
-  setText("truthState", "PASS V5");
-  $("truthState").className = "badge good";
-  setText("truthCopy", "Midpoint fills are disabled. Orders consume arrival-book L2 as FAK, include per-market taker fees, allow partial/no-fill, and resolve WIN/LOSS only after terminal market evidence.");
+  if (!freshness.fresh) {
+    setText("truthTitle", "PAPER V5 verified snapshot is stale");
+    setText("truthState", "STALE V5");
+    $("truthState").className = "badge warn";
+    setText("truthCopy", `The last V5 snapshot passed its evidence contract, but it is older than the ${Math.floor(freshness.maxAgeSeconds / 3600)}h public freshness limit. Metrics below are historical until a new canonical R4.5 cycle succeeds.`);
+  } else {
+    setText("truthTitle", "PAPER V5 is canonical and fresh");
+    setText("truthState", "PASS V5");
+    $("truthState").className = "badge good";
+    setText("truthCopy", "Midpoint fills are disabled. Orders consume arrival-book L2 as FAK, include per-market taker fees, allow partial/no-fill, and resolve WIN/LOSS only after terminal market evidence.");
+  }
   setText("midpointFillValue", method.midpoint_fills === false ? "FALSE" : "INVALID");
   $("midpointFillValue").className = method.midpoint_fills === false ? "good" : "bad";
   setText("executionModelValue", method.execution_model || "V5");
@@ -225,6 +247,7 @@ function renderTruth(v5) {
 function renderSnapshot(snapshot) {
   const trial = snapshot.trial || {};
   const v5 = snapshot.paper_v5?.status === "PASS" ? snapshot.paper_v5 : null;
+  const freshness = snapshotFreshness(snapshot);
   const canonical = v5 || trial;
   const portfolio = canonical.portfolio || {};
   const totals = canonical.totals || {};
@@ -246,7 +269,7 @@ function renderSnapshot(snapshot) {
   const accuracy = v5?.totals?.accuracy;
 
   setText("equityValue", money(equity));
-  setText("equityReturn", `${equityReturn >= 0 ? "+" : ""}${pct(equityReturn)} from initial`);
+  setText("equityReturn", `${equityReturn >= 0 ? "+" : ""}${pct(equityReturn)} from initial${v5 && !freshness.fresh ? " · STALE" : ""}`);
   setText("realizedValue", money(portfolio.realized_pnl));
   setText("unrealizedValue", money(portfolio.unrealized_pnl));
   setText("drawdownValue", pct(portfolio.drawdown));
@@ -254,14 +277,14 @@ function renderSnapshot(snapshot) {
   setText("fillRateValue", `${pct(fillRate)} executable fill rate`);
   setText("settledValue", v5 ? `${number(wins)} / ${number(losses)}` : "— / —");
   setText("openPositionValue", v5
-    ? `${accuracy == null ? "Accuracy UNPROVEN" : `${pct(accuracy)} accuracy`} · ${number(totals.open_positions)} open`
+    ? `${accuracy == null ? "Accuracy UNPROVEN" : `${pct(accuracy)} resolved accuracy · not calibrated`} · ${number(totals.open_positions)} open`
     : "V2 midpoint cohort — noncanonical");
 
   setText("modeValue", canonical.safety?.trading_mode || "PAPER");
   setText("shaValue", String(source.github_sha || "—").slice(0, 8));
   setText("evidenceValue", source.evidence_generation || "—");
   setText("runValue", source.github_run_id || "—");
-  setText("ageValue", relativeAge(snapshot.snapshot_at));
+  setText("ageValue", `${relativeAge(snapshot.snapshot_at)}${v5 && !freshness.fresh ? " · STALE" : ""}`);
   setText("geoValue", String(system.geoblock || "UNKNOWN").toUpperCase());
   setStatus("accountingValue", accounting.state || "UNKNOWN");
   setStatus("healthAccounting", accounting.state || "UNKNOWN");
@@ -269,7 +292,7 @@ function renderSnapshot(snapshot) {
   setStatus("healthResearch", snapshot.research_v4?.edge_status || research.watchdog_state || "YELLOW");
   setText("footerVersion", v5 ? `${v5.methodology?.execution_model || "V5"} · ${manifest.risk_version || "RISK"}` : `${manifest.scoring_version || "—"} · LEGACY V2`);
 
-  renderTruth(v5);
+  renderTruth(v5, freshness);
   renderWallets(v5?.selected_wallets || trial.selected_wallets);
   renderOrders(v5?.recent_orders || trial.recent_orders);
   renderPositions(v5?.open_positions || trial.open_positions);
@@ -277,8 +300,16 @@ function renderSnapshot(snapshot) {
   renderReferences(research);
 
   const pill = $("snapshotStatus");
-  pill.className = v5 ? "status-pill good" : "status-pill warn";
-  pill.querySelector("span").textContent = v5 ? "V5 TRUTH ONLINE" : "LEGACY ONLY";
+  if (v5 && freshness.fresh) {
+    pill.className = "status-pill good";
+    pill.querySelector("span").textContent = "V5 VERIFIED · FRESH";
+  } else if (v5) {
+    pill.className = "status-pill warn";
+    pill.querySelector("span").textContent = "V5 VERIFIED · STALE";
+  } else {
+    pill.className = "status-pill warn";
+    pill.querySelector("span").textContent = "LEGACY ONLY";
+  }
 }
 
 function renderFailure(message) {
@@ -302,7 +333,7 @@ async function loadSnapshot() {
     renderSnapshot(snapshot);
   } catch (error) {
     console.error(error);
-    renderFailure("Waiting for the first successful Cloudflare PAPER snapshot.");
+    renderFailure("Waiting for a verified Cloudflare PAPER snapshot.");
   }
 }
 
