@@ -101,6 +101,11 @@ def _trade_identity(row: dict[str, Any]) -> tuple[str, str, str, str, str, int]:
     )
 
 
+def _trade_sample_hash(rows: list[dict[str, Any]]) -> str:
+    identities = sorted(_trade_identity(row) for row in rows)
+    return canonical_hash(identities)
+
+
 def compute_execution_mix(
     all_trades: list[dict[str, Any]],
     taker_trades: list[dict[str, Any]],
@@ -127,6 +132,8 @@ def compute_execution_mix(
             "truncated": False,
             "window_from": None,
             "window_to": None,
+            "all_sample_hash": canonical_hash([]),
+            "taker_sample_hash": canonical_hash([]),
         }
 
     all_min = min(_event_timestamp(row) for row in all_rows)
@@ -159,6 +166,8 @@ def compute_execution_mix(
     )
     total = len(all_window)
     taker = len(taker_window)
+    all_sample_hash = _trade_sample_hash(all_window)
+    taker_sample_hash = _trade_sample_hash(taker_window)
     if orphan_taker_fills or taker > total or total == 0:
         return {
             "proven": False,
@@ -173,6 +182,8 @@ def compute_execution_mix(
             "truncated": len(all_rows) >= row_limit or len(taker_rows) >= row_limit,
             "window_from": window_from,
             "window_to": window_to,
+            "all_sample_hash": all_sample_hash,
+            "taker_sample_hash": taker_sample_hash,
         }
 
     maker = total - taker
@@ -189,6 +200,8 @@ def compute_execution_mix(
         "truncated": len(all_rows) >= row_limit or len(taker_rows) >= row_limit,
         "window_from": window_from,
         "window_to": window_to,
+        "all_sample_hash": all_sample_hash,
+        "taker_sample_hash": taker_sample_hash,
     }
 
 
@@ -205,8 +218,12 @@ def fetch_public_execution_mix(
         f"{client.settings.data_api_base}/trades",
         {**base, "takerOnly": True},
     )
-    all_rows = all_data if isinstance(all_data, list) else []
-    taker_rows = taker_data if isinstance(taker_data, list) else []
+    if not isinstance(all_data, list):
+        raise ValueError("public_execution_mix_all_response_not_list")
+    if not isinstance(taker_data, list):
+        raise ValueError("public_execution_mix_taker_response_not_list")
+    all_rows = all_data
+    taker_rows = taker_data
     return compute_execution_mix(all_rows, taker_rows, row_limit=row_limit)
 
 
@@ -345,6 +362,8 @@ def compute_wallet_forensics(
         "maker_taker_window_to": mix.get("window_to"),
         "maker_taker_truncated": bool(mix.get("truncated", False)),
         "maker_taker_orphan_taker_fills": int(mix.get("orphan_taker_fills") or 0),
+        "maker_taker_all_sample_hash": mix.get("all_sample_hash"),
+        "maker_taker_taker_sample_hash": mix.get("taker_sample_hash"),
         "maker_taker_reason": (
             mix.get("reason")
             if mix
