@@ -23,6 +23,7 @@ R44_COHORT_ID = "PAPER_V5_R4_4_SOURCE_STRATEGY_TRUTH_2026_08_08"
 R44_EXECUTION_MODEL = (
     "L2_TAKER_FAK_ARRIVAL_BOOK_V6_PROSPECTIVE_DIRECTIONAL_SOURCE_GATING"
 )
+PUBLIC_SCHEMA_VERSION = 5
 CANONICAL_PUBLISHER_WORKFLOW = "publish-cloudflare-terminal-v5.yml"
 PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 10_800
 SCORE_SEMANTICS = {
@@ -109,6 +110,10 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     finally:
         r44._validate_v5_r44 = original
 
+    snapshot["schema_version"] = max(
+        int(snapshot.get("schema_version") or 0),
+        PUBLIC_SCHEMA_VERSION,
+    )
     snapshot["truth_contract"] = {
         "canonical_cohort_id": COHORT_ID,
         "canonical_execution_model": EXECUTION_MODEL,
