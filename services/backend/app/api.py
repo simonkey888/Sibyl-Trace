@@ -13,6 +13,7 @@ from app.domain import (
     QUALITY_SCORE_CALIBRATED_PROBABILITY,
     QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
     QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
 from app.models import (
@@ -39,11 +40,13 @@ def quality_score_contract() -> dict:
     return {
         "kind": QUALITY_SCORE_KIND,
         "global_formula": QUALITY_SCORE_GLOBAL_FORMULA,
+        "history_basis": QUALITY_SCORE_HISTORY_BASIS,
         "calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
         "expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
         "alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
         "win_rate_denominator": "wins_plus_losses",
-        "break_even_counts_toward_history": True,
+        "break_even_scoring_weight": 0,
+        "break_even_reported_in_closed_count": True,
         "edge": "execution copyability evidence, not outcome alpha",
     }
 
@@ -213,6 +216,7 @@ def serialize_wallet(row: Wallet, profile: WalletScoreProfile | None = None) -> 
         "username": row.username,
         "score": row.score,
         "score_kind": QUALITY_SCORE_KIND,
+        "score_history_basis": QUALITY_SCORE_HISTORY_BASIS,
         "score_calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
         "score_expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
         "score_alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
