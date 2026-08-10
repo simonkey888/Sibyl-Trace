@@ -4,6 +4,7 @@ from math import isfinite
 
 QUALITY_SCORE_KIND = "HEURISTIC_QUALITY_RANKING"
 QUALITY_SCORE_GLOBAL_FORMULA = "0.60*SHORT+0.40*LONG"
+QUALITY_SCORE_HISTORY_BASIS = "DECIDED_OUTCOMES"
 QUALITY_SCORE_CALIBRATED_PROBABILITY = False
 QUALITY_SCORE_EXPECTED_RETURN_CLAIM = False
 QUALITY_SCORE_ALPHA_CLAIM = False
@@ -27,8 +28,8 @@ class WalletMetrics:
 
     @property
     def win_rate(self) -> float:
-        # Break-even/zero-PnL closes still contribute to history depth but are not
-        # silently counted as losses in the directional win-rate denominator.
+        # Break-even/zero-PnL closes are reported as closed history but provide no
+        # directional correctness evidence and therefore do not enter this rate.
         return self.wins / self.decided_count if self.decided_count else 0.0
 
     @property
@@ -61,14 +62,17 @@ def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) ->
 
 def wallet_score(metrics: WalletMetrics) -> tuple[float, str | None]:
     """Return a bounded heuristic quality ranking, never a probability or ER claim."""
-    if metrics.closed_count < 20:
-        return 0.0, "insufficient_closed_history"
+    # A flat close can be useful operational history but does not establish a
+    # directional outcome. Requiring decided history prevents zero-PnL padding
+    # from authorizing or increasing a wallet's quality rank.
+    if metrics.decided_count < 20:
+        return 0.0, "insufficient_decided_history"
     if metrics.realized_pnl <= 0:
         return 0.0, "non_positive_realized_pnl"
     if metrics.concentration > 0.65:
         return 0.0, "pnl_too_concentrated"
 
-    history = min(metrics.closed_count / 100, 1.0)
+    history = min(metrics.decided_count / 100, 1.0)
     consistency = min(metrics.win_rate / 0.75, 1.0)
     profitability = min(metrics.profit_factor / 2.5, 1.0)
     diversification = 1.0 - metrics.concentration
