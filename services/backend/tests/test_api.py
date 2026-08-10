@@ -15,6 +15,13 @@ def test_dashboard_and_live_gate() -> None:
         payload = dashboard.json()
         assert payload["system"]["mode"] == "READ_ONLY"
         assert "GLOBAL=60% SHORT" in payload["system"]["score_contract"]
+        semantics = payload["system"]["score_semantics"]
+        assert semantics["kind"] == "HEURISTIC_QUALITY_RANKING"
+        assert semantics["global_formula"] == "0.60*SHORT+0.40*LONG"
+        assert semantics["calibrated_probability"] is False
+        assert semantics["expected_return_claim"] is False
+        assert semantics["alpha_claim"] is False
+        assert semantics["win_rate_denominator"] == "wins_plus_losses"
         assert payload["portfolio"]["initial_bankroll"] == 300
 
         readiness = client.get("/api/v1/live/readiness")
