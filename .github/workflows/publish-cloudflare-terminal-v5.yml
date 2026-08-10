@@ -4,6 +4,12 @@ on:
   workflow_run:
     workflows: ["GitHub PAPER V5 Truthful Execution"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Successful canonical PAPER V5 run ID to publish"
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -17,8 +23,10 @@ jobs:
   publish-v5:
     name: publish verified V5 truth plus research evidence
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -33,14 +41,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          run_id="${{ github.event.workflow_run.id }}"
-          sha="${{ github.event.workflow_run.head_sha }}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            run_id="${{ github.event.workflow_run.id }}"
+            sha="${{ github.event.workflow_run.head_sha }}"
+            branch="${{ github.event.workflow_run.head_branch }}"
+          else
+            run_id="${{ inputs.source_run_id }}"
+            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
+            branch=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_branch')
+          fi
           main_sha=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           [[ -n "$run_id" && "$sha" =~ ^[0-9a-f]{40}$ && "$main_sha" =~ ^[0-9a-f]{40}$ ]]
-          if [[ "$sha" != "$main_sha" ]]; then
-            echo "Refusing stale V5 publish: successful source $sha is no longer canonical main $main_sha" >&2
-            exit 1
-          fi
+          [[ "$branch" == "main" ]]
+          [[ "$sha" == "$main_sha" ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
