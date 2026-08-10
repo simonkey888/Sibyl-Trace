@@ -16,4 +16,4 @@ jobs:
           echo "RETIRED: this workflow cannot deploy sibyl-trace."
           echo "Canonical public publisher: publish-cloudflare-terminal-v5.yml"
           echo "Historical PAPER V2 + Research V3 evidence remains in GitHub artifacts only."
-          echo "No Cloudflare credentials are loaded and no wrangler deploy command exists here."
+          echo "No Cloudflare credentials or deployment command are present here."
