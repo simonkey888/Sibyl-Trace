@@ -53,3 +53,13 @@ def test_r45_publisher_rejects_stale_successful_source_sha() -> None:
     assert "Refusing stale V5 publish" in source
     assert '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' in source
     assert '"max_public_snapshot_age_seconds": 10800' in source
+
+
+def test_legacy_paper_v2_is_not_a_scheduled_or_writable_truth_source() -> None:
+    source = (WORKFLOWS / "github-paper-trial.yml").read_text(encoding="utf-8")
+    assert "schedule:" not in source
+    assert "push:" not in source
+    assert "issue_comment:" not in source
+    assert "contents: write" not in source
+    assert "PAPER V2 no longer runs on push, cron, or issue comments" in source
+    assert "Canonical scheduled PAPER workflow: github-paper-v5.yml" in source
