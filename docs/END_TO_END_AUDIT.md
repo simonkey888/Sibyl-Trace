@@ -32,7 +32,9 @@ The following statements are explicitly false contracts and must not appear in p
 - `EDGE == alpha`;
 - `quality score >= threshold == profitability proven`.
 
-Break-even/zero-PnL closed positions remain part of history depth but are excluded from directional win-rate denominator. Directional win rate is `wins / (wins + losses)` when decided outcomes exist.
+Quality history is based on **decided outcomes** (`realizedPnl > 0` or `< 0`), not raw closed-row count. A horizon requires at least 20 decided outcomes and its history component is `min(decided_outcomes / 100, 1)`. Break-even/zero-PnL closes remain visible in `closed_count` but have zero score-history weight and are excluded from directional win rate. Directional win rate is `wins / (wins + losses)`.
+
+This prevents flat-close padding from inflating either eligibility or the score-history component.
 
 ## Execution and accounting truth
 
@@ -68,7 +70,7 @@ The public Worker has exactly one authorized writer:
 .github/workflows/publish-cloudflare-terminal-v5.yml
 ```
 
-The following workflows are retired/read-only and must contain neither Cloudflare credentials nor `wrangler deploy`:
+The following workflows are retired/read-only and must contain neither Cloudflare credentials nor the deployment command:
 
 ```text
 .github/workflows/publish-cloudflare-terminal.yml
@@ -76,15 +78,18 @@ The following workflows are retired/read-only and must contain neither Cloudflar
 .github/workflows/deploy-cloudflare.yml
 ```
 
-The canonical V5 publisher must reject a successful source run when that run's SHA no longer equals current `main`.
+The legacy `github-paper-trial.yml` is also retired from push/schedule/comment execution; its existing V2 artifacts remain historical provenance only.
 
-Every R4.5 public snapshot carries `truth_contract` metadata with:
+The canonical V5 publisher must reject a successful source run when that run's SHA no longer equals current `main`, must fail if required Cloudflare credentials are absent, and must verify the deployed public snapshot after deployment.
+
+Every R4.5 public snapshot uses schema version 5 and carries `truth_contract` metadata with:
 
 - canonical cohort and execution model;
 - canonical publisher workflow;
 - `single_public_writer_required=true`;
 - maximum public snapshot age of 10,800 seconds;
-- quality-score semantics (`HEURISTIC_QUALITY_RANKING`);
+- quality-score kind `HEURISTIC_QUALITY_RANKING`;
+- quality history basis `DECIDED_OUTCOMES`;
 - calibrated probability / expected return / alpha flags all false;
 - `profitability_proven=false`;
 - `live_available=false`.
@@ -103,12 +108,13 @@ Exact candidate verification should include:
 - dashboard/gateway syntax and tests;
 - single-Cloudflare-writer contract test;
 - freshness/heuristic-score UI regression tests;
+- decided-outcome score-history padding tests;
 - secret/safety scans;
 - Compose/container validation when relevant;
 - canonical R4.5 workflow execution;
 - artifact/ledger/hash reconciliation;
 - private rolling-state advancement only after PASS;
-- exact Cloudflare publisher outcome.
+- exact Cloudflare publisher outcome and post-deploy source-SHA verification.
 
 If GitHub runner provisioning fails before step 1, classify the result as `RUNTIME_BLOCKED_EXTERNAL_RUNNER`. Do not call the code failed, do not call CI passed, and do not weaken safety/billing/cost constraints to force a green badge.
 
