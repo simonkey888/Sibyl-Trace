@@ -25,6 +25,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       GH_TOKEN: ${{ github.token }}
+      PUBLIC_TERMINAL_URL: https://sibyl-trace.simondalmasso44.workers.dev
 
     steps:
       - name: Resolve exact current-main V5 source
@@ -43,35 +44,29 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Check Cloudflare configuration
-        id: cf
+      - name: Require Cloudflare configuration
         shell: bash
         run: |
           set -euo pipefail
-          enabled=true
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
-            if [[ -z "${!name:-}" ]]; then enabled=false; fi
+            if [[ -z "${!name:-}" ]]; then
+              echo "Refusing false-success publish: required Cloudflare credential $name is unavailable." >&2
+              exit 1
+            fi
           done
-          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
-          if [[ "$enabled" != "true" ]]; then
-            echo "Cloudflare publish skipped: credentials are unavailable."
-          fi
 
       - name: Check out exact validated V5 source SHA
-        if: steps.cf.outputs.enabled == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 1
 
       - name: Set up Python
-        if: steps.cf.outputs.enabled == 'true'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Set up Node
-        if: steps.cf.outputs.enabled == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
@@ -79,7 +74,6 @@ jobs:
           cache-dependency-path: apps/gateway/package-lock.json
 
       - name: Download and verify exact V5 evidence
-        if: steps.cf.outputs.enabled == 'true'
         env:
           SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
         shell: bash
@@ -108,7 +102,6 @@ jobs:
           grep -q '"live_order_path_added": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
 
       - name: Resolve and verify latest Research V4 anchor
-        if: steps.cf.outputs.enabled == 'true'
         id: v4
         shell: bash
         run: |
@@ -126,7 +119,6 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
 
       - name: Build sanitized canonical V5 snapshot
-        if: steps.cf.outputs.enabled == 'true'
         env:
           PYTHONPATH: services/backend
         shell: bash
@@ -151,22 +143,51 @@ jobs:
           grep -q '"kind": "HEURISTIC_QUALITY_RANKING"' apps/dashboard/public/data/snapshot.json
           grep -q '"calibrated_probability": false' apps/dashboard/public/data/snapshot.json
           grep -q '"expected_return_claim": false' apps/dashboard/public/data/snapshot.json
+          grep -q '"alpha_claim": false' apps/dashboard/public/data/snapshot.json
           grep -q '"profitability_proven": false' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
 
       - name: Install pinned gateway dependencies
-        if: steps.cf.outputs.enabled == 'true'
         working-directory: apps/gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Deploy truthful public read-only terminal
-        if: steps.cf.outputs.enabled == 'true'
         working-directory: apps/gateway
         run: npx --no-install wrangler deploy
 
+      - name: Verify deployed public truth
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 4 --retry-delay 2 \
+            "$PUBLIC_TERMINAL_URL/data/snapshot.json?verify=$GITHUB_RUN_ID" \
+            -o /tmp/published-snapshot.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          snapshot = json.loads(Path('/tmp/published-snapshot.json').read_text(encoding='utf-8'))
+          source = snapshot.get('source') or {}
+          contract = snapshot.get('truth_contract') or {}
+          score = contract.get('quality_score') or {}
+          assert source.get('github_sha') == os.environ['SOURCE_SHA']
+          assert contract.get('canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'
+          assert contract.get('canonical_publisher_workflow') == 'publish-cloudflare-terminal-v5.yml'
+          assert contract.get('single_public_writer_required') is True
+          assert contract.get('max_public_snapshot_age_seconds') == 10800
+          assert score.get('kind') == 'HEURISTIC_QUALITY_RANKING'
+          assert score.get('calibrated_probability') is False
+          assert score.get('expected_return_claim') is False
+          assert score.get('alpha_claim') is False
+          assert contract.get('profitability_proven') is False
+          assert contract.get('live_available') is False
+          PY
+
       - name: Publish release summary
-        if: steps.cf.outputs.enabled == 'true'
         shell: bash
         run: |
           {
@@ -175,6 +196,7 @@ jobs:
             echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
             echo "- Single public writer: this workflow only"
+            echo "- Post-deploy public snapshot verification: PASS"
             echo "- Public freshness TTL: 10800 seconds"
             echo "- Quality score: heuristic ranking; not probability/expected return/alpha"
             echo "- Prospective wallet selection: enforced"
