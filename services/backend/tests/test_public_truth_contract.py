@@ -1,6 +1,7 @@
 from app.cloudflare_snapshot_r45 import (
     CANONICAL_PUBLISHER_WORKFLOW,
     COHORT_ID,
+    PUBLIC_SCHEMA_VERSION,
     PUBLIC_SNAPSHOT_MAX_AGE_SECONDS,
     SCORE_SEMANTICS,
 )
@@ -15,6 +16,7 @@ from app.domain import (
 
 def test_r45_public_truth_contract_is_single_writer_and_time_bounded() -> None:
     assert COHORT_ID == "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"
+    assert PUBLIC_SCHEMA_VERSION == 5
     assert CANONICAL_PUBLISHER_WORKFLOW == "publish-cloudflare-terminal-v5.yml"
     assert PUBLIC_SNAPSHOT_MAX_AGE_SECONDS == 10_800
 
