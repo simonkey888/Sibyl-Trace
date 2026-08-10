@@ -1,24 +1,126 @@
-# End-to-end audit manifest
+# End-to-end audit manifest — PAPER V5 R4.5
 
-Audit scope: GitHub workflows, public API contracts, wallet scoring, delayed PAPER ingestion, deterministic risk, execution evidence, settlement, portfolio accounting, dashboard security, Oracle release activation, Cloudflare gateway, and backup recovery.
+Audit scope: public-source scoring, prospective wallet selection, source-strategy classification, delayed PAPER ingestion, order-book execution simulation, fee/slippage math, position accounting, settlement, evidence provenance, public snapshot generation, Cloudflare publication authority, dashboard freshness, CI and safety boundaries.
 
-## Corrected invariants
+## Canonical invariants
 
+- Canonical cohort: `PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09`.
 - Default runtime mode is `READ_ONLY`.
 - PAPER requires both `TRADING_MODE=PAPER` and `PAPER_TRADING_ENABLED=true`.
-- LIVE remains structurally unavailable.
-- Stale or invalid signals are rejected before external price lookup.
-- Midpoints are cached per asset and cycle.
-- Signal identities preserve distinct fills while remaining compatible with legacy state.
-- Wallet evidence exposes SHORT, LONG, GLOBAL, and execution EDGE with sample sizes.
-- GLOBAL is the deterministic risk input; EDGE is copyability evidence, not outcome alpha.
-- Resolved PAPER positions settle idempotently from terminal public outcomes.
-- Scheduled state is verified before restore and preserved after a bounded timeout.
-- Private API and HTML responses are not cacheable.
-- Oracle releases and custom images are identified by the exact reviewed commit.
-- Backups are encrypted, HMAC-authenticated, and restored in one database transaction.
-- GitHub Actions and runtime base images are pinned to reviewed commits or digests.
+- LIVE remains structurally unavailable and `LIVE_TRADING_ENABLED=true` is rejected.
+- Authorized cost is exactly `USD 0`.
+- No private trading key, signer or live-order adapter is part of the canonical path.
+- Midpoint-based V2 output is historical provenance only.
+- Canonical V5 execution consumes arrival-book L2 as FAK and supports partial/no-fill evidence.
+- BUY consumes asks; SELL consumes bids.
+- Supported dynamic per-market fee metadata is required; unsupported schedules fail closed.
+- Exact market identity and market-delay metadata are evidence-bound.
+- Prospective source selection forbids pre-selection backfill.
+- Source-strategy provenance must predate selection and classify the source as directional.
+- R4.5 UTC regime labels are immutable research evidence and never automatic execution gates.
+- Accounting identities are independently reconciled.
+- Public performance may not be described as profitable or alpha-positive without sufficient attributable settled out-of-sample evidence.
+
+## Quality-score truth
+
+`SHORT`, `LONG` and `GLOBAL` are bounded heuristic quality rankings. `GLOBAL = 0.60 × SHORT + 0.40 × LONG`. `EDGE` is execution-copyability evidence.
+
+The following statements are explicitly false contracts and must not appear in product surfaces or reports:
+
+- `score == success probability`;
+- `score == expected return`;
+- `EDGE == alpha`;
+- `quality score >= threshold == profitability proven`.
+
+Break-even/zero-PnL closed positions remain part of history depth but are excluded from directional win-rate denominator. Directional win rate is `wins / (wins + losses)` when decided outcomes exist.
+
+## Execution and accounting truth
+
+PAPER execution is an evidence simulation, not a live fill claim. A canonical fill must survive:
+
+```text
+prospective source eligibility
+-> exact market identity
+-> supported market rules
+-> decision executable book
+-> source-relative price limit
+-> arrival executable book
+-> L2 FAK simulation
+-> supported fee schedule
+-> cash/position constraints
+-> persisted execution evidence
+```
+
+Portfolio accounting uses executable liquidation marks. The watchdog checks:
+
+```text
+cash + exposure == equity
+initial bankroll + realized PnL + unrealized PnL == equity
+```
+
+Exposure limits are intentionally mark-to-market limits. They must not be mislabeled as cumulative historical capital committed.
+
+## Publication truth
+
+The public Worker has exactly one authorized writer:
+
+```text
+.github/workflows/publish-cloudflare-terminal-v5.yml
+```
+
+The following workflows are retired/read-only and must contain neither Cloudflare credentials nor `wrangler deploy`:
+
+```text
+.github/workflows/publish-cloudflare-terminal.yml
+.github/workflows/publish-cloudflare-terminal-v4.yml
+.github/workflows/deploy-cloudflare.yml
+```
+
+The canonical V5 publisher must reject a successful source run when that run's SHA no longer equals current `main`.
+
+Every R4.5 public snapshot carries `truth_contract` metadata with:
+
+- canonical cohort and execution model;
+- canonical publisher workflow;
+- `single_public_writer_required=true`;
+- maximum public snapshot age of 10,800 seconds;
+- quality-score semantics (`HEURISTIC_QUALITY_RANKING`);
+- calibrated probability / expected return / alpha flags all false;
+- `profitability_proven=false`;
+- `live_available=false`.
+
+The dashboard computes freshness at read time. A V5 PASS snapshot older than the TTL is **verified historical evidence, not online/current state**.
 
 ## Verification gate
 
-This manifest is part of the exact candidate tree submitted to GitHub Actions. A green CI result must include dependency audits, lint, unit tests, JavaScript checks, gateway tests, Compose validation, custom image builds, and the digest-pinned tunnel image pull. It does not authorize deployment, merge, or LIVE execution.
+A green result is attributable only to the exact SHA that executed it. Previous successful CI is not inherited by later commits.
+
+Exact candidate verification should include:
+
+- dependency audits;
+- lint/static checks;
+- backend tests and coverage;
+- dashboard/gateway syntax and tests;
+- single-Cloudflare-writer contract test;
+- freshness/heuristic-score UI regression tests;
+- secret/safety scans;
+- Compose/container validation when relevant;
+- canonical R4.5 workflow execution;
+- artifact/ledger/hash reconciliation;
+- private rolling-state advancement only after PASS;
+- exact Cloudflare publisher outcome.
+
+If GitHub runner provisioning fails before step 1, classify the result as `RUNTIME_BLOCKED_EXTERNAL_RUNNER`. Do not call the code failed, do not call CI passed, and do not weaken safety/billing/cost constraints to force a green badge.
+
+## Acceptance language
+
+Allowed states:
+
+- `PASS_BY_CODE_REVIEW` — static implementation review only;
+- `PASS_EXACT_TESTED_SHA` — checks actually ran on that SHA;
+- `RUNTIME_BLOCKED_EXTERNAL_RUNNER` — runner never executed application steps;
+- `VERIFIED_STALE` — snapshot once passed evidence contract but exceeded freshness TTL;
+- `INSUFFICIENT_EVIDENCE` / `EXPLORATORY_ONLY` — research maturity labels;
+- `PROFITABILITY_UNPROVEN` — required until attributable settled OOS evidence proves otherwise.
+
+No aggregate numeric audit score may replace these evidence states.
