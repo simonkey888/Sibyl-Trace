@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from app import cloudflare_snapshot_r44 as r44
+from app.domain import (
+    QUALITY_SCORE_ALPHA_CLAIM,
+    QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_KIND,
+)
 
 COHORT_ID = "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"
 EXECUTION_MODEL = (
@@ -19,11 +26,11 @@ R44_EXECUTION_MODEL = (
 CANONICAL_PUBLISHER_WORKFLOW = "publish-cloudflare-terminal-v5.yml"
 PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 10_800
 SCORE_SEMANTICS = {
-    "kind": "HEURISTIC_QUALITY_RANKING",
-    "calibrated_probability": False,
-    "expected_return_claim": False,
-    "alpha_claim": False,
-    "global_formula": "0.60*SHORT+0.40*LONG",
+    "kind": QUALITY_SCORE_KIND,
+    "calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    "expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    "alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
+    "global_formula": QUALITY_SCORE_GLOBAL_FORMULA,
     "short_horizon": "most recent 50 closed positions",
     "long_horizon": "up to 200 closed positions",
     "edge_semantics": "execution copyability evidence, not outcome alpha",
@@ -102,8 +109,6 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     finally:
         r44._validate_v5_r44 = original
 
-    # Public truth is deliberately self-describing. A consumer must not infer
-    # calibration, alpha, freshness, or publisher authority from a numeric score.
     snapshot["truth_contract"] = {
         "canonical_cohort_id": COHORT_ID,
         "canonical_execution_model": EXECUTION_MODEL,
