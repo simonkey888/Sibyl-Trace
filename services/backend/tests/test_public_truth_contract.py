@@ -10,6 +10,7 @@ from app.domain import (
     QUALITY_SCORE_CALIBRATED_PROBABILITY,
     QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
     QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
 
@@ -24,6 +25,8 @@ def test_r45_public_truth_contract_is_single_writer_and_time_bounded() -> None:
 def test_public_score_semantics_match_domain_contract() -> None:
     assert SCORE_SEMANTICS["kind"] == QUALITY_SCORE_KIND
     assert SCORE_SEMANTICS["global_formula"] == QUALITY_SCORE_GLOBAL_FORMULA
+    assert SCORE_SEMANTICS["history_basis"] == QUALITY_SCORE_HISTORY_BASIS
+    assert SCORE_SEMANTICS["history_basis"] == "DECIDED_OUTCOMES"
     assert SCORE_SEMANTICS["calibrated_probability"] is QUALITY_SCORE_CALIBRATED_PROBABILITY
     assert SCORE_SEMANTICS["expected_return_claim"] is QUALITY_SCORE_EXPECTED_RETURN_CLAIM
     assert SCORE_SEMANTICS["alpha_claim"] is QUALITY_SCORE_ALPHA_CLAIM
