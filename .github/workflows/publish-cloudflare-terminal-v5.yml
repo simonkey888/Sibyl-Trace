@@ -4,7 +4,6 @@ on:
   workflow_run:
     workflows: ["GitHub PAPER V5 Truthful Execution"]
     types: [completed]
-  workflow_dispatch:
 
 permissions:
   actions: read
@@ -18,8 +17,8 @@ jobs:
   publish-v5:
     name: publish verified V5 truth plus research evidence
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -28,19 +27,19 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Resolve exact V5 source
+      - name: Resolve exact current-main V5 source
         id: source
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            run_id="${{ github.event.workflow_run.id }}"
-            sha="${{ github.event.workflow_run.head_sha }}"
-          else
-            run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/github-paper-v5.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
-            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
+          run_id="${{ github.event.workflow_run.id }}"
+          sha="${{ github.event.workflow_run.head_sha }}"
+          main_sha=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ -n "$run_id" && "$sha" =~ ^[0-9a-f]{40}$ && "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$sha" != "$main_sha" ]]; then
+            echo "Refusing stale V5 publish: successful source $sha is no longer canonical main $main_sha" >&2
+            exit 1
           fi
-          [[ -n "$run_id" && -n "$sha" ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
@@ -54,6 +53,9 @@ jobs:
             if [[ -z "${!name:-}" ]]; then enabled=false; fi
           done
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [[ "$enabled" != "true" ]]; then
+            echo "Cloudflare publish skipped: credentials are unavailable."
+          fi
 
       - name: Check out exact validated V5 source SHA
         if: steps.cf.outputs.enabled == 'true'
@@ -143,6 +145,13 @@ jobs:
           grep -q '"regime_context_in_ledger": true' apps/dashboard/public/data/snapshot.json
           grep -q '"regime_execution_gate": false' apps/dashboard/public/data/snapshot.json
           grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
+          grep -q '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' apps/dashboard/public/data/snapshot.json
+          grep -q '"single_public_writer_required": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"max_public_snapshot_age_seconds": 10800' apps/dashboard/public/data/snapshot.json
+          grep -q '"kind": "HEURISTIC_QUALITY_RANKING"' apps/dashboard/public/data/snapshot.json
+          grep -q '"calibrated_probability": false' apps/dashboard/public/data/snapshot.json
+          grep -q '"expected_return_claim": false' apps/dashboard/public/data/snapshot.json
+          grep -q '"profitability_proven": false' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
           ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
 
@@ -165,6 +174,9 @@ jobs:
             echo "- Canonical V5 run: ${{ steps.source.outputs.run_id }}"
             echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
+            echo "- Single public writer: this workflow only"
+            echo "- Public freshness TTL: 10800 seconds"
+            echo "- Quality score: heuristic ranking; not probability/expected return/alpha"
             echo "- Prospective wallet selection: enforced"
             echo "- Non-directional maker/full-set/two-sided sources: fail-closed"
             echo "- Regime labels: immutable UTC evidence only"
