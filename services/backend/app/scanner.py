@@ -170,7 +170,6 @@ def scan_wallets(
         profile.execution_edge_score = matrix.execution_edge_score
         profile.execution_edge_sample_size = matrix.execution_edge_sample_size
         profile.average_execution_edge = matrix.average_execution_edge
-        # These fields are the score-bearing samples, not raw closed-row counts.
         profile.short_sample_size = matrix.short_metrics.decided_count
         profile.long_sample_size = matrix.long_metrics.decided_count
         profile.updated_at = datetime.now(UTC)
@@ -325,10 +324,16 @@ def scan_wallets(
                     "cashflow_pnl_reconstructed", False
                 ),
             )
-            if strategy_payload["directional"]:
+            if (
+                strategy_payload["directional"]
+                and forensics_payload["copyable_directional"]
+            ):
                 eligible.append(wallet)
             else:
-                wallet.rejection_reason = strategy_payload["rejection_reason"]
+                wallet.rejection_reason = (
+                    forensics_payload.get("selection_veto_reason")
+                    or strategy_payload["rejection_reason"]
+                )
         set_state(
             db,
             SOURCE_STRATEGY_PROFILES_STATE,
