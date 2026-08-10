@@ -84,15 +84,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run github-paper-v5.yml --ref main -f reset_state=true
-      - name: Resolve and wait for dispatched PAPER V5
+      - name: Resolve and wait for current-main PAPER V5
         id: paper
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          for _ in {1..20}; do
-            run_id=$(gh run list --workflow github-paper-v5.yml --branch main --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          target_sha="$GITHUB_SHA"
+          for _ in {1..30}; do
+            run_id=$(gh run list --workflow github-paper-v5.yml --branch main --event workflow_dispatch --limit 20 --json databaseId,headSha,status --jq --arg sha "$target_sha" '.[] | select(.headSha == $sha) | .databaseId' | head -1)
             if [[ -n "$run_id" ]]; then
               echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
               gh run watch "$run_id" --interval 5 --exit-status
@@ -100,7 +101,7 @@ jobs:
             fi
             sleep 3
           done
-          echo "Unable to resolve dispatched PAPER V5 run ID" >&2
+          echo "Unable to resolve a PAPER V5 run for current main SHA $target_sha" >&2
           exit 1
       - name: Dispatch verified public V5 publisher
         env:
