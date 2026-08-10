@@ -2,7 +2,7 @@
 
 `WALLET_FORENSICS_V1` is a read-only evidence lane beside the existing R4.4
 source-strategy gate. It does **not** authorize PAPER execution, enable LIVE, or
-promote a source that R4.4 already rejected.
+change which source-strategy classifications are eligible.
 
 ## Purpose
 
@@ -14,14 +14,14 @@ remain unavailable from the evidence Sibyl actually has?
 The lanes are:
 
 - `DIRECTIONAL_COPY_RESEARCH` — may remain eligible under R4.4.
-- `STRUCTURAL_MAKER_RESEARCH` — research-only maker-style behavior.
+- `STRUCTURAL_MAKER_RESEARCH` — research-only maker-rebate behavior.
 - `STRUCTURAL_FULL_SET_RESEARCH` — research-only split/merge/conversion behavior.
 - `STRUCTURAL_TWO_SIDED_RESEARCH` — research-only paired-outcome behavior.
 - `INSUFFICIENT_EVIDENCE_RESEARCH` / `UNAVAILABLE_RESEARCH` — fail-closed.
 
-Forensics can only **narrow** eligibility. A nominally directional source is
-vetoed when a reconciled recent sample contains at least 20 fills and maker ratio
-is at least 80%. The veto can never make a rejected wallet copyable.
+Maker/taker mix is deliberately an **execution-style** observation, not a
+strategy-direction label. A directional trader can execute passively, so a high
+maker ratio alone never rewrites R4.4 directionality or selection.
 
 ## Public evidence used
 
@@ -41,8 +41,12 @@ V1 also measures a bounded recent maker/taker sample using the public Data API
 `takerOnly=true`. Taker rows must reconcile as a multiset subset of all-trade
 rows inside a comparable time window. If the taker page is row-limited, the
 comparison is restricted to the shared covered window. Any orphan taker row
-fails the metric closed. The ratio is labelled `RECENT_OVERLAP_SAMPLE`; it is not
-a lifetime maker/taker claim.
+fails the metric closed. Both reconciled samples receive deterministic hashes.
+The ratio is labelled `RECENT_OVERLAP_SAMPLE`; it is not a lifetime claim.
+
+When at least 20 reconciled fills are available, V1 labels execution style as
+`MAKER_HEAVY` (maker ratio >= 80%), `TAKER_HEAVY` (maker ratio <= 20%), or
+`MIXED`. This label is descriptive only and never changes `Wallet.selected`.
 
 ## Claims deliberately not made
 
@@ -78,6 +82,6 @@ They are exposed as nested `forensics` data on `/api/v1/wallets` and
 ## Safety invariants
 
 - `execution_gate=false` in every forensic profile.
-- Forensics may only narrow R4.4 eligibility through the structural-maker veto.
+- R4.4 remains the source-strategy selection gate; forensics does not promote or veto.
 - No private key, signing, order placement, deploy, or paid data source is added.
 - `COST_AUTHORIZED_USD=0` and structural LIVE absence are unchanged.
