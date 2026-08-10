@@ -12,6 +12,7 @@ from app.domain import (
     QUALITY_SCORE_CALIBRATED_PROBABILITY,
     QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
     QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
 
@@ -28,12 +29,13 @@ CANONICAL_PUBLISHER_WORKFLOW = "publish-cloudflare-terminal-v5.yml"
 PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 10_800
 SCORE_SEMANTICS = {
     "kind": QUALITY_SCORE_KIND,
+    "history_basis": QUALITY_SCORE_HISTORY_BASIS,
     "calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
     "expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
     "alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
     "global_formula": QUALITY_SCORE_GLOBAL_FORMULA,
-    "short_horizon": "most recent 50 closed positions",
-    "long_horizon": "up to 200 closed positions",
+    "short_horizon": "most recent 50 closed positions, scored on decided outcomes",
+    "long_horizon": "up to 200 closed positions, scored on decided outcomes",
     "edge_semantics": "execution copyability evidence, not outcome alpha",
 }
 _BASE_R44_VALIDATE = r44._validate_v5_r44
