@@ -8,6 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.domain import (
+    QUALITY_SCORE_ALPHA_CLAIM,
+    QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_KIND,
+)
 from app.models import (
     AIAnalysis,
     AuditEvent,
@@ -26,6 +33,19 @@ DatabaseDep = Annotated[Session, Depends(get_db)]
 GatewaySecretHeader = Annotated[str | None, Header()]
 AdminTokenHeader = Annotated[str | None, Header()]
 SelectedQuery = Annotated[bool | None, Query()]
+
+
+def quality_score_contract() -> dict:
+    return {
+        "kind": QUALITY_SCORE_KIND,
+        "global_formula": QUALITY_SCORE_GLOBAL_FORMULA,
+        "calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
+        "expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+        "alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
+        "win_rate_denominator": "wins_plus_losses",
+        "break_even_counts_toward_history": True,
+        "edge": "execution copyability evidence, not outcome alpha",
+    }
 
 
 def verify_gateway(
@@ -88,6 +108,7 @@ def dashboard(db: DatabaseDep, settings: SettingsDep) -> dict:
             "version": settings.app_version,
             "live_available": False,
             "score_contract": "GLOBAL=60% SHORT + 40% LONG; EDGE=execution copyability",
+            "score_semantics": quality_score_contract(),
         },
         "portfolio": portfolio,
         "wallets": [
@@ -191,6 +212,10 @@ def serialize_wallet(row: Wallet, profile: WalletScoreProfile | None = None) -> 
         "address": row.address,
         "username": row.username,
         "score": row.score,
+        "score_kind": QUALITY_SCORE_KIND,
+        "score_calibrated_probability": QUALITY_SCORE_CALIBRATED_PROBABILITY,
+        "score_expected_return_claim": QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+        "score_alpha_claim": QUALITY_SCORE_ALPHA_CLAIM,
         "short_score": profile.short_score if profile else None,
         "long_score": profile.long_score if profile else None,
         "global_score": profile.global_score if profile else row.score,
