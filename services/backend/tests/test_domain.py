@@ -1,4 +1,9 @@
 from app.domain import (
+    QUALITY_SCORE_ALPHA_CLAIM,
+    QUALITY_SCORE_CALIBRATED_PROBABILITY,
+    QUALITY_SCORE_EXPECTED_RETURN_CLAIM,
+    QUALITY_SCORE_GLOBAL_FORMULA,
+    QUALITY_SCORE_KIND,
     PortfolioState,
     RiskPolicy,
     RiskRequest,
@@ -15,6 +20,22 @@ def test_wallet_metrics_and_score_reward_repeatable_profit() -> None:
     assert metrics.win_rate == 0.75
     assert metrics.profit_factor == 5.0
     assert score >= 60
+
+
+def test_break_even_closes_do_not_silently_count_as_losses() -> None:
+    positions = [{"realizedPnl": value} for value in ([2.0] * 6 + [-1.0] * 4 + [0.0] * 10)]
+    metrics = compute_wallet_metrics(positions)
+    assert metrics.closed_count == 20
+    assert metrics.decided_count == 10
+    assert metrics.win_rate == 0.6
+
+
+def test_quality_score_contract_is_explicitly_non_calibrated() -> None:
+    assert QUALITY_SCORE_KIND == "HEURISTIC_QUALITY_RANKING"
+    assert QUALITY_SCORE_GLOBAL_FORMULA == "0.60*SHORT+0.40*LONG"
+    assert QUALITY_SCORE_CALIBRATED_PROBABILITY is False
+    assert QUALITY_SCORE_EXPECTED_RETURN_CLAIM is False
+    assert QUALITY_SCORE_ALPHA_CLAIM is False
 
 
 def test_wallet_score_rejects_concentrated_outlier() -> None:
