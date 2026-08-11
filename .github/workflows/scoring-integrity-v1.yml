@@ -5,12 +5,24 @@ on:
     branches: [main]
     paths:
       - "services/backend/app/domain.py"
+      - "services/backend/app/evidence_v1.py"
+      - "services/backend/app/scoring.py"
+      - "services/backend/app/polymarket.py"
+      - "services/backend/app/scanner.py"
       - "services/backend/tests/test_domain.py"
+      - "services/backend/tests/test_scoring.py"
+      - "services/backend/tests/test_evidence_v1.py"
       - ".github/workflows/scoring-integrity-v1.yml"
   pull_request:
     paths:
       - "services/backend/app/domain.py"
+      - "services/backend/app/evidence_v1.py"
+      - "services/backend/app/scoring.py"
+      - "services/backend/app/polymarket.py"
+      - "services/backend/app/scanner.py"
       - "services/backend/tests/test_domain.py"
+      - "services/backend/tests/test_scoring.py"
+      - "services/backend/tests/test_evidence_v1.py"
       - ".github/workflows/scoring-integrity-v1.yml"
   workflow_dispatch:
 
@@ -37,6 +49,6 @@ jobs:
         working-directory: services/backend
         run: pip install -e '.[dev]'
 
-      - name: Run scoring integrity tests
+      - name: Run scoring and evidence integrity tests
         working-directory: services/backend
-        run: pytest tests/test_domain.py -q
+        run: pytest tests/test_domain.py tests/test_scoring.py tests/test_evidence_v1.py -q
