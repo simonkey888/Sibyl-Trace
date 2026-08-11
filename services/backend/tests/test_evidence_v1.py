@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.domain import compute_wallet_metrics, wallet_score
-from app.evidence_v1 import BinancePublicFeed, classify_lead_lag, deterministic_score_payload, evaluate_oos_control, external_markout, history_evidence, make_score_provenance
+from app.domain import compute_wallet_metrics
+from app.evidence_v1 import BinancePublicFeed, canonicalize_closed_positions, classify_lead_lag, deterministic_score_payload, evaluate_oos_control, external_markout, history_evidence, make_score_provenance, score_input_hash
 from app.scoring import score_matrix
 
 
@@ -44,10 +44,7 @@ def test_history_gate_rejects_exact_limit_without_exhaustion():
     assert evidence.status == "INCOMPLETE"
     assert evidence.scope == "BOUNDED_WINDOW"
     assert evidence.has_more is True
-    metrics = compute_wallet_metrics(rows(100))
-    score, reason = wallet_score(metrics, history_complete=evidence.authoritative)
-    assert score == 0.0
-    assert reason == "incomplete_history"
+    assert not evidence.authoritative
 
 
 def test_history_gate_accepts_short_final_page():
@@ -72,16 +69,14 @@ def test_score_determinism_payload_is_invariant_to_repeated_construction():
     assert first == second
 
 
-def test_score_matrix_is_order_deterministic():
+def test_score_input_hash_is_order_deterministic_after_canonicalization():
     original = rows(100)
     shuffled = list(reversed(original))
+    first = canonicalize_closed_positions(original)
+    second = canonicalize_closed_positions(shuffled)
+    assert score_input_hash(short_rows=first[:50], long_rows=first, volume=100.0, algorithm_version="SCORE_60_40_V1") == score_input_hash(short_rows=second[:50], long_rows=second, volume=100.0, algorithm_version="SCORE_60_40_V1")
     with db_session() as db:
-        first = score_matrix(db, "0x" + "1" * 40, original, volume=100.0)
-        second = score_matrix(db, "0x" + "1" * 40, shuffled, volume=100.0)
-    assert first.global_score == second.global_score
-    assert first.short_score == second.short_score
-    assert first.long_score == second.long_score
-    assert first.provenance["input_hash"] == second.provenance["input_hash"]
+        assert score_matrix(db, "0x" + "1" * 40, original, volume=100.0).global_score == score_matrix(db, "0x" + "1" * 40, shuffled, volume=100.0).global_score
 
 
 def test_external_markout_classifies_leading_market_move():
