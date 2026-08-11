@@ -38,11 +38,13 @@ jobs:
         working-directory: services/backend
         run: |
           python - <<'PY'
+          import time
           import httpx
           from app.evidence_v1 import BinancePublicFeed
+          end_ms = int(time.time() * 1000)
           feed = BinancePublicFeed(httpx.Client(timeout=10))
-          rows = feed.klines("BTCUSDT", 0, 1_000)
+          rows = feed.klines("BTCUSDT", end_ms - 5_000, end_ms)
           assert isinstance(rows, list), type(rows)
-          assert rows, "public Binance feed returned no BTCUSDT rows"
+          assert rows, "public Binance market-data feed returned no recent BTCUSDT rows"
           print(f"BINANCE_PUBLIC_SMOKE=PASS rows={len(rows)}")
           PY
