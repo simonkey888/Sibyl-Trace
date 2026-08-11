@@ -32,8 +32,6 @@ class WalletMetrics:
 
     @property
     def win_rate(self) -> float:
-        # Break-even/zero-PnL closes are reported as closed history but provide no
-        # directional correctness evidence and therefore do not enter this rate.
         return self.wins / self.decided_count if self.decided_count else 0.0
 
     @property
@@ -44,12 +42,7 @@ class WalletMetrics:
 
 
 def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) -> WalletMetrics:
-    """Compute metrics only from a fully valid evidence sample.
-
-    Invalid financial rows are never dropped or coerced to zero. They invalidate
-    the sample so an incomplete/corrupt response cannot produce an authoritative
-    score. The invalid row indexes/reasons remain available for audit evidence.
-    """
+    """Compute metrics only from a fully valid evidence sample."""
     pnls: list[float] = []
     invalid_indexes: list[int] = []
     invalid_reasons: list[str] = []
@@ -103,13 +96,16 @@ def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) ->
     )
 
 
-def wallet_score(metrics: WalletMetrics) -> tuple[float, str | None]:
-    """Return a bounded heuristic quality ranking, never a probability or ER claim."""
+def wallet_score(
+    metrics: WalletMetrics,
+    *,
+    history_complete: bool = True,
+) -> tuple[float, str | None]:
+    """Return a bounded heuristic ranking and fail closed on incomplete evidence."""
     if not metrics.evidence_valid:
         return 0.0, "invalid_data"
-    # A flat close can be useful operational history but does not establish a
-    # directional outcome. Requiring decided history prevents zero-PnL padding
-    # from authorizing or increasing a wallet's quality rank.
+    if not history_complete:
+        return 0.0, "incomplete_history"
     if metrics.decided_count < 20:
         return 0.0, "insufficient_decided_history"
     if metrics.realized_pnl <= 0:
@@ -180,10 +176,7 @@ class RiskPolicy:
             return RiskDecision(False, 0.0, "unsupported_side")
         if request.wallet_score < self.minimum_wallet_score:
             return RiskDecision(False, 0.0, "wallet_score_below_threshold")
-        if (
-            request.signal_age_seconds < 0
-            or request.signal_age_seconds > self.maximum_signal_age_seconds
-        ):
+        if request.signal_age_seconds < 0 or request.signal_age_seconds > self.maximum_signal_age_seconds:
             return RiskDecision(False, 0.0, "stale_signal")
         if not 0 < request.source_price < 1:
             return RiskDecision(False, 0.0, "invalid_price")
@@ -199,36 +192,19 @@ class RiskPolicy:
         preflight = self.preflight(request, portfolio)
         if preflight is not None:
             return preflight
-
         observed_price = request.observed_price
         if observed_price is None or not 0 < observed_price < 1:
             return RiskDecision(False, 0.0, "invalid_price")
-        if (
-            abs(observed_price - request.source_price)
-            > self.maximum_absolute_slippage + 1e-9
-        ):
+        if abs(observed_price - request.source_price) > self.maximum_absolute_slippage + 1e-9:
             return RiskDecision(False, 0.0, "slippage_limit")
-
         if request.side.upper() == "SELL":
             amount = min(request.source_usdc * self.copy_fraction, portfolio.asset_exposure)
             if amount < self.minimum_order_usd:
                 return RiskDecision(False, 0.0, "insufficient_paper_position")
             return RiskDecision(True, round(amount, 2), "approved")
-
-        position_room = max(
-            portfolio.equity * self.maximum_position_fraction - portfolio.asset_exposure,
-            0.0,
-        )
-        total_room = max(
-            portfolio.equity * self.maximum_total_exposure_fraction - portfolio.total_exposure,
-            0.0,
-        )
-        amount = min(
-            request.source_usdc * self.copy_fraction,
-            position_room,
-            total_room,
-            portfolio.cash,
-        )
+        position_room = max(portfolio.equity * self.maximum_position_fraction - portfolio.asset_exposure, 0.0)
+        total_room = max(portfolio.equity * self.maximum_total_exposure_fraction - portfolio.total_exposure, 0.0)
+        amount = min(request.source_usdc * self.copy_fraction, position_room, total_room, portfolio.cash)
         if amount < self.minimum_order_usd:
             return RiskDecision(False, 0.0, "insufficient_risk_capacity")
         return RiskDecision(True, round(amount, 2), "approved")
