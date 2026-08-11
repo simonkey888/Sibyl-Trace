@@ -58,6 +58,65 @@ def test_quality_history_component_uses_decided_outcomes_not_flat_closes() -> No
     assert padded_score == base_score
 
 
+def test_evidence_integrity_rejects_missing_realized_pnl() -> None:
+    metrics = compute_wallet_metrics([{"realizedPnl": 1.0}, {}] + [{"realizedPnl": 1.0}] * 20)
+    score, rejection = wallet_score(metrics)
+    assert not metrics.evidence_valid
+    assert metrics.invalid_rows == 1
+    assert metrics.invalid_row_indexes == (1,)
+    assert metrics.invalid_reasons == ("missing_realizedPnl",)
+    assert metrics.closed_count == 22
+    assert metrics.decided_count == 21
+    assert score == 0
+    assert rejection == "invalid_data"
+
+
+def test_evidence_integrity_rejects_non_numeric_and_non_finite_values() -> None:
+    metrics = compute_wallet_metrics(
+        [
+            {"realizedPnl": 1.0},
+            {"realizedPnl": "not-a-number"},
+            {"realizedPnl": float("nan")},
+            {"realizedPnl": float("inf")},
+            {"realizedPnl": True},
+        ]
+    )
+    score, rejection = wallet_score(metrics)
+    assert not metrics.evidence_valid
+    assert metrics.invalid_rows == 4
+    assert metrics.invalid_row_indexes == (1, 2, 3, 4)
+    assert metrics.invalid_reasons == (
+        "realizedPnl_not_numeric",
+        "realizedPnl_non_finite",
+        "realizedPnl_non_finite",
+        "realizedPnl_boolean",
+    )
+    assert score == 0
+    assert rejection == "invalid_data"
+
+
+def test_evidence_integrity_rejects_malformed_rows_without_dropping_them() -> None:
+    metrics = compute_wallet_metrics([{"realizedPnl": 2.0}, None, "bad"] + [{"realizedPnl": -1.0}] * 20)
+    score, rejection = wallet_score(metrics)
+    assert not metrics.evidence_valid
+    assert metrics.invalid_rows == 2
+    assert metrics.invalid_row_indexes == (1, 2)
+    assert metrics.invalid_reasons == ("row_not_object", "row_not_object")
+    assert metrics.closed_count == 23
+    assert metrics.decided_count == 21
+    assert score == 0
+    assert rejection == "invalid_data"
+
+
+def test_valid_sample_preserves_previous_score_exactly() -> None:
+    positions = [{"realizedPnl": value} for value in ([8.0] * 30 + [-3.0] * 10)]
+    metrics = compute_wallet_metrics(positions)
+    assert metrics.evidence_valid
+    score, rejection = wallet_score(metrics)
+    assert rejection is None
+    assert score == 75.5
+
+
 def test_quality_score_contract_is_explicitly_non_calibrated() -> None:
     assert QUALITY_SCORE_KIND == "HEURISTIC_QUALITY_RANKING"
     assert QUALITY_SCORE_GLOBAL_FORMULA == "0.60*SHORT+0.40*LONG"
