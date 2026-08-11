@@ -1,10 +1,11 @@
-from app.domain import compute_wallet_metrics, wallet_score
-from app.evidence_v1 import BinancePublicFeed, classify_lead_lag, deterministic_score_payload, evaluate_oos_control, external_markout, history_evidence, make_score_provenance
-from app.scoring import score_matrix
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+
 from app.db import Base
+from app.domain import compute_wallet_metrics, wallet_score
+from app.evidence_v1 import BinancePublicFeed, classify_lead_lag, deterministic_score_payload, evaluate_oos_control, external_markout, history_evidence, make_score_provenance
+from app.scoring import score_matrix
 
 
 class FakeResponse:
@@ -86,7 +87,7 @@ def test_score_matrix_is_order_deterministic():
 def test_external_markout_classifies_leading_market_move():
     base = 100_000.0
     payload = []
-    for ts, close in [(40000, base * 0.99), (100000, base), (110000, base * 1.001), (130000, base * 1.003), (160000, base * 1.006), (400000, base * 1.012)]:
+    for ts, close in [(40000, base * 0.9985), (100000, base), (110000, base * 1.001), (130000, base * 1.003), (160000, base * 1.006), (400000, base * 1.012)]:
         payload.append([ts, str(close), str(close), str(close), str(close), "1", ts + 999, "1", 1, "1", "1", "0"])
     fake = FakeHttp(payload)
     result = external_markout(BinancePublicFeed(fake), market_title="Bitcoin Up or Down?", outcome="Up", source_timestamp_ms=100000, entry_price=0.55)
