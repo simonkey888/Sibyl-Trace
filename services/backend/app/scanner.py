@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import UTC, datetime
 
@@ -14,9 +15,11 @@ from app.domain import (
     QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
+from app.evidence_v1 import make_score_provenance
 from app.models import Wallet, WalletForensicsProfile, WalletScoreProfile, WalletSnapshot
 from app.polymarket import PolymarketClient
 from app.repository import audit, set_state
+from app.research_history_v1 import fetch_research_history
 from app.scoring import score_matrix
 from app.source_strategy import (
     UNAVAILABLE,
@@ -36,6 +39,7 @@ from app.wallet_forensics import (
 SOURCE_STRATEGY_PROFILES_STATE = "paper_v5_source_strategy_profiles"
 WALLET_FORENSICS_PROFILES_STATE = "paper_v5_wallet_forensics_profiles"
 SOURCE_STRATEGY_CUTOFF_STATE = "paper_v5_source_strategy_cutoff_at"
+SCORE_PROVENANCE_STATE = "paper_v5_score_provenance_v1"
 
 
 def now_iso() -> str:
@@ -126,9 +130,12 @@ def scan_wallets(
     db.execute(update(Wallet).values(selected=False))
     wallets: list[Wallet] = []
     closed_positions_by_wallet: dict[str, list[dict]] = {}
+    score_provenance: list[dict] = []
+    code_sha = os.getenv("GITHUB_SHA", "UNKNOWN")
+
     for address, candidate in candidates.items():
         try:
-            closed = client.closed_positions(address)
+            research_history = fetch_research_history(client, address, limit=1000)
         except Exception as exc:
             audit(
                 db,
@@ -139,6 +146,9 @@ def scan_wallets(
             )
             continue
 
+        raw_rows = research_history.rows
+        closed = [item for item in raw_rows if isinstance(item, dict)]
+        raw_invalid_rows = len(raw_rows) - len(closed)
         closed_positions_by_wallet[address] = closed
         matrix = score_matrix(
             db,
@@ -146,17 +156,39 @@ def scan_wallets(
             closed,
             volume=float(candidate["vol"]),
         )
+        history_rejection = None
+        if raw_invalid_rows:
+            history_rejection = "invalid_data"
+        elif not research_history.evidence.authoritative:
+            history_rejection = "incomplete_history"
+        effective_rejection = matrix.rejection_reason or history_rejection
+        effective_score = matrix.global_score if effective_rejection is None else 0.0
+        provenance = make_score_provenance(
+            code_sha=code_sha,
+            source_endpoint="/closed-positions",
+            history=research_history.evidence,
+            short_rows=closed[:50],
+            long_rows=closed,
+            decided_row_count=matrix.long_metrics.decided_count,
+            volume=float(candidate["vol"]),
+            score=effective_score,
+            rejection_reason=effective_rejection,
+        ).to_dict()
+        provenance["raw_row_count"] = len(raw_rows)
+        provenance["invalid_raw_rows"] = raw_invalid_rows
+        score_provenance.append({"wallet": address, **provenance})
+
         metrics = matrix.long_metrics
         wallet = db.get(Wallet, address) or Wallet(address=address)
         wallet.username = candidate["username"]
-        wallet.score = matrix.global_score
+        wallet.score = effective_score
         wallet.win_rate = metrics.win_rate
         wallet.profit_factor = metrics.profit_factor
         wallet.realized_pnl = metrics.realized_pnl
         wallet.volume = metrics.volume
-        wallet.closed_count = metrics.closed_count
+        wallet.closed_count = len(raw_rows)
         wallet.concentration = metrics.concentration
-        wallet.rejection_reason = matrix.rejection_reason
+        wallet.rejection_reason = effective_rejection
         wallet.selected = False
         wallet.updated_at = datetime.now(UTC)
         db.add(wallet)
@@ -164,13 +196,12 @@ def scan_wallets(
         profile = db.get(WalletScoreProfile, address) or WalletScoreProfile(
             wallet_address=address
         )
-        profile.short_score = matrix.short_score
-        profile.long_score = matrix.long_score
-        profile.global_score = matrix.global_score
+        profile.short_score = matrix.short_score if effective_rejection is None else 0.0
+        profile.long_score = matrix.long_score if effective_rejection is None else 0.0
+        profile.global_score = effective_score
         profile.execution_edge_score = matrix.execution_edge_score
         profile.execution_edge_sample_size = matrix.execution_edge_sample_size
         profile.average_execution_edge = matrix.average_execution_edge
-        # These fields are the score-bearing samples, not raw closed-row counts.
         profile.short_sample_size = matrix.short_metrics.decided_count
         profile.long_sample_size = matrix.long_metrics.decided_count
         profile.updated_at = datetime.now(UTC)
@@ -189,24 +220,35 @@ def scan_wallets(
             alpha_claim=QUALITY_SCORE_ALPHA_CLAIM,
             short_closed_count=matrix.short_metrics.closed_count,
             short_decided_count=matrix.short_metrics.decided_count,
-            short_score=matrix.short_score,
+            short_score=profile.short_score,
             long_closed_count=matrix.long_metrics.closed_count,
             long_decided_count=matrix.long_metrics.decided_count,
-            long_score=matrix.long_score,
-            global_score=matrix.global_score,
+            long_score=profile.long_score,
+            global_score=effective_score,
             win_rate_denominator="wins_plus_losses",
-            rejection_reason=matrix.rejection_reason,
+            rejection_reason=effective_rejection,
+            history_status=research_history.evidence.status,
+            history_scope=research_history.evidence.scope,
+            history_has_more=research_history.evidence.has_more,
+            history_source_hash=research_history.evidence.source_hash,
+            history_pages_fetched=research_history.evidence.pages_fetched,
+            history_requested_limit=research_history.evidence.requested_limit,
+            raw_row_count=len(raw_rows),
+            invalid_raw_rows=raw_invalid_rows,
+            score_input_hash=provenance["input_hash"],
+            score_algorithm_version=provenance["algorithm_version"],
+            score_code_sha=code_sha,
         )
 
         db.add(
             WalletSnapshot(
                 wallet_address=address,
-                score=matrix.global_score,
+                score=effective_score,
                 win_rate=metrics.win_rate,
                 profit_factor=metrics.profit_factor,
                 realized_pnl=metrics.realized_pnl,
                 concentration=metrics.concentration,
-                closed_count=metrics.closed_count,
+                closed_count=len(raw_rows),
             )
         )
         wallets.append(wallet)
@@ -350,6 +392,7 @@ def scan_wallets(
     else:
         eligible = ranked[: settings.tracked_wallet_limit]
 
+    set_state(db, SCORE_PROVENANCE_STATE, json.dumps(score_provenance, sort_keys=True))
     selection_effective_at = int(time.time()) + 1 if prospective else None
     for wallet in eligible:
         wallet.selected = True
