@@ -20,6 +20,10 @@ class WalletMetrics:
     gross_loss: float
     concentration: float
     volume: float
+    evidence_valid: bool = True
+    invalid_rows: int = 0
+    invalid_row_indexes: tuple[int, ...] = ()
+    invalid_reasons: tuple[str, ...] = ()
 
     @property
     def decided_count(self) -> int:
@@ -40,8 +44,43 @@ class WalletMetrics:
 
 
 def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) -> WalletMetrics:
-    pnls = [float(item.get("realizedPnl") or 0.0) for item in closed_positions]
-    pnls = [value for value in pnls if isfinite(value)]
+    """Compute metrics only from a fully valid evidence sample.
+
+    Invalid financial rows are never dropped or coerced to zero. They invalidate
+    the sample so an incomplete/corrupt response cannot produce an authoritative
+    score. The invalid row indexes/reasons remain available for audit evidence.
+    """
+    pnls: list[float] = []
+    invalid_indexes: list[int] = []
+    invalid_reasons: list[str] = []
+
+    for index, item in enumerate(closed_positions):
+        if not isinstance(item, dict):
+            invalid_indexes.append(index)
+            invalid_reasons.append("row_not_object")
+            continue
+        if "realizedPnl" not in item:
+            invalid_indexes.append(index)
+            invalid_reasons.append("missing_realizedPnl")
+            continue
+        raw_value = item["realizedPnl"]
+        if isinstance(raw_value, bool):
+            invalid_indexes.append(index)
+            invalid_reasons.append("realizedPnl_boolean")
+            continue
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            invalid_indexes.append(index)
+            invalid_reasons.append("realizedPnl_not_numeric")
+            continue
+        if not isfinite(value):
+            invalid_indexes.append(index)
+            invalid_reasons.append("realizedPnl_non_finite")
+            continue
+        pnls.append(value)
+
+    evidence_valid = not invalid_indexes
     wins = sum(value > 0 for value in pnls)
     losses = sum(value < 0 for value in pnls)
     gross_profit = sum(value for value in pnls if value > 0)
@@ -49,7 +88,7 @@ def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) ->
     positive = sorted((value for value in pnls if value > 0), reverse=True)
     concentration = sum(positive[:3]) / gross_profit if gross_profit > 0 else 1.0
     return WalletMetrics(
-        closed_count=len(pnls),
+        closed_count=len(closed_positions),
         wins=wins,
         losses=losses,
         realized_pnl=sum(pnls),
@@ -57,11 +96,17 @@ def compute_wallet_metrics(closed_positions: list[dict], volume: float = 0.0) ->
         gross_loss=gross_loss,
         concentration=min(max(concentration, 0.0), 1.0),
         volume=max(float(volume or 0.0), 0.0),
+        evidence_valid=evidence_valid,
+        invalid_rows=len(invalid_indexes),
+        invalid_row_indexes=tuple(invalid_indexes),
+        invalid_reasons=tuple(invalid_reasons),
     )
 
 
 def wallet_score(metrics: WalletMetrics) -> tuple[float, str | None]:
     """Return a bounded heuristic quality ranking, never a probability or ER claim."""
+    if not metrics.evidence_valid:
+        return 0.0, "invalid_data"
     # A flat close can be useful operational history but does not establish a
     # directional outcome. Requiring decided history prevents zero-PnL padding
     # from authorizing or increasing a wallet's quality rank.
@@ -170,9 +215,6 @@ class RiskPolicy:
                 return RiskDecision(False, 0.0, "insufficient_paper_position")
             return RiskDecision(True, round(amount, 2), "approved")
 
-        # Exposure limits are intentionally mark-to-market liquidation limits.
-        # They are not a statement about historical capital committed; cash and
-        # drawdown controls remain separate fail-closed constraints.
         position_room = max(
             portfolio.equity * self.maximum_position_fraction - portfolio.asset_exposure,
             0.0,
