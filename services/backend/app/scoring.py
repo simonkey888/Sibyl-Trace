@@ -5,6 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain import WalletMetrics, compute_wallet_metrics, wallet_score
+from app.evidence_v1 import (
+    HistoryEvidence,
+    canonicalize_closed_positions,
+    make_score_provenance,
+)
 from app.models import PaperOrder, Signal, Wallet, WalletScoreProfile
 
 
@@ -19,6 +24,7 @@ class ScoreMatrix:
     execution_edge_score: float
     execution_edge_sample_size: int
     average_execution_edge: float
+    provenance: dict
 
 
 def execution_edge(db: Session, wallet_address: str) -> tuple[float, int, float]:
@@ -40,7 +46,6 @@ def execution_edge(db: Session, wallet_address: str) -> tuple[float, int, float]
             values.append(float(observed_price) - float(source_price))
     if not values:
         return 50.0, 0, 0.0
-
     average = sum(values) / len(values)
     raw = min(max(50.0 + (average / 0.03) * 50.0, 0.0), 100.0)
     confidence = min(len(values) / 30.0, 1.0)
@@ -72,21 +77,46 @@ def score_matrix(
     closed_positions: list[dict],
     *,
     volume: float,
+    history_evidence: HistoryEvidence | None = None,
+    code_sha: str = "UNKNOWN",
 ) -> ScoreMatrix:
-    short_positions = closed_positions[:50]
+    canonical_rows = canonicalize_closed_positions(closed_positions)
+    short_positions = canonical_rows[:50]
+    history = history_evidence or HistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_HISTORY",
+        requested_limit=len(canonical_rows),
+        returned_rows=len(canonical_rows),
+        pages_fetched=1,
+        page_size=max(len(canonical_rows), 1),
+        exhausted=True,
+        has_more=False,
+        source_order="TIMESTAMP_DESC",
+        source_hash="LOCAL_UNHASHED",
+    )
     short_metrics = compute_wallet_metrics(short_positions, volume=volume)
-    long_metrics = compute_wallet_metrics(closed_positions, volume=volume)
+    long_metrics = compute_wallet_metrics(canonical_rows, volume=volume)
     short_score, short_rejection = wallet_score(short_metrics)
-    long_score, long_rejection = wallet_score(long_metrics)
-
-    rejection = long_rejection or short_rejection
-    global_score = (
-        round(0.60 * short_score + 0.40 * long_score, 2)
-        if rejection is None
-        else 0.0
+    long_score, long_rejection = wallet_score(
+        long_metrics,
+        history_complete=history.authoritative,
     )
 
+    rejection = long_rejection or short_rejection
+    global_score = round(0.60 * short_score + 0.40 * long_score, 2) if rejection is None else 0.0
+
     edge_score, edge_sample_size, average_edge = execution_edge(db, wallet_address)
+    provenance = make_score_provenance(
+        code_sha=code_sha,
+        source_endpoint="/closed-positions",
+        history=history,
+        short_rows=short_positions,
+        long_rows=canonical_rows,
+        decided_row_count=long_metrics.decided_count,
+        volume=volume,
+        score=global_score,
+        rejection_reason=rejection,
+    ).to_dict()
     return ScoreMatrix(
         short_metrics=short_metrics,
         long_metrics=long_metrics,
@@ -97,4 +127,5 @@ def score_matrix(
         execution_edge_score=edge_score,
         execution_edge_sample_size=edge_sample_size,
         average_execution_edge=average_edge,
+        provenance=provenance,
     )
