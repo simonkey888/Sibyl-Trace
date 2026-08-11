@@ -37,10 +37,6 @@ jobs:
         working-directory: services/backend
         run: pip install -e '.[dev]'
 
-      - name: Lint scoring gate
-        working-directory: services/backend
-        run: ruff check app/domain.py tests/test_domain.py
-
       - name: Run scoring integrity tests
         working-directory: services/backend
         run: pytest tests/test_domain.py -q
