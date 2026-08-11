@@ -4,11 +4,10 @@ on:
   pull_request:
     paths:
       - "services/backend/app/evidence_v1.py"
-      - "services/backend/app/polymarket.py"
-      - "services/backend/app/scoring.py"
-      - "services/backend/app/domain.py"
+      - "services/backend/app/research_history_v1.py"
       - "services/backend/app/scanner.py"
       - "services/backend/tests/test_evidence_v1.py"
+      - "services/backend/tests/test_scanner_quality_evidence.py"
       - ".github/workflows/research-evidence-v1.yml"
   workflow_dispatch:
 
@@ -33,7 +32,7 @@ jobs:
         run: pip install -e '.[dev]'
       - name: Run deterministic evidence suite
         working-directory: services/backend
-        run: pytest tests/test_evidence_v1.py tests/test_scoring.py tests/test_domain.py -q
+        run: pytest tests/test_evidence_v1.py tests/test_domain.py tests/test_scanner_quality_evidence.py -q
       - name: Real public external-feed smoke
         working-directory: services/backend
         run: |
