@@ -15,46 +15,29 @@ WALLET = "0x" + "1" * 40
 
 class Client:
     def leaderboard(self, _period: str, _limit: int) -> list[dict]:
-        return [
-            {
-                "proxyWallet": WALLET,
-                "pnl": 100,
-                "vol": 10_000,
-                "userName": "evidence-wallet",
-            }
-        ]
+        return [{"proxyWallet": WALLET, "pnl": 100, "vol": 10_000, "userName": "evidence-wallet"}]
 
-    def closed_positions(self, address: str) -> list[dict]:
+    def closed_positions(self, address: str, limit: int = 200) -> list[dict]:
         assert address == WALLET
-        decided = [{"realizedPnl": 2.0} for _ in range(15)] + [
-            {"realizedPnl": -1.0} for _ in range(5)
-        ]
+        decided = [{"realizedPnl": 2.0} for _ in range(15)] + [{"realizedPnl": -1.0} for _ in range(5)]
         flats = [{"realizedPnl": 0.0} for _ in range(30)]
         return decided + flats
 
 
 def session() -> Session:
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     return Session(engine)
 
 
 def test_scanner_persists_score_bearing_decided_samples_and_audit_evidence() -> None:
     with session() as db:
-        selected = scan_wallets(
-            db,
-            Client(),
-            Settings(candidate_limit=3, tracked_wallet_limit=1),
-        )
-        assert [row.address for row in selected] == [WALLET]
-
+        selected = scan_wallets(db, Client(), Settings(candidate_limit=3, tracked_wallet_limit=1))
         wallet = db.get(Wallet, WALLET)
-        profile = db.get(WalletScoreProfile, WALLET)
         assert wallet is not None
+        assert wallet.rejection_reason is None, wallet.rejection_reason
+        assert [row.address for row in selected] == [WALLET]
+        profile = db.get(WalletScoreProfile, WALLET)
         assert profile is not None
         assert wallet.closed_count == 50
         assert wallet.win_rate == 0.75
@@ -62,12 +45,7 @@ def test_scanner_persists_score_bearing_decided_samples_and_audit_evidence() -> 
         assert profile.long_sample_size == 20
         assert profile.global_score > 0
 
-        event = db.scalar(
-            select(AuditEvent)
-            .where(AuditEvent.event_type == "wallet_quality_scored")
-            .order_by(AuditEvent.id.desc())
-            .limit(1)
-        )
+        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "wallet_quality_scored").order_by(AuditEvent.id.desc()).limit(1))
         assert event is not None
         payload = json.loads(event.payload_json)
         assert payload["score_kind"] == "HEURISTIC_QUALITY_RANKING"
@@ -81,3 +59,5 @@ def test_scanner_persists_score_bearing_decided_samples_and_audit_evidence() -> 
         assert payload["long_decided_count"] == 20
         assert payload["global_score"] == profile.global_score
         assert payload["win_rate_denominator"] == "wins_plus_losses"
+        assert payload["history_status"] == "COMPLETE"
+        assert payload["history_scope"] == "LEGACY_TEST_DOUBLE"
