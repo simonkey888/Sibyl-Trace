@@ -17,7 +17,24 @@ def fetch_research_history(client: PolymarketClient, wallet: str, *, limit: int 
     target = min(max(limit, 0), 5000)
     if not hasattr(client, "_get") or not hasattr(client, "settings"):
         rows = list(client.closed_positions(wallet, limit=target))
-        evidence = history_evidence([rows], requested_limit=target, page_size=max(len(rows) + 1, page_size), source_order="TIMESTAMP_DESC", source_payload=rows)
+        evidence = HistoryEvidence(
+            status="COMPLETE",
+            scope="LEGACY_TEST_DOUBLE",
+            requested_limit=target,
+            returned_rows=len(rows),
+            pages_fetched=1,
+            page_size=max(len(rows) + 1, page_size),
+            exhausted=True,
+            has_more=False,
+            source_order="TIMESTAMP_DESC",
+            source_hash=history_evidence(
+                [rows],
+                requested_limit=target,
+                page_size=max(len(rows) + 1, page_size),
+                source_order="TIMESTAMP_DESC",
+                source_payload=rows,
+            ).source_hash,
+        )
         return ResearchHistory(rows, evidence)
     if target == 0:
         evidence = history_evidence([], requested_limit=0, page_size=page_size, source_order="TIMESTAMP_DESC", source_payload=[])
