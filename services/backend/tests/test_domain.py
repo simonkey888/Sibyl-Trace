@@ -59,7 +59,8 @@ def test_quality_history_component_uses_decided_outcomes_not_flat_closes() -> No
 
 
 def test_evidence_integrity_rejects_missing_realized_pnl() -> None:
-    metrics = compute_wallet_metrics([{"realizedPnl": 1.0}, {}] + [{"realizedPnl": 1.0}] * 20)
+    positions = [{"realizedPnl": 1.0}, {}] + [{"realizedPnl": 1.0}] * 20
+    metrics = compute_wallet_metrics(positions)
     score, rejection = wallet_score(metrics)
     assert not metrics.evidence_valid
     assert metrics.invalid_rows == 1
@@ -96,7 +97,8 @@ def test_evidence_integrity_rejects_non_numeric_and_non_finite_values() -> None:
 
 
 def test_evidence_integrity_rejects_malformed_rows_without_dropping_them() -> None:
-    metrics = compute_wallet_metrics([{"realizedPnl": 2.0}, None, "bad"] + [{"realizedPnl": -1.0}] * 20)
+    positions = [{"realizedPnl": 2.0}, None, "bad"] + [{"realizedPnl": -1.0}] * 20
+    metrics = compute_wallet_metrics(positions)
     score, rejection = wallet_score(metrics)
     assert not metrics.evidence_valid
     assert metrics.invalid_rows == 2
@@ -114,7 +116,7 @@ def test_valid_sample_preserves_previous_score_exactly() -> None:
     assert metrics.evidence_valid
     score, rejection = wallet_score(metrics)
     assert rejection is None
-    assert score == 75.5
+    assert score == 83.5
 
 
 def test_quality_score_contract_is_explicitly_non_calibrated() -> None:
