@@ -1,21 +1,13 @@
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 
 from app.config import Settings
-from app.evidence_v1 import HistoryEvidence, history_evidence
 
 
 class PolymarketError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class ClosedPositionsEvidence:
-    rows: list[Any]
-    history: HistoryEvidence
 
 
 TAKER_FEE_RATES = {
@@ -68,55 +60,60 @@ class PolymarketClient:
         )
         return data if isinstance(data, list) else []
 
-    def leaderboard_username(self, username: str, *, category: str = "OVERALL", period: str = "ALL") -> dict | None:
+    def leaderboard_username(
+        self,
+        username: str,
+        *,
+        category: str = "OVERALL",
+        period: str = "ALL",
+    ) -> dict | None:
         data = self._get(
             f"{self.settings.data_api_base}/v1/leaderboard",
-            {"category": category, "timePeriod": period, "orderBy": "PNL", "limit": 50, "offset": 0, "userName": username},
+            {
+                "category": category,
+                "timePeriod": period,
+                "orderBy": "PNL",
+                "limit": 50,
+                "offset": 0,
+                "userName": username,
+            },
         )
         rows = data if isinstance(data, list) else []
         wanted = username.casefold()
-        return next((row for row in rows if isinstance(row, dict) and str(row.get("userName") or "").casefold() == wanted), None)
+        return next(
+            (
+                row
+                for row in rows
+                if isinstance(row, dict)
+                and str(row.get("userName") or "").casefold() == wanted
+            ),
+            None,
+        )
 
-    def closed_positions_with_evidence(self, wallet: str, limit: int = 1000) -> ClosedPositionsEvidence:
+    def _closed_positions(self, wallet: str, limit: int) -> list[dict]:
+        results: list[dict] = []
         target = min(max(limit, 0), 5000)
-        if target == 0:
-            return ClosedPositionsEvidence([], history_evidence([], requested_limit=0, page_size=50))
-        results: list[Any] = []
-        pages: list[list[Any]] = []
-        page_size = 50
-        transport_complete = True
-        for offset in range(0, target, page_size):
-            page_limit = min(page_size, target - offset)
-            try:
-                data = self._get(
-                    f"{self.settings.data_api_base}/closed-positions",
-                    {"user": wallet, "limit": page_limit, "offset": offset, "sortBy": "TIMESTAMP", "sortDirection": "DESC"},
-                )
-            except Exception:
-                transport_complete = False
-                break
-            if not isinstance(data, list):
-                transport_complete = False
-                break
-            page = list(data)
-            pages.append(page)
+        for offset in range(0, target, 50):
+            page_limit = min(50, target - offset)
+            data = self._get(
+                f"{self.settings.data_api_base}/closed-positions",
+                {
+                    "user": wallet,
+                    "limit": page_limit,
+                    "offset": offset,
+                    "sortBy": "TIMESTAMP",
+                    "sortDirection": "DESC",
+                },
+            )
+            page = (
+                [item for item in data if isinstance(item, dict)]
+                if isinstance(data, list)
+                else []
+            )
             results.extend(page)
             if len(page) < page_limit:
                 break
-        typed_pages = [page for page in pages if all(isinstance(item, dict) for item in page)]
-        history = history_evidence(
-            typed_pages,
-            requested_limit=target,
-            page_size=page_size,
-            source_order="TIMESTAMP_DESC",
-            source_payload=pages,
-            transport_complete=transport_complete and len(typed_pages) == len(pages),
-        )
-        return ClosedPositionsEvidence(results, history)
-
-    def _closed_positions(self, wallet: str, limit: int) -> list[dict]:
-        evidence = self.closed_positions_with_evidence(wallet, limit=limit)
-        return [item for item in evidence.rows if isinstance(item, dict)]
+        return results
 
     def closed_positions(self, wallet: str, limit: int = 200) -> list[dict]:
         return self._closed_positions(wallet, min(limit, 200))
@@ -128,6 +125,7 @@ class PolymarketClient:
         target = min(max(limit, 0), 5000)
         if target == 0:
             return []
+
         results: list[dict] = []
         seen: set[tuple[str, str, str, int, str, str]] = set()
         page_size = min(500, target)
@@ -135,13 +133,26 @@ class PolymarketClient:
             current_limit = min(page_size, target - offset)
             data = self._get(
                 f"{self.settings.data_api_base}/activity",
-                {"user": wallet, "start": max(start, 0), "limit": current_limit, "offset": offset, "type": "TRADE", "sortBy": "TIMESTAMP", "sortDirection": "ASC"},
+                {
+                    "user": wallet,
+                    "start": max(start, 0),
+                    "limit": current_limit,
+                    "offset": offset,
+                    "type": "TRADE",
+                    "sortBy": "TIMESTAMP",
+                    "sortDirection": "ASC",
+                },
             )
             page = data if isinstance(data, list) else []
             for item in page:
-                if not isinstance(item, dict):
-                    continue
-                key = (str(item.get("transactionHash") or ""), str(item.get("asset") or ""), str(item.get("side") or ""), int(item.get("timestamp") or 0), str(item.get("price") or ""), str(item.get("size") or ""))
+                key = (
+                    str(item.get("transactionHash") or ""),
+                    str(item.get("asset") or ""),
+                    str(item.get("side") or ""),
+                    int(item.get("timestamp") or 0),
+                    str(item.get("price") or ""),
+                    str(item.get("size") or ""),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
@@ -151,14 +162,24 @@ class PolymarketClient:
         return results
 
     def recent_trades(self, limit: int = 20) -> list[dict]:
-        data = self._get(f"{self.settings.data_api_base}/trades", {"limit": min(max(limit, 1), 100), "offset": 0})
+        data = self._get(
+            f"{self.settings.data_api_base}/trades",
+            {"limit": min(max(limit, 1), 100), "offset": 0},
+        )
         return data if isinstance(data, list) else []
 
     def closed_markets(self, condition_ids: list[str]) -> list[dict]:
         unique = list(dict.fromkeys(value for value in condition_ids if value))[:100]
         if not unique:
             return []
-        data = self._get(f"{self.settings.gamma_api_base}/markets", {"condition_ids": unique, "closed": "true", "limit": len(unique)})
+        data = self._get(
+            f"{self.settings.gamma_api_base}/markets",
+            {
+                "condition_ids": unique,
+                "closed": "true",
+                "limit": len(unique),
+            },
+        )
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
         if isinstance(data, dict):
@@ -169,14 +190,27 @@ class PolymarketClient:
 
     def active_btc_short_markets(self, *, horizon_minutes: int = 20) -> list[dict]:
         now = datetime.now(UTC)
-        data = self._get(f"{self.settings.gamma_api_base}/markets", {"limit": 500, "offset": 0, "order": "endDate", "ascending": True, "closed": False, "end_date_min": now.isoformat(), "end_date_max": (now + timedelta(minutes=horizon_minutes)).isoformat()})
+        data = self._get(
+            f"{self.settings.gamma_api_base}/markets",
+            {
+                "limit": 500,
+                "offset": 0,
+                "order": "endDate",
+                "ascending": True,
+                "closed": False,
+                "end_date_min": now.isoformat(),
+                "end_date_max": (now + timedelta(minutes=horizon_minutes)).isoformat(),
+            },
+        )
         rows = [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
         matches: list[dict] = []
         for market in rows:
             text = f"{market.get('question') or ''} {market.get('slug') or ''}".casefold()
             if not (("btc" in text or "bitcoin" in text) and "up" in text and "down" in text):
                 continue
-            if market.get("active") is False or market.get("closed") is True or market.get("acceptingOrders") is False:
+            if market.get("active") is False or market.get("closed") is True:
+                continue
+            if market.get("acceptingOrders") is False:
                 continue
             matches.append(market)
         return matches
@@ -215,7 +249,9 @@ class PolymarketClient:
         data = self._get(f"{self.settings.clob_api_base}/midpoint", {"token_id": asset_id})
         value = None
         if isinstance(data, dict):
-            value = data.get("mid_price") or data.get("mid")
+            value = data.get("mid_price")
+            if value is None:
+                value = data.get("mid")
         if value is None:
             raise PolymarketError("midpoint response did not contain a price")
         midpoint = float(value)
