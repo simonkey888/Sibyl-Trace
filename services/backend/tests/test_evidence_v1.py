@@ -1,5 +1,10 @@
 from app.domain import compute_wallet_metrics, wallet_score
 from app.evidence_v1 import BinancePublicFeed, classify_lead_lag, deterministic_score_payload, evaluate_oos_control, external_markout, history_evidence, make_score_provenance
+from app.scoring import score_matrix
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+from app.db import Base
 
 
 class FakeResponse:
@@ -25,6 +30,12 @@ class FakeHttp:
 
 def rows(n=100):
     return [{"realizedPnl": 2.0, "timestamp": n - index, "transactionHash": f"tx-{index}"} for index in range(n)]
+
+
+def db_session() -> Session:
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    return Session(engine)
 
 
 def test_history_gate_rejects_exact_limit_without_exhaustion():
@@ -60,6 +71,18 @@ def test_score_determinism_payload_is_invariant_to_repeated_construction():
     assert first == second
 
 
+def test_score_matrix_is_order_deterministic():
+    original = rows(100)
+    shuffled = list(reversed(original))
+    with db_session() as db:
+        first = score_matrix(db, "0x" + "1" * 40, original, volume=100.0)
+        second = score_matrix(db, "0x" + "1" * 40, shuffled, volume=100.0)
+    assert first.global_score == second.global_score
+    assert first.short_score == second.short_score
+    assert first.long_score == second.long_score
+    assert first.provenance["input_hash"] == second.provenance["input_hash"]
+
+
 def test_external_markout_classifies_leading_market_move():
     base = 100_000.0
     payload = []
@@ -90,12 +113,7 @@ def test_external_lead_lag_thresholds_are_explicit():
 
 
 def test_oos_control_group_is_strictly_time_split():
-    observations = [
-        {"wallet": "treatment", "timestamp": 10, "realized_pnl": 1.0},
-        {"wallet": "control", "timestamp": 10, "realized_pnl": 2.0},
-        {"wallet": "treatment", "timestamp": 20, "realized_pnl": 5.0},
-        {"wallet": "control", "timestamp": 20, "realized_pnl": 1.0},
-    ]
+    observations = [{"wallet": "treatment", "timestamp": 10, "realized_pnl": 1.0}, {"wallet": "control", "timestamp": 10, "realized_pnl": 2.0}, {"wallet": "treatment", "timestamp": 20, "realized_pnl": 5.0}, {"wallet": "control", "timestamp": 20, "realized_pnl": 1.0}]
     result = evaluate_oos_control(observations, cutoff_timestamp=20, treatment_wallets={"treatment"})
     assert result.in_sample_count == 2
     assert result.out_of_sample_count == 2
