@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.domain import WalletMetrics, compute_wallet_metrics, wallet_score
+from app.evidence_v1 import canonical_score_windows
 from app.models import PaperOrder, Signal, Wallet, WalletScoreProfile
 
 
@@ -73,9 +74,9 @@ def score_matrix(
     *,
     volume: float,
 ) -> ScoreMatrix:
-    short_positions = closed_positions[:50]
+    short_positions, long_positions = canonical_score_windows(closed_positions)
     short_metrics = compute_wallet_metrics(short_positions, volume=volume)
-    long_metrics = compute_wallet_metrics(closed_positions, volume=volume)
+    long_metrics = compute_wallet_metrics(long_positions, volume=volume)
     short_score, short_rejection = wallet_score(short_metrics)
     long_score, long_rejection = wallet_score(long_metrics)
 
