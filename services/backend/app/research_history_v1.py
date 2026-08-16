@@ -13,7 +13,13 @@ class ResearchHistory:
     evidence: HistoryEvidence
 
 
-def fetch_research_history(client: PolymarketClient, wallet: str, *, limit: int = 1000, page_size: int = 50) -> ResearchHistory:
+def fetch_research_history(
+    client: PolymarketClient,
+    wallet: str,
+    *,
+    limit: int = 1000,
+    page_size: int = 50,
+) -> ResearchHistory:
     target = min(max(limit, 0), 5000)
     if not hasattr(client, "_get") or not hasattr(client, "settings"):
         rows = list(client.closed_positions(wallet, limit=target))
@@ -37,7 +43,13 @@ def fetch_research_history(client: PolymarketClient, wallet: str, *, limit: int 
         )
         return ResearchHistory(rows, evidence)
     if target == 0:
-        evidence = history_evidence([], requested_limit=0, page_size=page_size, source_order="TIMESTAMP_DESC", source_payload=[])
+        evidence = history_evidence(
+            [],
+            requested_limit=0,
+            page_size=page_size,
+            source_order="TIMESTAMP_DESC",
+            source_payload=[],
+        )
         return ResearchHistory([], evidence)
 
     rows: list[Any] = []
@@ -48,7 +60,13 @@ def fetch_research_history(client: PolymarketClient, wallet: str, *, limit: int 
         try:
             data = client._get(
                 f"{client.settings.data_api_base}/closed-positions",
-                {"user": wallet, "limit": current_limit, "offset": offset, "sortBy": "TIMESTAMP", "sortDirection": "DESC"},
+                {
+                    "user": wallet,
+                    "limit": current_limit,
+                    "offset": offset,
+                    "sortBy": "TIMESTAMP",
+                    "sortDirection": "DESC",
+                },
             )
         except Exception:
             transport_complete = False
@@ -62,6 +80,19 @@ def fetch_research_history(client: PolymarketClient, wallet: str, *, limit: int 
         if len(page) < current_limit:
             break
 
-    typed_pages = [page for page in pages if all(isinstance(item, dict) for item in page)]
-    evidence = history_evidence(typed_pages, requested_limit=target, page_size=page_size, source_order="TIMESTAMP_DESC", source_payload=pages, transport_complete=transport_complete and len(typed_pages) == len(pages))
+    typed_pages = [
+        page
+        for page in pages
+        if all(isinstance(item, dict) for item in page)
+    ]
+    evidence = history_evidence(
+        typed_pages,
+        requested_limit=target,
+        page_size=page_size,
+        source_order="TIMESTAMP_DESC",
+        source_payload=pages,
+        transport_complete=(
+            transport_complete and len(typed_pages) == len(pages)
+        ),
+    )
     return ResearchHistory(rows, evidence)
