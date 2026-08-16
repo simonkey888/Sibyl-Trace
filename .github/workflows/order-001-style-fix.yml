@@ -1,0 +1,133 @@
+name: ORDER-001 Temporary Ruff Fix
+
+on:
+  pull_request:
+    paths:
+      - "services/backend/**"
+      - ".github/workflows/order-001-style-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: >-
+      github.event.pull_request.head.ref == 'order-001-corrective-p0-p7' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact ORDER-001 branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: order-001-corrective-p0-p7
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Install exact Ruff
+        run: pip install ruff==0.16.1
+
+      - name: Apply only known lint-safe fixes
+        working-directory: services/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruff check . --fix || true
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "app/paper_v5_r42.py": [
+                  (
+                      '            raise RuntimeError("shadow self-impact could not reconcile filled shares to arrival depth")',
+                      '            raise RuntimeError(\n                "shadow self-impact could not reconcile filled shares "\n                "to arrival depth"\n            )',
+                  ),
+                  (
+                      '                "markets with Gamma secondsDelay > 0; revalidated immediately before arrival-book fetch"',
+                      '                "markets with Gamma secondsDelay > 0; revalidated immediately "\n                "before arrival-book fetch"',
+                  ),
+              ],
+              "app/paper_v5_r43.py": [
+                  (
+                      '                "execute previously armed selection -> rescore current public history -> arm next cycle"',
+                      '                "execute previously armed selection -> rescore current public "\n                "history -> arm next cycle"',
+                  ),
+                  (
+                      '                "book timestamp records last upstream state time and is not by itself proof of stale HTTP data"',
+                      '                "book timestamp records last upstream state time and is not by "\n                "itself proof of stale HTTP data"',
+                  ),
+              ],
+              "app/paper_v5_r45.py": [
+                  (
+                      '            "opposite-side profitability requires opposite executable price, depth, fees and settlement economics"',
+                      '            "opposite-side profitability requires opposite executable price, "\n            "depth, fees and settlement economics"',
+                  ),
+              ],
+              "app/scanner.py": [
+                  (
+                      '        score_contract="HEURISTIC GLOBAL=60% SHORT + 40% LONG; HISTORY=DECIDED_OUTCOMES; EDGE=execution copyability only",',
+                      '        score_contract=(\n            "HEURISTIC GLOBAL=60% SHORT + 40% LONG; HISTORY=DECIDED_OUTCOMES; "\n            "EDGE=execution copyability only"\n        ),',
+                  ),
+              ],
+              "tests/test_paper_v5_r43.py": [
+                  (
+                      '        assert row["selection_provenance"]["source_timestamp"] >= row["selection_provenance"]["selection_effective_at"]',
+                      '        assert (\n            row["selection_provenance"]["source_timestamp"]\n            >= row["selection_provenance"]["selection_effective_at"]\n        )',
+                  ),
+              ],
+              "tests/test_paper_v5_r45.py": [
+                  (
+                      '        engine = PaperEngineV5R45(Settings(trading_mode="PAPER", paper_trading_enabled=True), object())',
+                      '        engine = PaperEngineV5R45(\n            Settings(trading_mode="PAPER", paper_trading_enabled=True),\n            object(),\n        )',
+                  ),
+              ],
+              "tests/test_scanner_quality_evidence.py": [
+                  (
+                      '        decided = [{"realizedPnl": 2.0} for _ in range(15)] + [{"realizedPnl": -1.0} for _ in range(5)]',
+                      '        decided = [\n            {"realizedPnl": 2.0} for _ in range(15)\n        ] + [\n            {"realizedPnl": -1.0} for _ in range(5)\n        ]',
+                  ),
+                  (
+                      '    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)',
+                      '    engine = create_engine(\n        "sqlite:///:memory:",\n        connect_args={"check_same_thread": False},\n        poolclass=StaticPool,\n    )',
+                  ),
+                  (
+                      '        audit = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "wallet_quality_scored").order_by(AuditEvent.id.desc()).limit(1))',
+                      '        audit = db.scalar(\n            select(AuditEvent)\n            .where(AuditEvent.event_type == "wallet_quality_scored")\n            .order_by(AuditEvent.id.desc())\n            .limit(1)\n        )',
+                  ),
+              ],
+              "tests/test_workflow_contract.py": [
+                  (
+                      '        assert "canonical public publisher" in source.lower() or "only publish-cloudflare-terminal-v5.yml" in source.lower()',
+                      '        assert (\n            "canonical public publisher" in source.lower()\n            or "only publish-cloudflare-terminal-v5.yml" in source.lower()\n        )',
+                  ),
+              ],
+          }
+
+          for filename, pairs in replacements.items():
+              path = Path(filename)
+              source = path.read_text(encoding="utf-8")
+              for old, new in pairs:
+                  if old not in source:
+                      raise SystemExit(f"known Ruff target missing: {filename}: {old}")
+                  source = source.replace(old, new, 1)
+              path.write_text(source, encoding="utf-8")
+          PY
+          ruff check .
+
+      - name: Commit minimal style-only fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Ruff already green; no style commit needed."
+            exit 0
+          fi
+          git config user.name "ORDER-001 Ruff Fix"
+          git config user.email "order-001-ruff-fix@users.noreply.github.com"
+          git add services/backend
+          git diff --cached --check
+          git commit -m "style(order-001): close exact Ruff findings"
+          git push origin HEAD:order-001-corrective-p0-p7
