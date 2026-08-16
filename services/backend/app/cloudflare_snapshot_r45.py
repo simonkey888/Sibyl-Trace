@@ -15,6 +15,7 @@ from app.domain import (
     QUALITY_SCORE_HISTORY_BASIS,
     QUALITY_SCORE_KIND,
 )
+from app.evidence_lineage import validate_evidence_lineage
 
 COHORT_ID = "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"
 EXECUTION_MODEL = (
@@ -45,7 +46,10 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
     if not v5:
         return
     method = v5.get("methodology") or {}
-    if v5.get("cohort_id") != COHORT_ID or method.get("execution_model") != EXECUTION_MODEL:
+    if (
+        v5.get("cohort_id") != COHORT_ID
+        or method.get("execution_model") != EXECUTION_MODEL
+    ):
         raise ValueError("PAPER V5 snapshot is not R4.5 regime evidence")
 
     inherited = copy.deepcopy(v5)
@@ -60,7 +64,9 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
     attributable = int(analysis.get("attributable_economic_observations") or 0)
     unattributable = int(analysis.get("unattributable_economic_observations") or 0)
     minimum = int(method.get("regime_min_settled_exploratory") or 0)
-    analysis_minimum = int(analysis.get("minimum_settled_for_exploratory_breakdown") or 0)
+    analysis_minimum = int(
+        analysis.get("minimum_settled_for_exploratory_breakdown") or 0
+    )
     effective_minimum = max(minimum, 50)
     expected_state = (
         "INSUFFICIENT_EVIDENCE"
@@ -82,7 +88,8 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         or method.get("regime_unattributable_pnl_excluded") is not True
         or method.get("regime_provenance_retry_safe") is not True
         or method.get("loss_cluster_timestamp_ties_deterministic") is not True
-        or method.get("regime_exploratory_threshold_uses_attributable_economics") is not True
+        or method.get("regime_exploratory_threshold_uses_attributable_economics")
+        is not True
         or minimum < 50
         or analysis_minimum != minimum
         or method.get("regime_filter_requires_out_of_sample_confirmation") is not True
@@ -104,6 +111,20 @@ def _validate_v5_r45(v5: dict[str, Any]) -> None:
         raise ValueError("PAPER V5 R4.5 snapshot violates regime evidence methodology")
 
 
+def _load_lineage(input_dir: Path) -> dict[str, Any]:
+    path = input_dir / "evidence-lineage.json"
+    if not path.is_file():
+        raise ValueError("public evidence lineage is required")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("public evidence lineage is invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("public evidence lineage has invalid shape")
+    validate_evidence_lineage(payload)
+    return payload
+
+
 def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     original = r44._validate_v5_r44
     r44._validate_v5_r44 = _validate_v5_r45
@@ -112,16 +133,19 @@ def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
     finally:
         r44._validate_v5_r44 = original
 
+    lineage = _load_lineage(input_dir)
     snapshot["schema_version"] = max(
         int(snapshot.get("schema_version") or 0),
         PUBLIC_SCHEMA_VERSION,
     )
+    snapshot["evidence_lineage"] = lineage
     snapshot["truth_contract"] = {
         "canonical_cohort_id": COHORT_ID,
         "canonical_execution_model": EXECUTION_MODEL,
         "canonical_publisher_workflow": CANONICAL_PUBLISHER_WORKFLOW,
         "single_public_writer_required": True,
         "max_public_snapshot_age_seconds": PUBLIC_SNAPSHOT_MAX_AGE_SECONDS,
+        "evidence_lineage_required": True,
         "quality_score": dict(SCORE_SEMANTICS),
         "profitability_proven": False,
         "live_available": False,
