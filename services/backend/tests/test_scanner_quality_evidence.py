@@ -25,13 +25,15 @@ class Client:
 
     def closed_positions(self, address: str, limit: int = 200) -> list[dict]:
         assert address == WALLET
-        decided = [
-            {"realizedPnl": 2.0} for _ in range(15)
-        ] + [
-            {"realizedPnl": -1.0} for _ in range(5)
+        pnl = [2.0] * 15 + [-1.0] * 5 + [0.0] * 30
+        return [
+            {
+                "realizedPnl": value,
+                "timestamp": 2_000 - index,
+                "transactionHash": f"closed-{index:03d}",
+            }
+            for index, value in enumerate(pnl)
         ]
-        flats = [{"realizedPnl": 0.0} for _ in range(30)]
-        return decided + flats
 
 
 def session() -> Session:
