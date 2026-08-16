@@ -30,6 +30,7 @@ scan_pattern() {
 secret_paths=(
   .
   ':(exclude)scripts/secret-scan.sh'
+  ':(exclude)scripts/test-secret-scan.sh'
   ':(exclude)docs/**'
   ':(exclude)**/*.md'
 )
