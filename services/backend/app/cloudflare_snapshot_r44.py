@@ -23,7 +23,10 @@ def _validate_v5_r44(v5: dict[str, Any]) -> None:
     if not v5:
         return
     method = v5.get("methodology") or {}
-    if v5.get("cohort_id") != COHORT_ID or method.get("execution_model") != EXECUTION_MODEL:
+    if (
+        v5.get("cohort_id") != COHORT_ID
+        or method.get("execution_model") != EXECUTION_MODEL
+    ):
         raise ValueError("PAPER V5 snapshot is not R4.4 source-strategy truth evidence")
 
     inherited = copy.deepcopy(v5)
@@ -37,8 +40,10 @@ def _validate_v5_r44(v5: dict[str, Any]) -> None:
         or method.get("source_strategy_public_activity_only") is not True
         or method.get("source_strategy_point_in_time_cutoff") is not True
         or method.get("source_strategy_cutoff_predates_selection") is not True
+        or method.get("source_strategy_complete_history_required") is not True
         or method.get("source_strategy_fail_closed") is not True
-        or method.get("maker_rebate_source_rejected") is not True
+        or method.get("maker_rebate_source_rejected") is not False
+        or method.get("maker_rebate_execution_style_only") is not True
         or method.get("split_merge_conversion_source_rejected") is not True
         or method.get("repeated_two_sided_source_rejected") is not True
         or method.get("source_strategy_provenance_in_ledger") is not True
@@ -48,11 +53,14 @@ def _validate_v5_r44(v5: dict[str, Any]) -> None:
         or strategy.get("state") != "PASS"
         or int(strategy.get("missing_prediction_profiles") or 0) != 0
         or int(strategy.get("profile_hash_mismatches") or 0) != 0
+        or int(strategy.get("incomplete_activity_histories") or 0) != 0
         or int(strategy.get("non_directional_predictions") or 0) != 0
         or int(strategy.get("profile_selection_temporal_mismatches") or 0) != 0
         or int(strategy.get("execution_evidence_bridge_mismatches") or 0) != 0
     ):
-        raise ValueError("PAPER V5 R4.4 snapshot violates source-strategy truth methodology")
+        raise ValueError(
+            "PAPER V5 R4.4 snapshot violates source-strategy truth methodology"
+        )
 
 
 def build_cloudflare_snapshot(input_dir: Path) -> dict[str, Any]:
