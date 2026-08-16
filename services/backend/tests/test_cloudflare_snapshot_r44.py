@@ -24,6 +24,7 @@ def truthful_r44():
             "state": "PASS",
             "missing_prediction_profiles": 0,
             "profile_hash_mismatches": 0,
+            "incomplete_activity_histories": 0,
             "non_directional_predictions": 0,
             "profile_selection_temporal_mismatches": 0,
             "execution_evidence_bridge_mismatches": 0,
@@ -38,7 +39,10 @@ def truthful_r44():
             "cost_authorized_usd": 0,
         },
         "methodology": {
-            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V6_PROSPECTIVE_DIRECTIONAL_SOURCE_GATING",
+            "execution_model": (
+                "L2_TAKER_FAK_ARRIVAL_BOOK_V6_"
+                "PROSPECTIVE_DIRECTIONAL_SOURCE_GATING"
+            ),
             "midpoint_fills": False,
             "arrival_book_refetch": True,
             "l2_depth_consumed": True,
@@ -76,8 +80,10 @@ def truthful_r44():
             "source_strategy_public_activity_only": True,
             "source_strategy_point_in_time_cutoff": True,
             "source_strategy_cutoff_predates_selection": True,
+            "source_strategy_complete_history_required": True,
             "source_strategy_fail_closed": True,
-            "maker_rebate_source_rejected": True,
+            "maker_rebate_source_rejected": False,
+            "maker_rebate_execution_style_only": True,
             "split_merge_conversion_source_rejected": True,
             "repeated_two_sided_source_rejected": True,
             "source_strategy_provenance_in_ledger": True,
@@ -99,8 +105,9 @@ def test_r44_validator_accepts_complete_source_strategy_truth_contract():
         "source_strategy_public_activity_only",
         "source_strategy_point_in_time_cutoff",
         "source_strategy_cutoff_predates_selection",
+        "source_strategy_complete_history_required",
         "source_strategy_fail_closed",
-        "maker_rebate_source_rejected",
+        "maker_rebate_execution_style_only",
         "split_merge_conversion_source_rejected",
         "repeated_two_sided_source_rejected",
         "source_strategy_provenance_in_ledger",
@@ -110,6 +117,20 @@ def test_r44_validator_accepts_complete_source_strategy_truth_contract():
 def test_r44_validator_rejects_missing_truth_gate(field):
     payload = truthful_r44()
     payload["methodology"][field] = False
+    with pytest.raises(ValueError, match="source-strategy truth methodology"):
+        _validate_v5_r44(payload)
+
+
+def test_r44_validator_rejects_reintroducing_maker_rebate_directionality_shortcut():
+    payload = truthful_r44()
+    payload["methodology"]["maker_rebate_source_rejected"] = True
+    with pytest.raises(ValueError, match="source-strategy truth methodology"):
+        _validate_v5_r44(payload)
+
+
+def test_r44_validator_rejects_incomplete_activity_history():
+    payload = truthful_r44()
+    payload["source_strategy_provenance"]["incomplete_activity_histories"] = 1
     with pytest.raises(ValueError, match="source-strategy truth methodology"):
         _validate_v5_r44(payload)
 
