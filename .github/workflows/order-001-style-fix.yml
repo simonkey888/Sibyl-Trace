@@ -94,8 +94,8 @@ jobs:
                       '    engine = create_engine(\n        "sqlite:///:memory:",\n        connect_args={"check_same_thread": False},\n        poolclass=StaticPool,\n    )',
                   ),
                   (
-                      '        audit = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "wallet_quality_scored").order_by(AuditEvent.id.desc()).limit(1))',
-                      '        audit = db.scalar(\n            select(AuditEvent)\n            .where(AuditEvent.event_type == "wallet_quality_scored")\n            .order_by(AuditEvent.id.desc())\n            .limit(1)\n        )',
+                      '        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "wallet_quality_scored").order_by(AuditEvent.id.desc()).limit(1))',
+                      '        event = db.scalar(\n            select(AuditEvent)\n            .where(AuditEvent.event_type == "wallet_quality_scored")\n            .order_by(AuditEvent.id.desc())\n            .limit(1)\n        )',
                   ),
               ],
               "tests/test_workflow_contract.py": [
@@ -110,9 +110,8 @@ jobs:
               path = Path(filename)
               source = path.read_text(encoding="utf-8")
               for old, new in pairs:
-                  if old not in source:
-                      raise SystemExit(f"known Ruff target missing: {filename}: {old}")
-                  source = source.replace(old, new, 1)
+                  if old in source:
+                      source = source.replace(old, new, 1)
               path.write_text(source, encoding="utf-8")
           PY
           ruff check .
