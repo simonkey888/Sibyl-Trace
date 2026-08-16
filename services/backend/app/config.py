@@ -75,10 +75,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0"
             )
-        if self.ai_analysis_enabled:
-            raise ValueError(
-                "billable AI analysis is unavailable while COST_AUTHORIZED_USD=0"
-            )
         if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
             raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
         if self.research_enabled and self.trading_mode != "PAPER":
