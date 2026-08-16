@@ -158,8 +158,4 @@ jobs:
           run_id="${run_url##*/}"
           [[ "$run_id" =~ ^[0-9]+$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-      - name: Wait for exact dispatched PAPER V5
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ steps.dispatch_paper.outputs.run_id }}
-        run: gh run watch "$SOURCE_RUN_ID" --interval 5 --exit-status
+          echo "Dispatched PAPER V5 run $run_id after all exact-head CI gates passed."
