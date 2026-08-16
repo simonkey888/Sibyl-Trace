@@ -410,7 +410,10 @@ def scan_wallets(
         f"Scored {len(wallets)} wallets; selected {len(eligible)}",
         candidates=len(wallets),
         selected=[wallet.address for wallet in eligible],
-        score_contract="HEURISTIC GLOBAL=60% SHORT + 40% LONG; HISTORY=DECIDED_OUTCOMES; EDGE=execution copyability only",
+        score_contract=(
+            "HEURISTIC GLOBAL=60% SHORT + 40% LONG; HISTORY=DECIDED_OUTCOMES; "
+            "EDGE=execution copyability only"
+        ),
         score_calibrated_probability=False,
         score_expected_return_claim=False,
         score_alpha_claim=False,

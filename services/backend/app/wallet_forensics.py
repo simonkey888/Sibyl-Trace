@@ -6,7 +6,6 @@ from typing import Any
 
 from app.source_strategy import (
     DIRECTIONAL_CANDIDATE,
-    INSUFFICIENT_EVIDENCE,
     NON_DIRECTIONAL_FULL_SET,
     NON_DIRECTIONAL_MAKER,
     NON_DIRECTIONAL_TWO_SIDED,

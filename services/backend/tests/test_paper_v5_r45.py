@@ -318,7 +318,10 @@ def test_retry_repairs_missing_r45_provenance_after_inherited_commit(monkeypatch
         db.commit()
 
         monkeypatch.setattr(r44.PaperEngineV5R44, "process", lambda *args, **kwargs: False)
-        engine = PaperEngineV5R45(Settings(trading_mode="PAPER", paper_trading_enabled=True), object())
+        engine = PaperEngineV5R45(
+            Settings(trading_mode="PAPER", paper_trading_enabled=True),
+            object(),
+        )
         handled = engine.process(db, wallet, activity)
         assert handled is False
         regime = _regime_by_prediction(db)[prediction.id]

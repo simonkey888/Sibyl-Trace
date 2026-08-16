@@ -2,7 +2,6 @@ from pathlib import Path
 
 from app.watchdogs import ACCOUNTING_WATCHDOG
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 
@@ -42,7 +41,10 @@ def test_legacy_cloudflare_paths_are_retired_without_credentials() -> None:
         assert "wrangler deploy" not in source
         assert "CLOUDFLARE_API_TOKEN" not in source
         assert "CLOUDFLARE_ACCOUNT_ID" not in source
-        assert "canonical public publisher" in source.lower() or "only publish-cloudflare-terminal-v5.yml" in source.lower()
+        assert (
+            "canonical public publisher" in source.lower()
+            or "only publish-cloudflare-terminal-v5.yml" in source.lower()
+        )
 
 
 def test_r45_publisher_rejects_stale_successful_source_sha() -> None:

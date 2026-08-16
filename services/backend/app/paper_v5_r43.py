@@ -305,7 +305,8 @@ def _apply_r43_report(
             "execution_model": EXECUTION_MODEL,
             "prospective_wallet_selection": True,
             "selection_order": (
-                "execute previously armed selection -> rescore current public history -> arm next cycle"
+                "execute previously armed selection -> rescore current public "
+                "history -> arm next cycle"
             ),
             "preselection_activity_backfill": False,
             "selection_provenance_in_ledger": True,
@@ -314,7 +315,8 @@ def _apply_r43_report(
             "book_state_timestamps_in_ledger": True,
             "book_timestamp_freshness_gate": False,
             "book_timestamp_freshness_semantics": (
-                "book timestamp records last upstream state time and is not by itself proof of stale HTTP data"
+                "book timestamp records last upstream state time and is not by "
+                "itself proof of stale HTTP data"
             ),
         }
     )

@@ -389,7 +389,8 @@ def _regime_analysis_from_observations(
         "time_of_day_claim_verified": False,
         "naive_strategy_inversion_allowed": False,
         "naive_strategy_inversion_reason": (
-            "opposite-side profitability requires opposite executable price, depth, fees and settlement economics"
+            "opposite-side profitability requires opposite executable price, "
+            "depth, fees and settlement economics"
         ),
         "directional_by_weekpart": _aggregate_directional(
             directional_observations, "weekpart"
