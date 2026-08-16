@@ -1,0 +1,150 @@
+name: ORDER-001 Temporary Final Patch
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/order-001-final-patch.yml"
+      - "services/backend/app/config.py"
+      - "services/backend/tests/test_scanner_quality_evidence.py"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: >-
+      github.event.pull_request.head.ref == 'order-001-corrective-p0-p7' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: order-001-corrective-p0-p7
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Apply exact final hardening edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text(encoding="utf-8")
+              if old not in source:
+                  if new in source:
+                      return
+                  raise SystemExit(f"patch target missing: {path}: {old[:80]!r}")
+              target.write_text(source.replace(old, new, 1), encoding="utf-8")
+
+          replace(
+              "services/backend/app/ai.py",
+              "        return self.settings.ai_analysis_enabled and bool(self.settings.openai_api_key)",
+              "        return (\n"
+              "            self.settings.ai_analysis_enabled\n"
+              "            and bool(self.settings.openai_api_key)\n"
+              "            and self.settings.cost_authorized_usd > 0\n"
+              "        )",
+          )
+          replace(
+              "services/backend/app/ai.py",
+              "    def _request(self, evidence_json: str) -> dict:\n        body = {",
+              "    def _request(self, evidence_json: str) -> dict:\n"
+              "        if self.settings.cost_authorized_usd <= 0:\n"
+              "            raise RuntimeError(\"billable_ai_blocked_by_zero_cost_authorization\")\n"
+              "        body = {",
+          )
+          replace(
+              "services/backend/tests/test_ai.py",
+              "import json\n",
+              "import json\n\nimport pytest\n",
+          )
+          old_test = '''def test_ai_request_is_non_persistent_and_has_no_execution_tools() -> None:\n    analyst = OpenAIAnalyst(\n        Settings(ai_analysis_enabled=True, openai_api_key=\"test-key\")\n    )\n    analyst.client.close()\n    fake = FakeClient()\n    analyst.client = fake\n    try:\n        analyst._request(\"{}\")\n    finally:\n        analyst.close()\n    assert fake.body is not None\n    assert fake.body[\"store\"] is False\n    assert \"tools\" not in fake.body\n    assert fake.body[\"text\"][\"format\"][\"strict\"] is True\n    assert \"Never authorize\" in fake.body[\"instructions\"]\n'''
+          new_test = '''def test_ai_request_is_structurally_blocked_at_zero_cost() -> None:\n    analyst = OpenAIAnalyst(\n        Settings(ai_analysis_enabled=True, openai_api_key=\"test-key\")\n    )\n    analyst.client.close()\n    fake = FakeClient()\n    analyst.client = fake\n    try:\n        assert analyst.enabled is False\n        with pytest.raises(\n            RuntimeError,\n            match=\"billable_ai_blocked_by_zero_cost_authorization\",\n        ):\n            analyst._request(\"{}\")\n    finally:\n        analyst.close()\n    assert fake.body is None\n'''
+          replace("services/backend/tests/test_ai.py", old_test, new_test)
+
+          replace(
+              "apps/dashboard/public/index.html",
+              '        <div><span>FRESHNESS</span><b id="ageValue">—</b></div>\n',
+              '        <div><span>FRESHNESS</span><b id="ageValue">—</b></div>\n'
+              '        <div><span>V5 LINEAGE</span><b id="v5LineageValue">—</b></div>\n'
+              '        <div><span>V4 LINEAGE</span><b id="v4LineageValue">—</b></div>\n',
+          )
+          replace(
+              "apps/dashboard/public/app.js",
+              "  const manifest = snapshot.manifest || {};\n",
+              "  const manifest = snapshot.manifest || {};\n"
+              "  const lineageBlocks = snapshot.evidence_lineage?.blocks || {};\n"
+              "  const v5Lineage = lineageBlocks.paper_v5 || {};\n"
+              "  const v4Lineage = lineageBlocks.research_v4 || {};\n",
+          )
+          replace(
+              "apps/dashboard/public/app.js",
+              '  setText("ageValue", `${relativeAge(snapshot.snapshot_at)}${v5 && !freshness.fresh ? " · STALE" : ""}`);\n',
+              '  setText("ageValue", `${relativeAge(snapshot.snapshot_at)}${v5 && !freshness.fresh ? " · STALE" : ""}`);\n'
+              '  setText("v5LineageValue", v5Lineage.effective_status || "UNKNOWN");\n'
+              '  setText("v4LineageValue", v4Lineage.effective_status || "UNKNOWN");\n'
+              '  $("v5LineageValue").className = v5Lineage.effective_status === "CURRENT" ? "good" : "warn";\n'
+              '  $("v4LineageValue").className = v4Lineage.effective_status === "CURRENT" ? "good" : "warn";\n',
+          )
+          replace(
+              "apps/gateway/test/paper-v5-assets.test.js",
+              '  assert.match(app, /V5 VERIFIED · STALE/);\n',
+              '  assert.match(app, /V5 VERIFIED · STALE/);\n'
+              '  assert.match(app, /v5LineageValue/);\n'
+              '  assert.match(app, /v4LineageValue/);\n'
+              '  assert.match(app, /effective_status/);\n',
+          )
+
+          freeze = Path("scripts/freeze_manifest.py")
+          source = freeze.read_text(encoding="utf-8")
+          protected_anchor = '    "services/backend/app/config.py",\n'
+          protected_insert = (
+              '    "services/backend/app/config.py",\n'
+              '    "services/backend/app/ai.py",\n'
+              '    "services/backend/app/scanner.py",\n'
+              '    "services/backend/app/research_history_v1.py",\n'
+              '    "services/backend/app/wallet_forensics.py",\n'
+              '    "apps/dashboard/public/app.js",\n'
+              '    "apps/dashboard/public/index.html",\n'
+          )
+          if '    "services/backend/app/ai.py",\n' not in source:
+              if protected_anchor not in source:
+                  raise SystemExit("freeze protected anchor missing")
+              source = source.replace(protected_anchor, protected_insert, 1)
+          old_check = '''        "billable_ai_rejected_globally_at_zero": (\n            "if self.ai_analysis_enabled:" in config\n            and "billable AI analysis is unavailable while COST_AUTHORIZED_USD=0"\n            in config\n        ),'''
+          new_check = '''        "billable_ai_rejected_globally_at_zero": (\n            "cost_authorized_usd > 0"\n            in text("services/backend/app/ai.py")\n            and "billable_ai_blocked_by_zero_cost_authorization"\n            in text("services/backend/app/ai.py")\n        ),'''
+          if old_check in source:
+              source = source.replace(old_check, new_check, 1)
+          elif new_check not in source:
+              raise SystemExit("freeze AI policy anchor missing")
+          freeze.write_text(source, encoding="utf-8")
+          PY
+
+      - name: Verify patched files are syntactically sound
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q services/backend/app services/backend/tests
+          node --check apps/dashboard/public/app.js
+          git diff --check
+
+      - name: Commit exact hardening patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "Final hardening patch already applied."
+            exit 0
+          fi
+          git config user.name "ORDER-001 Final Patch"
+          git config user.email "order-001-final-patch@users.noreply.github.com"
+          git add services/backend/app/ai.py services/backend/tests/test_ai.py \
+            apps/dashboard/public/index.html apps/dashboard/public/app.js \
+            apps/gateway/test/paper-v5-assets.test.js scripts/freeze_manifest.py
+          git diff --cached --check
+          git commit -m "fix(order-001): close USD0 runtime and lineage display gaps"
+          git push origin HEAD:order-001-corrective-p0-p7
