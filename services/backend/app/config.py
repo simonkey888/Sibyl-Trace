@@ -6,7 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
     app_env: str = "development"
     app_version: str = "dev"
@@ -18,10 +22,14 @@ class Settings(BaseSettings):
     activity_fetch_limit: int = Field(default=500, ge=100, le=5000)
     candidate_limit: int = Field(default=20, ge=3, le=50)
     tracked_wallet_limit: int = Field(default=3, ge=1, le=10)
-    source_strategy_activity_limit: int = Field(default=1000, ge=30, le=5000)
+    source_strategy_activity_limit: int = Field(default=10_000, ge=30, le=10_000)
     source_strategy_min_trade_count: int = Field(default=30, ge=5, le=1000)
     source_strategy_min_paired_conditions: int = Field(default=2, ge=1, le=50)
-    source_strategy_max_paired_trade_fraction: float = Field(default=0.25, gt=0.0, le=1.0)
+    source_strategy_max_paired_trade_fraction: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+    )
     mark_interval_seconds: int = Field(default=30, ge=10, le=3600)
     risk_max_signal_age_seconds: int = Field(default=30, ge=1, le=21600)
     admin_token: str = "development-admin-token"
@@ -64,13 +72,17 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_unsafe_configuration(self) -> "Settings":
         if self.cost_authorized_usd != 0:
-            raise ValueError("Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0")
+            raise ValueError(
+                "Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0"
+            )
+        if self.ai_analysis_enabled:
+            raise ValueError(
+                "billable AI analysis is unavailable while COST_AUTHORIZED_USD=0"
+            )
         if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
             raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
         if self.research_enabled and self.trading_mode != "PAPER":
             raise ValueError("research capture requires explicit PAPER mode")
-        if self.ai_analysis_enabled and self.app_env.lower() == "github-trial":
-            raise ValueError("scheduled GitHub PAPER must not use paid LLM APIs")
 
         if self.app_env.lower() != "production":
             return self
@@ -94,11 +106,19 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def reference_username_list(self) -> list[str]:
-        return [value.strip() for value in self.reference_usernames.split(",") if value.strip()]
+        return [
+            value.strip()
+            for value in self.reference_usernames.split(",")
+            if value.strip()
+        ]
 
 
 @lru_cache
