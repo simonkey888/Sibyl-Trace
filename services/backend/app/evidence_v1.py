@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -224,12 +225,11 @@ def infer_external_symbol(market_title: str, outcome: str = "") -> str | None:
 
 
 def _proposition_bias(market_title: str) -> int | None:
-    text = market_title.casefold()
-    bullish = (" above ", " higher ", " up ", " bull")
-    bearish = (" below ", " lower ", " down ", " bear")
-    padded = f" {text} "
-    has_bullish = any(token in padded for token in bullish)
-    has_bearish = any(token in padded for token in bearish)
+    tokens = set(re.findall(r"[a-z0-9]+", market_title.casefold()))
+    bullish = {"above", "higher", "up", "bull", "bullish"}
+    bearish = {"below", "lower", "down", "bear", "bearish"}
+    has_bullish = bool(tokens & bullish)
+    has_bearish = bool(tokens & bearish)
     if has_bullish == has_bearish:
         return None
     return 1 if has_bullish else -1
@@ -483,7 +483,8 @@ def external_markout(
     if "pre_60s" in prices:
         pre_move = (t0 - prices["pre_60s"]) / prices["pre_60s"]
     post_move = markout.get("60s")
-    status = "VERIFIED" if all(label in markout for label in ("10s", "30s", "60s")) else "INCOMPLETE"
+    required = {"10s", "30s", "60s"}
+    status = "VERIFIED" if required.issubset(markout) else "INCOMPLETE"
     return ExternalMarkout(
         schema_version=EXTERNAL_FORENSICS_SCHEMA,
         status=status,
@@ -544,7 +545,15 @@ def build_prospective_oos_cohort(
         raise ValueError("oos_algorithm_source_sha_invalid")
     if len(algorithm_input_hash) != 64:
         raise ValueError("oos_algorithm_input_hash_invalid")
-    wallets = tuple(sorted({wallet.strip().lower() for wallet in treatment_wallets if wallet.strip()}))
+    wallets = tuple(
+        sorted(
+            {
+                wallet.strip().lower()
+                for wallet in treatment_wallets
+                if wallet.strip()
+            }
+        )
+    )
     if not wallets:
         raise ValueError("oos_treatment_membership_required")
     membership_hash = sha256_json(wallets)
@@ -619,17 +628,27 @@ def evaluate_oos_control(
     if cohort.created_at >= cutoff:
         raise ValueError("oos_cohort_not_prospective")
 
-    in_sample = [row for row in observations if int(row.get("timestamp") or 0) < cutoff]
-    oos = [row for row in observations if int(row.get("timestamp") or 0) >= cutoff]
-    if oos and cohort.created_at >= min(int(row.get("timestamp") or 0) for row in oos):
+    in_sample = [
+        row for row in observations if int(row.get("timestamp") or 0) < cutoff
+    ]
+    oos = [
+        row for row in observations if int(row.get("timestamp") or 0) >= cutoff
+    ]
+    if oos and cohort.created_at >= min(
+        int(row.get("timestamp") or 0) for row in oos
+    ):
         raise ValueError("oos_membership_not_fixed_before_evaluation")
 
     treatment_wallets = set(cohort.treatment_wallets)
     treatment = [
-        row for row in oos if str(row.get("wallet") or "").lower() in treatment_wallets
+        row
+        for row in oos
+        if str(row.get("wallet") or "").lower() in treatment_wallets
     ]
     control = [
-        row for row in oos if str(row.get("wallet") or "").lower() not in treatment_wallets
+        row
+        for row in oos
+        if str(row.get("wallet") or "").lower() not in treatment_wallets
     ]
     treatment_values = [
         float(row[value_key])
