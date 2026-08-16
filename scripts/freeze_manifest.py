@@ -17,6 +17,12 @@ PROTECTED_PATHS = (
     ".github/workflows/publish-cloudflare-terminal-v5.yml",
     ".github/workflows/order-001-candidate.yml",
     "services/backend/app/config.py",
+    "services/backend/app/ai.py",
+    "services/backend/app/scanner.py",
+    "services/backend/app/research_history_v1.py",
+    "services/backend/app/wallet_forensics.py",
+    "apps/dashboard/public/app.js",
+    "apps/dashboard/public/index.html",
     "services/backend/app/domain.py",
     "services/backend/app/scoring.py",
     "services/backend/app/source_strategy.py",
@@ -101,9 +107,10 @@ def policy_checks(root: Path) -> dict[str, bool]:
             "LIVE trading is not available in Sibyl Trace" in config
         ),
         "billable_ai_rejected_globally_at_zero": (
-            "if self.ai_analysis_enabled:" in config
-            and "billable AI analysis is unavailable while COST_AUTHORIZED_USD=0"
-            in config
+            "cost_authorized_usd > 0"
+            in text("services/backend/app/ai.py")
+            and "billable_ai_blocked_by_zero_cost_authorization"
+            in text("services/backend/app/ai.py")
         ),
         "score_windows_canonical_50_200": (
             "canonical_score_windows(closed_positions)" in scoring

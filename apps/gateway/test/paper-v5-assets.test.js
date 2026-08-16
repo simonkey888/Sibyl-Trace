@@ -26,6 +26,9 @@ test("dashboard selects PASS paper_v5 but fails closed on stale freshness", () =
   assert.match(app, /DEFAULT_PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 3 \* 60 \* 60/);
   assert.match(app, /V5 VERIFIED · FRESH/);
   assert.match(app, /V5 VERIFIED · STALE/);
+  assert.match(app, /v5LineageValue/);
+  assert.match(app, /v4LineageValue/);
+  assert.match(app, /effective_status/);
   assert.doesNotMatch(app, /V5 TRUTH ONLINE/);
   assert.match(html, /terminal market resolution can become WIN or LOSS/i);
 });

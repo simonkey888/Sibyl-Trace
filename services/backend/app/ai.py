@@ -67,7 +67,11 @@ class OpenAIAnalyst:
 
     @property
     def enabled(self) -> bool:
-        return self.settings.ai_analysis_enabled and bool(self.settings.openai_api_key)
+        return (
+            self.settings.ai_analysis_enabled
+            and bool(self.settings.openai_api_key)
+            and self.settings.cost_authorized_usd > 0
+        )
 
     def close(self) -> None:
         self.client.close()
@@ -109,6 +113,8 @@ class OpenAIAnalyst:
         return row
 
     def _request(self, evidence_json: str) -> dict:
+        if self.settings.cost_authorized_usd <= 0:
+            raise RuntimeError("billable_ai_blocked_by_zero_cost_authorization")
         body = {
             "model": self.settings.openai_model,
             "store": False,
