@@ -97,3 +97,23 @@ def test_oos_preregistration_uses_two_phase_read_only_github_server_metadata():
     assert "registration_created_at < cohort.selection_cutoff" in finalizer
     assert "run['status']" not in finalizer
     assert "run['conclusion']" not in finalizer
+
+
+def test_candidate_backend_suite_is_not_contaminated_by_paper_runtime_environment() -> None:
+    source = (REPO_ROOT / ".github/workflows/paper-v5-candidate.yml").read_text(
+        encoding="utf-8"
+    )
+    suite_index = source.index("Run full backend exact-head suite")
+    runtime_index = source.index("APP_ENV: github-trial")
+    assert suite_index < runtime_index
+    job_prefix = source[:suite_index]
+    assert "APP_ENV: github-trial" not in job_prefix
+    assert "TRADING_MODE: PAPER" not in job_prefix
+    assert "DATABASE_URL: sqlite:///" not in job_prefix
+
+
+def test_safety_checkout_fetches_historical_git_objects_for_v2_freeze() -> None:
+    source = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    safety = source[source.index("  safety:") : source.index("  container:")]
+    assert "fetch-depth: 0" in safety
+    assert "--check-historical-v2" in safety
