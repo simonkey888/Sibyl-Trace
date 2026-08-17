@@ -4,12 +4,6 @@ on:
   workflow_run:
     workflows: ["GitHub PAPER V5 Truthful Execution"]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      source_run_id:
-        description: "Successful canonical PAPER V5 run ID to publish"
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -23,50 +17,40 @@ jobs:
   publish-v5:
     name: publish verified V5 truth plus research evidence
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       GH_TOKEN: ${{ github.token }}
       PUBLIC_TERMINAL_URL: https://sibyl-trace.simondalmasso44.workers.dev
 
     steps:
-      - name: Resolve exact current-main V5 source
+      - name: Resolve exact current-main successful V5 source
         id: source
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
-            run_id="${{ github.event.workflow_run.id }}"
-            sha="${{ github.event.workflow_run.head_sha }}"
-            branch="${{ github.event.workflow_run.head_branch }}"
-          else
-            run_id="${{ inputs.source_run_id }}"
-            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
-            branch=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_branch')
-          fi
+          run_id="${{ github.event.workflow_run.id }}"
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          run=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+          sha=$(jq -r '.head_sha' <<<"$run")
+          branch=$(jq -r '.head_branch' <<<"$run")
+          conclusion=$(jq -r '.conclusion' <<<"$run")
+          workflow_name=$(jq -r '.name' <<<"$run")
+          updated_at=$(jq -r '.updated_at' <<<"$run")
           main_sha=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
-          [[ -n "$run_id" && "$sha" =~ ^[0-9a-f]{40}$ && "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$sha" =~ ^[0-9a-f]{40}$ && "$main_sha" =~ ^[0-9a-f]{40}$ ]]
           [[ "$branch" == "main" ]]
-          [[ "$sha" == "$main_sha" ]]
+          [[ "$conclusion" == "success" ]]
+          [[ "$workflow_name" == "GitHub PAPER V5 Truthful Execution" ]]
+          if [[ "$sha" != "$main_sha" ]]; then
+            echo "Refusing stale V5 publish: source SHA is not current main." >&2
+            exit 1
+          fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      - name: Require Cloudflare configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Refusing false-success publish: required Cloudflare credential $name is unavailable." >&2
-              exit 1
-            fi
-          done
+          echo "updated_at=$updated_at" >> "$GITHUB_OUTPUT"
 
       - name: Check out exact validated V5 source SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -79,12 +63,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: apps/gateway/package-lock.json
+      - name: Require exact-source full CI green before publication
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/backend python -m app.ci_gate \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --output /tmp/required-ci-gate.json
+          test -s /tmp/required-ci-gate.json
+          grep -q '"status": "PASS"' /tmp/required-ci-gate.json
 
       - name: Download and verify exact V5 evidence
         env:
@@ -93,43 +83,153 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/sibyl-v5-evidence
-          gh run download "$SOURCE_RUN_ID" --name "sibyl-paper-v5-$SOURCE_RUN_ID" --dir /tmp/sibyl-v5-evidence
+          gh run download "$SOURCE_RUN_ID" \
+            --name "sibyl-paper-v5-$SOURCE_RUN_ID" \
+            --dir /tmp/sibyl-v5-evidence
           test -s /tmp/sibyl-v5-evidence/SHA256SUMS
           (cd /tmp/sibyl-v5-evidence && sha256sum -c SHA256SUMS --ignore-missing)
           test -s /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"status": "PASS"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"cohort_id": "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"cohort_id": "PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09"' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"midpoint_fills": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
           grep -q '"order_placement": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"prospective_wallet_selection": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"preselection_activity_backfill": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"end_cycle_mark_uses_shadow_client": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"source_strategy_gate": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"source_strategy_fail_closed": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"regime_context_in_ledger": true' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"regime_execution_gate": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"weekday_weekend_rule_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"time_of_day_rule_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"naive_strategy_inversion": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"maker_or_lp_execution_imported": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
-          grep -q '"live_order_path_added": false' /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"prospective_wallet_selection": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"preselection_activity_backfill": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"end_cycle_mark_uses_shadow_client": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"source_strategy_gate": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"source_strategy_fail_closed": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"source_strategy_complete_history_required": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"maker_rebate_source_rejected": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"maker_rebate_execution_style_only": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"regime_context_in_ledger": true' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"regime_execution_gate": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"weekday_weekend_rule_imported": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"time_of_day_rule_imported": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"naive_strategy_inversion": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"maker_or_lp_execution_imported": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
+          grep -q '"live_order_path_added": false' \
+            /tmp/sibyl-v5-evidence/paper-v5-summary.json
 
-      - name: Resolve and verify latest Research V4 anchor
+      - name: Resolve and verify latest Research V4 historical anchor
         id: v4
         shell: bash
         run: |
           set -euo pipefail
-          run_id=$(gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v4-operational.yml/runs?branch=main&status=success&per_page=1" --jq '.workflow_runs[0].id')
-          [[ -n "$run_id" ]]
+          run_id=$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/workflows/research-lab-v4-operational.yml/runs?branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id')
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          run=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+          sha=$(jq -r '.head_sha' <<<"$run")
+          updated_at=$(jq -r '.updated_at' <<<"$run")
+          conclusion=$(jq -r '.conclusion' <<<"$run")
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$conclusion" == "success" ]]
           mkdir -p /tmp/sibyl-combined
-          gh run download "$run_id" --name "sibyl-research-v4-$run_id" --dir /tmp/sibyl-combined
+          gh run download "$run_id" \
+            --name "sibyl-research-v4-$run_id" \
+            --dir /tmp/sibyl-combined
           test -s /tmp/sibyl-combined/SHA256SUMS
           (cd /tmp/sibyl-combined && sha256sum -c SHA256SUMS --ignore-missing)
           test -s /tmp/sibyl-combined/trial-summary.json
           test -s /tmp/sibyl-combined/research-v3-summary.json
           test -s /tmp/sibyl-combined/research-v4-summary.json
           cp /tmp/sibyl-v5-evidence/paper-v5-summary.json /tmp/sibyl-combined/
+          cp /tmp/required-ci-gate.json /tmp/sibyl-combined/
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "updated_at=$updated_at" >> "$GITHUB_OUTPUT"
+
+      - name: Build independent evidence lineage and freshness states
+        env:
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_UPDATED_AT: ${{ steps.source.outputs.updated_at }}
+          V4_RUN_ID: ${{ steps.v4.outputs.run_id }}
+          V4_SHA: ${{ steps.v4.outputs.sha }}
+          V4_UPDATED_AT: ${{ steps.v4.outputs.updated_at }}
+          PYTHONPATH: services/backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          from app.evidence_lineage import (
+              CURRENT,
+              build_evidence_block,
+              build_evidence_lineage,
+              compatibility_contract,
+              paper_v5_metadata,
+              parse_rfc3339,
+              research_v4_metadata,
+          )
+
+          root = Path('/tmp/sibyl-combined')
+          now = int(time.time())
+          v5_path = root / 'paper-v5-summary.json'
+          v4_path = root / 'research-v4-summary.json'
+          v5_payload = json.loads(v5_path.read_text())
+          v4_payload = json.loads(v4_path.read_text())
+          v5_ts = parse_rfc3339(os.environ['SOURCE_UPDATED_AT'])
+          v4_ts = parse_rfc3339(os.environ['V4_UPDATED_AT'])
+          v5 = build_evidence_block(
+              source_workflow='GitHub PAPER V5 Truthful Execution',
+              source_run_id=int(os.environ['SOURCE_RUN_ID']),
+              source_sha=os.environ['SOURCE_SHA'],
+              generated_at=v5_ts,
+              observed_at=v5_ts,
+              now=now,
+              max_age_seconds=10_800,
+              source_metadata=paper_v5_metadata(v5_payload),
+              consumer_contract=compatibility_contract('paper_v5'),
+              content_hash=hashlib.sha256(v5_path.read_bytes()).hexdigest(),
+          )
+          if v5['effective_status'] != CURRENT:
+              raise SystemExit('Refusing publication from stale PAPER V5 evidence')
+          v4 = build_evidence_block(
+              source_workflow='Research Lab V4 Operational',
+              source_run_id=int(os.environ['V4_RUN_ID']),
+              source_sha=os.environ['V4_SHA'],
+              generated_at=v4_ts,
+              observed_at=v4_ts,
+              now=now,
+              max_age_seconds=604_800,
+              source_metadata=research_v4_metadata(v4_payload),
+              consumer_contract=compatibility_contract('research_v4'),
+              content_hash=hashlib.sha256(v4_path.read_bytes()).hexdigest(),
+          )
+          lineage = build_evidence_lineage({
+              'paper_v5': v5,
+              'research_v4': v4,
+          })
+          (root / 'evidence-lineage.json').write_text(
+              json.dumps(lineage, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print('V5_FRESHNESS=' + v5['effective_status'])
+          print('V4_FRESHNESS=' + v4['effective_status'])
+          PY
+          test -s /tmp/sibyl-combined/evidence-lineage.json
 
       - name: Build sanitized canonical V5 snapshot
         env:
@@ -138,7 +238,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf apps/dashboard/public/data
-          python -m app.cloudflare_snapshot_r45 --input-dir /tmp/sibyl-combined --output-dir apps/dashboard/public/data
+          python -m app.cloudflare_snapshot_r45 \
+            --input-dir /tmp/sibyl-combined \
+            --output-dir apps/dashboard/public/data
           test -s apps/dashboard/public/data/snapshot.json
           grep -q '"schema_version": 5' apps/dashboard/public/data/snapshot.json
           grep -q '"paper_v5"' apps/dashboard/public/data/snapshot.json
@@ -148,20 +250,53 @@ jobs:
           grep -q '"preselection_activity_backfill": false' apps/dashboard/public/data/snapshot.json
           grep -q '"source_strategy_gate": true' apps/dashboard/public/data/snapshot.json
           grep -q '"source_strategy_fail_closed": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"source_strategy_complete_history_required": true' \
+            apps/dashboard/public/data/snapshot.json
           grep -q '"regime_context_in_ledger": true' apps/dashboard/public/data/snapshot.json
           grep -q '"regime_execution_gate": false' apps/dashboard/public/data/snapshot.json
           grep -q '"research_v4"' apps/dashboard/public/data/snapshot.json
-          grep -q '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' apps/dashboard/public/data/snapshot.json
+          grep -q '"evidence_lineage"' apps/dashboard/public/data/snapshot.json
+          grep -q '"evidence_lineage_required": true' apps/dashboard/public/data/snapshot.json
+          grep -q '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' \
+            apps/dashboard/public/data/snapshot.json
           grep -q '"single_public_writer_required": true' apps/dashboard/public/data/snapshot.json
-          grep -q '"max_public_snapshot_age_seconds": 10800' apps/dashboard/public/data/snapshot.json
-          grep -q '"kind": "HEURISTIC_QUALITY_RANKING"' apps/dashboard/public/data/snapshot.json
-          grep -q '"history_basis": "DECIDED_OUTCOMES"' apps/dashboard/public/data/snapshot.json
+          grep -q '"max_public_snapshot_age_seconds": 10800' \
+            apps/dashboard/public/data/snapshot.json
+          grep -q '"kind": "HEURISTIC_QUALITY_RANKING"' \
+            apps/dashboard/public/data/snapshot.json
+          grep -q '"history_basis": "DECIDED_OUTCOMES"' \
+            apps/dashboard/public/data/snapshot.json
           grep -q '"calibrated_probability": false' apps/dashboard/public/data/snapshot.json
           grep -q '"expected_return_claim": false' apps/dashboard/public/data/snapshot.json
           grep -q '"alpha_claim": false' apps/dashboard/public/data/snapshot.json
           grep -q '"profitability_proven": false' apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' apps/dashboard/public/data/snapshot.json
-          ! grep -Eiq -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq \
+            '"(api_key|apikey|access_token|refresh_token|private_key|seed_phrase|mnemonic|password|secret|bearer_token)"[[:space:]]*:' \
+            apps/dashboard/public/data/snapshot.json
+          ! grep -Eiq -- \
+            '-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[[:space:]]+[A-Za-z0-9._-]{12,}' \
+            apps/dashboard/public/data/snapshot.json
+
+      - name: Require Cloudflare configuration only after every truth gate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Refusing false-success publish: required Cloudflare credential $name is unavailable." >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/gateway/package-lock.json
 
       - name: Install pinned gateway dependencies
         working-directory: apps/gateway
@@ -169,32 +304,49 @@ jobs:
 
       - name: Deploy truthful public read-only terminal
         working-directory: apps/gateway
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --no-install wrangler deploy
 
       - name: Verify deployed public truth
         env:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 4 --retry-delay 2 \
             "$PUBLIC_TERMINAL_URL/data/snapshot.json?verify=$GITHUB_RUN_ID" \
             -o /tmp/published-snapshot.json
-          python - <<'PY'
+          PYTHONPATH=services/backend python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          snapshot = json.loads(Path('/tmp/published-snapshot.json').read_text(encoding='utf-8'))
+          from app.evidence_lineage import CURRENT, validate_evidence_lineage
+
+          snapshot = json.loads(
+              Path('/tmp/published-snapshot.json').read_text(encoding='utf-8')
+          )
           source = snapshot.get('source') or {}
           contract = snapshot.get('truth_contract') or {}
           score = contract.get('quality_score') or {}
+          lineage = snapshot.get('evidence_lineage') or {}
+          validate_evidence_lineage(lineage)
+          paper = (lineage.get('blocks') or {}).get('paper_v5') or {}
           assert snapshot.get('schema_version') == 5
           assert source.get('github_sha') == os.environ['SOURCE_SHA']
+          assert paper.get('source_sha') == os.environ['SOURCE_SHA']
+          assert paper.get('source_run_id') == int(os.environ['SOURCE_RUN_ID'])
+          assert paper.get('effective_status') == CURRENT
           assert contract.get('canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'
-          assert contract.get('canonical_publisher_workflow') == 'publish-cloudflare-terminal-v5.yml'
+          assert contract.get('canonical_publisher_workflow') == (
+              'publish-cloudflare-terminal-v5.yml'
+          )
           assert contract.get('single_public_writer_required') is True
           assert contract.get('max_public_snapshot_age_seconds') == 10800
+          assert contract.get('evidence_lineage_required') is True
           assert score.get('kind') == 'HEURISTIC_QUALITY_RANKING'
           assert score.get('history_basis') == 'DECIDED_OUTCOMES'
           assert score.get('calibrated_probability') is False
@@ -211,18 +363,20 @@ jobs:
             echo "### Sibyl Trace Cloudflare Terminal V5 R4.5"
             echo "- Canonical V5 run: ${{ steps.source.outputs.run_id }}"
             echo "- Canonical V5 SHA: ${{ steps.source.outputs.sha }}"
+            echo "- Exact-source full CI gate: PASS"
             echo "- Research V4 anchor: ${{ steps.v4.outputs.run_id }}"
+            echo "- Evidence lineage/freshness: explicit per block"
             echo "- Single public writer: this workflow only"
             echo "- Post-deploy public snapshot verification: PASS"
             echo "- Public schema: 5"
             echo "- Public freshness TTL: 10800 seconds"
             echo "- Quality score: heuristic decided-outcome ranking; not probability/expected return/alpha"
+            echo "- Source strategy: complete public activity required; maker rebate is style metadata"
             echo "- Prospective wallet selection: enforced"
-            echo "- Non-directional maker/full-set/two-sided sources: fail-closed"
             echo "- Regime labels: immutable UTC evidence only"
             echo "- Automatic weekday/hour filters: disabled"
             echo "- Naive losing-strategy inversion: disabled"
-            echo "- Regime promotion: requires settled out-of-sample evidence"
+            echo "- Regime promotion: requires preregistered out-of-sample evidence"
             echo "- Pre-selection activity backfill: forbidden"
             echo "- End-cycle mark: shadow-consistent"
             echo "- Public surface: sanitized summary only"

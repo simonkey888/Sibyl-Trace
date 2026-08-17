@@ -1,0 +1,59 @@
+name: PAPER V5 OOS Preregistration
+
+on:
+  workflow_dispatch:
+    inputs:
+      cohort_path:
+        description: "Committed prospective cohort JSON to preregister"
+        required: true
+        default: evidence/oos/pending-cohort.json
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  preregister:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out immutable source identity
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate prospective cohort before immutable upload
+        env:
+          COHORT_PATH: ${{ inputs.cohort_path }}
+        run: |
+          set -euo pipefail
+          test -f "$COHORT_PATH"
+          PYTHONPATH=services/backend python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from app.evidence_v1 import ProspectiveOOSCohort, prospective_oos_cohort_hash_valid
+          path = Path(os.environ['COHORT_PATH'])
+          payload = json.loads(path.read_text())
+          cohort = ProspectiveOOSCohort(
+              **{**payload, 'treatment_wallets': tuple(payload['treatment_wallets'])}
+          )
+          assert prospective_oos_cohort_hash_valid(cohort)
+          assert cohort.algorithm_source_sha == os.environ['GITHUB_SHA']
+          print('OOS_COHORT_CONTENT=PASS')
+          PY
+
+      - name: Upload immutable cohort content
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paper-v5-oos-cohort-${{ github.run_id }}
+          path: ${{ inputs.cohort_path }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

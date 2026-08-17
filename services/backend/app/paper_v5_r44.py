@@ -33,7 +33,9 @@ def _state_profiles(db: Session, key: str) -> list[dict[str, Any]]:
         value = json.loads(get_state(db, key, "[]") or "[]")
     except (TypeError, json.JSONDecodeError):
         return []
-    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
 
 
 def _profile_for_wallet(db: Session, address: str) -> dict[str, Any] | None:
@@ -45,7 +47,8 @@ def _profile_for_wallet(db: Session, address: str) -> dict[str, Any] | None:
 
 
 def _profile_predates_selection(
-    profile: dict[str, Any], selection_effective_at: int
+    profile: dict[str, Any],
+    selection_effective_at: int,
 ) -> bool:
     try:
         cutoff_at = int(profile.get("cutoff_at") or 0)
@@ -55,9 +58,26 @@ def _profile_predates_selection(
     return cutoff_at > 0 and effective_at > 0 and cutoff_at < effective_at
 
 
+def _profile_history_complete(profile: dict[str, Any]) -> bool:
+    history = profile.get("activity_history")
+    if not isinstance(history, dict):
+        return False
+    return (
+        history.get("status") == "COMPLETE"
+        and history.get("exhausted") is True
+        and history.get("has_more") is False
+        and int(history.get("malformed_rows") or 0) == 0
+        and int(history.get("invalid_timestamp_rows") or 0) == 0
+    )
+
+
 def _strategy_binding_valid(payload: dict[str, Any], evidence_hash: str | None) -> bool:
     profile = payload.get("source_strategy_profile") or {}
-    if not isinstance(profile, dict) or not profile_hash_valid(profile):
+    if (
+        not isinstance(profile, dict)
+        or not profile_hash_valid(profile)
+        or not _profile_history_complete(profile)
+    ):
         return False
     parent = str(payload.get("r4_3_execution_evidence_hash") or "")
     claimed = str(payload.get("r4_4_execution_evidence_hash") or "")
@@ -107,12 +127,16 @@ class PaperEngineV5R44(_PaperEngineV5R43Base):
 
     def process(self, db: Session, wallet: Wallet, activity: dict[str, Any]) -> bool:
         profile = _profile_for_wallet(db, wallet.address)
-        selection_effective_at = r43._state_int(db, r43.CYCLE_SELECTION_EFFECTIVE_STATE)
+        selection_effective_at = r43._state_int(
+            db,
+            r43.CYCLE_SELECTION_EFFECTIVE_STATE,
+        )
         if (
             profile is None
             or profile.get("classification") != "DIRECTIONAL_CANDIDATE"
             or profile.get("directional") is not True
             or not profile_hash_valid(profile)
+            or not _profile_history_complete(profile)
             or not _profile_predates_selection(profile, selection_effective_at)
         ):
             raise RuntimeError("source_strategy_directional_provenance_missing_or_invalid")
@@ -157,7 +181,8 @@ def _strategy_by_prediction(db: Session) -> dict[int, dict[str, Any]]:
 
 
 def _temporary_r43_evidence_parents(
-    db: Session, provenance: dict[int, dict[str, Any]]
+    db: Session,
+    provenance: dict[int, dict[str, Any]],
 ) -> dict[int, str | None]:
     saved: dict[int, str | None] = {}
     for prediction_id, payload in provenance.items():
@@ -172,7 +197,8 @@ def _temporary_r43_evidence_parents(
 
 
 def _restore_r44_evidence(
-    db: Session, saved: dict[int, str | None]
+    db: Session,
+    saved: dict[int, str | None],
 ) -> None:
     for prediction_id, evidence_hash in saved.items():
         evidence = db.get(PaperV5ExecutionEvidence, prediction_id)
@@ -206,11 +232,16 @@ def _write_ledger_r44(original_writer: Any, db: Session, path: Path) -> None:
             else bool(payload and _strategy_binding_valid(payload, terminal_hash))
         )
         rewritten.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
-    path.write_text("\n".join(rewritten) + ("\n" if rewritten else ""), encoding="utf-8")
+    path.write_text(
+        "\n".join(rewritten) + ("\n" if rewritten else ""),
+        encoding="utf-8",
+    )
 
 
 def _apply_r44_report(
-    report: dict[str, Any], db: Session, baseline: dict[str, int]
+    report: dict[str, Any],
+    db: Session,
+    baseline: dict[str, int],
 ) -> dict[str, Any]:
     provenance = _strategy_by_prediction(db)
     saved = _temporary_r43_evidence_parents(db, provenance)
@@ -224,6 +255,7 @@ def _apply_r44_report(
     selection_by_prediction = r43._selection_provenance_by_prediction(db)
     missing: list[int] = []
     invalid_profile: list[int] = []
+    incomplete_history: list[int] = []
     non_directional: list[int] = []
     temporal_mismatch: list[int] = []
     bridge_mismatch: list[int] = []
@@ -237,6 +269,8 @@ def _apply_r44_report(
         if not isinstance(profile, dict) or not profile_hash_valid(profile):
             invalid_profile.append(prediction.id)
             continue
+        if not _profile_history_complete(profile):
+            incomplete_history.append(prediction.id)
         if (
             profile.get("classification") != "DIRECTIONAL_CANDIDATE"
             or profile.get("directional") is not True
@@ -259,12 +293,19 @@ def _apply_r44_report(
         errors.append(f"prediction_missing_source_strategy_provenance:{len(missing)}")
     if invalid_profile:
         errors.append(f"source_strategy_profile_hash_mismatch:{len(invalid_profile)}")
+    if incomplete_history:
+        errors.append(f"source_strategy_history_incomplete:{len(incomplete_history)}")
     if non_directional:
         errors.append(f"non_directional_source_prediction_present:{len(non_directional)}")
     if temporal_mismatch:
-        errors.append(f"source_strategy_selection_temporal_mismatch:{len(temporal_mismatch)}")
+        errors.append(
+            f"source_strategy_selection_temporal_mismatch:{len(temporal_mismatch)}"
+        )
     if bridge_mismatch:
-        errors.append(f"source_strategy_execution_evidence_bridge_mismatch:{len(bridge_mismatch)}")
+        errors.append(
+            "source_strategy_execution_evidence_bridge_mismatch:"
+            f"{len(bridge_mismatch)}"
+        )
 
     active_profiles = _state_profiles(db, ACTIVE_PROFILES_STATE)
     next_profiles = _state_profiles(db, NEXT_PROFILES_STATE)
@@ -276,8 +317,10 @@ def _apply_r44_report(
             "source_strategy_public_activity_only": True,
             "source_strategy_point_in_time_cutoff": True,
             "source_strategy_cutoff_predates_selection": True,
+            "source_strategy_complete_history_required": True,
             "source_strategy_fail_closed": True,
-            "maker_rebate_source_rejected": True,
+            "maker_rebate_source_rejected": False,
+            "maker_rebate_execution_style_only": True,
             "split_merge_conversion_source_rejected": True,
             "repeated_two_sided_source_rejected": True,
             "source_strategy_provenance_in_ledger": True,
@@ -294,6 +337,7 @@ def _apply_r44_report(
         "prediction_profiles": len(provenance),
         "missing_prediction_profiles": len(missing),
         "profile_hash_mismatches": len(invalid_profile),
+        "incomplete_activity_histories": len(incomplete_history),
         "non_directional_predictions": len(non_directional),
         "profile_selection_temporal_mismatches": len(temporal_mismatch),
         "execution_evidence_bridge_mismatches": len(bridge_mismatch),
@@ -322,7 +366,13 @@ def run(output_dir: Path) -> int:
         set_state(db, ACTIVE_PROFILES_STATE, current_profiles)
         db.commit()
 
-    def scan_r44(db: Session, client: Any, settings: Any, *, prospective: bool = False):
+    def scan_r44(
+        db: Session,
+        client: Any,
+        settings: Any,
+        *,
+        prospective: bool = False,
+    ):
         return scanner.scan_wallets(
             db,
             client,
@@ -352,7 +402,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run Sibyl Trace PAPER V5 R4.4 source-strategy truth"
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("paper-v5-output"))
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("paper-v5-output"),
+    )
     args = parser.parse_args()
     raise SystemExit(run(args.output_dir))
 

@@ -8,14 +8,16 @@ from app.source_strategy import (
     DIRECTIONAL_CANDIDATE,
     INSUFFICIENT_EVIDENCE,
     NON_DIRECTIONAL_FULL_SET,
-    NON_DIRECTIONAL_MAKER,
     NON_DIRECTIONAL_TWO_SIDED,
+    UNAVAILABLE,
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
     SourceStrategyPolicy,
+    canonical_hash,
     classify_source_strategy,
     fetch_public_activity_events,
     profile_hash_valid,
 )
-
 
 WALLET = "0x1111111111111111111111111111111111111111"
 POLICY = SourceStrategyPolicy(
@@ -40,13 +42,45 @@ def trade(i: int, condition: str, outcome: int = 0) -> dict:
     }
 
 
+def authoritative(events):
+    if isinstance(events, SourceActivityHistory):
+        return events
+    rows = list(events)
+    evidence = ActivityHistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_FILTERED_HISTORY",
+        requested_limit=max(len(rows) + 1, 1),
+        returned_rows=len(rows),
+        pages_fetched=1,
+        page_size=max(len(rows) + 1, 1),
+        exhausted=True,
+        has_more=False,
+        malformed_rows=0,
+        invalid_timestamp_rows=0,
+        source_hash=canonical_hash("authoritative-test-fixture"),
+    )
+    return SourceActivityHistory(rows, evidence)
+
+
 def classify(events):
     return classify_source_strategy(
         WALLET,
-        events,
+        authoritative(events),
         cutoff_at=1_900_000_000,
         policy=POLICY,
     )
+
+
+def test_raw_list_without_completeness_metadata_cannot_authorize_directional():
+    profile = classify_source_strategy(
+        WALLET,
+        [trade(i, f"condition-{i}") for i in range(6)],
+        cutoff_at=1_900_000_000,
+        policy=POLICY,
+    )
+    assert profile.classification == UNAVAILABLE
+    assert profile.directional is False
+    assert profile.rejection_reason == "source_strategy_history_evidence_missing"
 
 
 def test_directional_candidate_has_recomputable_hash():
@@ -58,19 +92,11 @@ def test_directional_candidate_has_recomputable_hash():
     assert profile_hash_valid(profile.to_dict()) is True
 
 
-def test_maker_rebate_rejects_profitable_looking_wallet():
+def test_maker_rebate_is_execution_style_not_directionality():
     events = [trade(i, f"condition-{i}") for i in range(6)]
     events.append({"type": "MAKER_REBATE", "timestamp": 1_800_000_100})
     profile = classify(events)
-    assert profile.classification == NON_DIRECTIONAL_MAKER
-    assert profile.rejection_reason == "source_strategy_maker_rebate"
-
-
-def test_taker_rebate_is_recorded_without_inventing_direction_semantics():
-    events = [trade(i, f"condition-{i}") for i in range(6)]
-    events.append({"type": "TAKER_REBATE", "timestamp": 1_800_000_100})
-    profile = classify(events)
-    assert profile.taker_rebate_count == 1
+    assert profile.maker_rebate_count == 1
     assert profile.classification == DIRECTIONAL_CANDIDATE
     assert profile.rejection_reason is None
 
@@ -174,16 +200,16 @@ def test_fallback_outcome_is_part_of_activity_hash():
     assert yes_profile.evidence_hash != no_profile.evidence_hash
 
 
-def test_activity_fetch_uses_full_history_cutoff_and_copyability_types():
+def test_activity_fetch_proves_short_page_is_exhaustive():
     class Client:
         settings = SimpleNamespace(data_api_base="https://data.test")
 
         def __init__(self):
-            self.params = None
+            self.calls: list[dict] = []
 
         def _get(self, url, params=None):
             assert url == "https://data.test/activity"
-            self.params = params
+            self.calls.append(dict(params or {}))
             return [trade(1, "a")]
 
     client = Client()
@@ -194,16 +220,91 @@ def test_activity_fetch_uses_full_history_cutoff_and_copyability_types():
         limit=30,
     )
     assert len(rows) == 1
-    assert client.params["start"] == 1
-    assert client.params["end"] == 1_900_000_000
-    assert client.params["limit"] == 30
-    assert "TRADE" in client.params["type"]
-    assert "MERGE" in client.params["type"]
-    assert "MAKER_REBATE" in client.params["type"]
-    assert "TAKER_REBATE" in client.params["type"]
+    assert rows.evidence.authoritative is True
+    assert rows.evidence.exhausted is True
+    assert rows.evidence.has_more is False
+    assert len(client.calls) == 1
+    assert client.calls[0]["start"] == 1
+    assert client.calls[0]["end"] == 1_900_000_000
+    assert client.calls[0]["limit"] == 30
+    assert "TRADE" in client.calls[0]["type"]
+    assert "MERGE" in client.calls[0]["type"]
+    assert "MAKER_REBATE" in client.calls[0]["type"]
+    assert "TAKER_REBATE" not in client.calls[0]["type"]
 
 
-def test_activity_fetch_drops_timestampless_rows_before_hashing():
+def test_exact_limit_activity_page_requires_empty_probe_to_be_authoritative():
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def _get(self, _url, params=None):
+            if params["offset"] == 0:
+                return [trade(i, f"condition-{i}") for i in range(6)]
+            assert params["offset"] == 6
+            assert params["limit"] == 1
+            return []
+
+    rows = fetch_public_activity_events(
+        Client(),
+        WALLET,
+        cutoff_at=1_900_000_000,
+        limit=6,
+    )
+    assert rows.evidence.authoritative is True
+    assert rows.evidence.exhausted is True
+    profile = classify(rows)
+    assert profile.classification == DIRECTIONAL_CANDIDATE
+    assert profile.activity_history["status"] == "COMPLETE"
+
+
+def test_exact_limit_activity_page_with_row_1001_fails_closed():
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def _get(self, _url, params=None):
+            if params["offset"] == 0:
+                return [trade(i, f"condition-{i}") for i in range(6)]
+            return [
+                {
+                    "type": "MERGE",
+                    "conditionId": "condition-0",
+                    "transactionHash": "0xolder-structural",
+                    "timestamp": 1_700_000_000,
+                }
+            ]
+
+    rows = fetch_public_activity_events(
+        Client(),
+        WALLET,
+        cutoff_at=1_900_000_000,
+        limit=6,
+    )
+    assert rows.evidence.authoritative is False
+    assert rows.evidence.has_more is True
+    profile = classify(rows)
+    assert profile.classification == UNAVAILABLE
+    assert profile.rejection_reason == "source_strategy_history_incomplete"
+
+
+def test_malformed_activity_row_makes_sample_non_authoritative():
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def _get(self, _url, params=None):
+            return [trade(1, "a"), "not-a-row"]
+
+    rows = fetch_public_activity_events(
+        Client(),
+        WALLET,
+        cutoff_at=1_900_000_000,
+        limit=30,
+    )
+    assert rows.evidence.authoritative is False
+    assert rows.evidence.malformed_rows == 1
+    assert classify(rows).classification == UNAVAILABLE
+
+
+def test_timestampless_activity_row_makes_sample_non_authoritative():
     class Client:
         settings = SimpleNamespace(data_api_base="https://data.test")
 
@@ -219,7 +320,25 @@ def test_activity_fetch_drops_timestampless_rows_before_hashing():
         limit=30,
     )
     assert len(rows) == 1
-    assert rows[0]["conditionId"] == "b"
+    assert rows.evidence.authoritative is False
+    assert rows.evidence.invalid_timestamp_rows == 1
+    assert classify(rows).classification == UNAVAILABLE
+
+
+def test_transport_shape_error_fails_closed():
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def _get(self, _url, params=None):
+            return {"error": "not a list"}
+
+    with pytest.raises(ValueError, match="public_activity_response_not_list"):
+        fetch_public_activity_events(
+            Client(),
+            WALLET,
+            cutoff_at=1_900_000_000,
+            limit=30,
+        )
 
 
 def test_event_order_does_not_change_sample_or_evidence_hash():
@@ -235,3 +354,26 @@ def test_hash_detects_profile_tampering():
     assert profile_hash_valid(profile) is True
     profile["trade_count"] += 1
     assert profile_hash_valid(profile) is False
+
+
+def test_transport_order_permutation_preserves_authoritative_source_hash_and_profile():
+    rows = [trade(i, f"condition-{i}") for i in range(6)]
+
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def _get(self, _url, params=None):
+            return self.payload if int(params.get("offset") or 0) == 0 else []
+
+    one = fetch_public_activity_events(Client(rows), WALLET, cutoff_at=1_900_000_000, limit=30)
+    two = fetch_public_activity_events(
+        Client(list(reversed(rows))), WALLET, cutoff_at=1_900_000_000, limit=30
+    )
+    assert one.evidence.source_hash == two.evidence.source_hash
+    first = classify_source_strategy(WALLET, one, cutoff_at=1_900_000_000, policy=POLICY)
+    second = classify_source_strategy(WALLET, two, cutoff_at=1_900_000_000, policy=POLICY)
+    assert first.activity_sample_hash == second.activity_sample_hash
+    assert first.evidence_hash == second.evidence_hash

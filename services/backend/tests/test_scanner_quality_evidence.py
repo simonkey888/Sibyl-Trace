@@ -9,30 +9,50 @@ from app.db import Base
 from app.models import AuditEvent, Wallet, WalletScoreProfile
 from app.scanner import scan_wallets
 
-
 WALLET = "0x" + "1" * 40
 
 
 class Client:
     def leaderboard(self, _period: str, _limit: int) -> list[dict]:
-        return [{"proxyWallet": WALLET, "pnl": 100, "vol": 10_000, "userName": "evidence-wallet"}]
+        return [
+            {
+                "proxyWallet": WALLET,
+                "pnl": 100,
+                "vol": 10_000,
+                "userName": "evidence-wallet",
+            }
+        ]
 
     def closed_positions(self, address: str, limit: int = 200) -> list[dict]:
         assert address == WALLET
-        decided = [{"realizedPnl": 2.0} for _ in range(15)] + [{"realizedPnl": -1.0} for _ in range(5)]
-        flats = [{"realizedPnl": 0.0} for _ in range(30)]
-        return decided + flats
+        pnl = [2.0] * 15 + [-1.0] * 5 + [0.0] * 30
+        return [
+            {
+                "realizedPnl": value,
+                "timestamp": 2_000 - index,
+                "transactionHash": f"closed-{index:03d}",
+            }
+            for index, value in enumerate(pnl)
+        ]
 
 
 def session() -> Session:
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     return Session(engine)
 
 
 def test_scanner_persists_score_bearing_decided_samples_and_audit_evidence() -> None:
     with session() as db:
-        selected = scan_wallets(db, Client(), Settings(candidate_limit=3, tracked_wallet_limit=1))
+        selected = scan_wallets(
+            db,
+            Client(),
+            Settings(candidate_limit=3, tracked_wallet_limit=1),
+        )
         wallet = db.get(Wallet, WALLET)
         assert wallet is not None
         assert wallet.rejection_reason is None, wallet.rejection_reason
@@ -45,7 +65,12 @@ def test_scanner_persists_score_bearing_decided_samples_and_audit_evidence() -> 
         assert profile.long_sample_size == 20
         assert profile.global_score > 0
 
-        event = db.scalar(select(AuditEvent).where(AuditEvent.event_type == "wallet_quality_scored").order_by(AuditEvent.id.desc()).limit(1))
+        event = db.scalar(
+            select(AuditEvent)
+            .where(AuditEvent.event_type == "wallet_quality_scored")
+            .order_by(AuditEvent.id.desc())
+            .limit(1)
+        )
         assert event is not None
         payload = json.loads(event.payload_json)
         assert payload["score_kind"] == "HEURISTIC_QUALITY_RANKING"

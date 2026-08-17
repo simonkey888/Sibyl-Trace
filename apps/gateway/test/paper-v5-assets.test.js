@@ -11,7 +11,7 @@ test("dashboard presents PAPER V5 as truthful canonical cohort", () => {
   assert.match(html, /PAPER V5 TRUTH LEDGER/);
   assert.match(html, /WIN \/ LOSS/);
   assert.match(html, /NO_FILL/);
-  assert.match(html, /LEGACY V2/);
+  assert.match(html, /Legacy V2/i);
   assert.match(html, /Fill \/ effective/);
   assert.match(html, /Fee/);
   assert.match(html, /Result/);
@@ -26,8 +26,11 @@ test("dashboard selects PASS paper_v5 but fails closed on stale freshness", () =
   assert.match(app, /DEFAULT_PUBLIC_SNAPSHOT_MAX_AGE_SECONDS = 3 \* 60 \* 60/);
   assert.match(app, /V5 VERIFIED · FRESH/);
   assert.match(app, /V5 VERIFIED · STALE/);
+  assert.match(app, /v5LineageValue/);
+  assert.match(app, /v4LineageValue/);
+  assert.match(app, /effective_status/);
   assert.doesNotMatch(app, /V5 TRUTH ONLINE/);
-  assert.match(html, /resolved BUY entries/i);
+  assert.match(html, /terminal market resolution can become WIN or LOSS/i);
 });
 
 

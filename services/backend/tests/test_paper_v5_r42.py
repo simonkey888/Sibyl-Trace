@@ -20,8 +20,8 @@ from app.paper_v5_r42 import (
     COHORT_ID,
     EXECUTION_MODEL,
     PaperEngineV5R42,
-    _R42TruthClient,
     _apply_r42_report,
+    _R42TruthClient,
     _write_ledger_r42,
 )
 from app.repository import initialize_state

@@ -195,7 +195,10 @@ class _R42TruthClient:
             self._shadow[shadow_key] = self._shadow.get(shadow_key, 0.0) + take
             remaining -= take
         if remaining > 1e-6:
-            raise RuntimeError("shadow self-impact could not reconcile filled shares to arrival depth")
+            raise RuntimeError(
+                "shadow self-impact could not reconcile filled shares "
+                "to arrival depth"
+            )
 
 
 class PaperEngineV5R42(r4.PaperEngineV5R4):
@@ -384,7 +387,8 @@ def _apply_r42_report(
             "execution_model": EXECUTION_MODEL,
             "post_delay_market_state_revalidation": True,
             "post_delay_market_state_revalidation_scope": (
-                "markets with Gamma secondsDelay > 0; revalidated immediately before arrival-book fetch"
+                "markets with Gamma secondsDelay > 0; revalidated immediately "
+                "before arrival-book fetch"
             ),
             "shadow_self_impact": True,
             "shadow_self_impact_scope": (

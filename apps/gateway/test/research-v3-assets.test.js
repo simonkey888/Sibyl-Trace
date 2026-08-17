@@ -15,7 +15,8 @@ test("Research dashboard assets are syntactically valid and wired", () => {
   const html = readFileSync(resolve(dashboardRoot, "index.html"), "utf8");
   assert.match(html, /research-v3\.js/);
   assert.match(html, /research-v4\.js/);
-  assert.match(html, /PAPER V5 \+ LEGACY V2 \+ RESEARCH V3\/V4/);
+  assert.match(html, /PAPER V5 R4\.5 \+ LEGACY EVIDENCE/);
+  assert.match(html, /External trader claims are reconstructed from public evidence/);
 });
 
 

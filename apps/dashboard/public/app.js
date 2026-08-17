@@ -257,6 +257,9 @@ function renderSnapshot(snapshot) {
   const latency = snapshot.latency || research.latency || {};
   const source = snapshot.source || {};
   const manifest = snapshot.manifest || {};
+  const lineageBlocks = snapshot.evidence_lineage?.blocks || {};
+  const v5Lineage = lineageBlocks.paper_v5 || {};
+  const v4Lineage = lineageBlocks.research_v4 || {};
 
   const initial = Number(portfolio.initial_bankroll || 0);
   const equity = Number(portfolio.equity || 0);
@@ -285,6 +288,10 @@ function renderSnapshot(snapshot) {
   setText("evidenceValue", source.evidence_generation || "—");
   setText("runValue", source.github_run_id || "—");
   setText("ageValue", `${relativeAge(snapshot.snapshot_at)}${v5 && !freshness.fresh ? " · STALE" : ""}`);
+  setText("v5LineageValue", v5Lineage.effective_status || "UNKNOWN");
+  setText("v4LineageValue", v4Lineage.effective_status || "UNKNOWN");
+  $("v5LineageValue").className = v5Lineage.effective_status === "CURRENT" ? "good" : "warn";
+  $("v4LineageValue").className = v4Lineage.effective_status === "CURRENT" ? "good" : "warn";
   setText("geoValue", String(system.geoblock || "UNKNOWN").toUpperCase());
   setStatus("accountingValue", accounting.state || "UNKNOWN");
   setStatus("healthAccounting", accounting.state || "UNKNOWN");

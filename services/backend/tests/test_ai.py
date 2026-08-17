@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.ai import AIReport, OpenAIAnalyst
 from app.config import Settings
 
@@ -80,7 +82,7 @@ class FakeClient:
         return None
 
 
-def test_ai_request_is_non_persistent_and_has_no_execution_tools() -> None:
+def test_ai_request_is_structurally_blocked_at_zero_cost() -> None:
     analyst = OpenAIAnalyst(
         Settings(ai_analysis_enabled=True, openai_api_key="test-key")
     )
@@ -88,11 +90,12 @@ def test_ai_request_is_non_persistent_and_has_no_execution_tools() -> None:
     fake = FakeClient()
     analyst.client = fake
     try:
-        analyst._request("{}")
+        assert analyst.enabled is False
+        with pytest.raises(
+            RuntimeError,
+            match="billable_ai_blocked_by_zero_cost_authorization",
+        ):
+            analyst._request("{}")
     finally:
         analyst.close()
-    assert fake.body is not None
-    assert fake.body["store"] is False
-    assert "tools" not in fake.body
-    assert fake.body["text"]["format"]["strict"] is True
-    assert "Never authorize" in fake.body["instructions"]
+    assert fake.body is None

@@ -18,11 +18,23 @@ def session() -> Session:
 
 
 def closed_history() -> list[dict]:
-    recent = [{"realizedPnl": 8.0} for _ in range(40)] + [
-        {"realizedPnl": -3.0} for _ in range(10)
+    recent_pnl = [8.0] * 40 + [-3.0] * 10
+    older_pnl = [3.0] * 25 + [-2.0] * 25
+    recent = [
+        {
+            "realizedPnl": pnl,
+            "timestamp": 2_000 - index,
+            "transactionHash": f"recent-{index:03d}",
+        }
+        for index, pnl in enumerate(recent_pnl)
     ]
-    older = [{"realizedPnl": 3.0} for _ in range(25)] + [
-        {"realizedPnl": -2.0} for _ in range(25)
+    older = [
+        {
+            "realizedPnl": pnl,
+            "timestamp": 1_000 - index,
+            "transactionHash": f"older-{index:03d}",
+        }
+        for index, pnl in enumerate(older_pnl)
     ]
     return recent + older
 

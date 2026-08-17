@@ -24,6 +24,7 @@ def truthful_r45():
             "state": "PASS",
             "missing_prediction_profiles": 0,
             "profile_hash_mismatches": 0,
+            "incomplete_activity_histories": 0,
             "non_directional_predictions": 0,
             "profile_selection_temporal_mismatches": 0,
             "execution_evidence_bridge_mismatches": 0,
@@ -58,7 +59,10 @@ def truthful_r45():
             "cost_authorized_usd": 0,
         },
         "methodology": {
-            "execution_model": "L2_TAKER_FAK_ARRIVAL_BOOK_V7_PROSPECTIVE_DIRECTIONAL_REGIME_EVIDENCE",
+            "execution_model": (
+                "L2_TAKER_FAK_ARRIVAL_BOOK_V7_"
+                "PROSPECTIVE_DIRECTIONAL_REGIME_EVIDENCE"
+            ),
             "midpoint_fills": False,
             "arrival_book_refetch": True,
             "l2_depth_consumed": True,
@@ -96,8 +100,10 @@ def truthful_r45():
             "source_strategy_public_activity_only": True,
             "source_strategy_point_in_time_cutoff": True,
             "source_strategy_cutoff_predates_selection": True,
+            "source_strategy_complete_history_required": True,
             "source_strategy_fail_closed": True,
-            "maker_rebate_source_rejected": True,
+            "maker_rebate_source_rejected": False,
+            "maker_rebate_execution_style_only": True,
             "split_merge_conversion_source_rejected": True,
             "repeated_two_sided_source_rejected": True,
             "source_strategy_provenance_in_ledger": True,
@@ -266,7 +272,9 @@ def test_r45_validator_rejects_analysis_methodology_minimum_mismatch():
 
 def test_r45_validator_rejects_wrong_evidence_level_basis():
     payload = truthful_r45()
-    payload["regime_analysis"]["evidence_level_basis"] = "resolved_directional_observations"
+    payload["regime_analysis"]["evidence_level_basis"] = (
+        "resolved_directional_observations"
+    )
     with pytest.raises(ValueError, match="regime evidence methodology"):
         _validate_v5_r45(payload)
 

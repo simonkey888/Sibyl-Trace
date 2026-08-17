@@ -2,7 +2,7 @@
 
 ## Decision
 
-R4.4 does **not** import a market-making, LP, merge/redeem, signing, WebSocket execution, or LIVE order path. It adds one evidence gate before prospective wallet selection: a profitable source wallet must also have public activity consistent with a directional strategy before Sibyl may treat its individual trades as copyable directional alpha.
+R4.4 does **not** import a market-making, LP, merge/redeem, signing, WebSocket execution, or LIVE order path. It adds one evidence gate before prospective wallet selection: a source wallet with positive historical ranking evidence must also have public activity consistent with a directional strategy before Sibyl may treat its individual trades as a directional research candidate. Passing this gate is not alpha or profitability evidence.
 
 ## Why this is required
 
@@ -16,13 +16,13 @@ That is a source-attribution failure, not an execution-speed problem.
 
 Official Polymarket documentation describes complete-set mechanics: collateral can be split into complementary outcome tokens and equal complementary quantities can be merged back into collateral. The current public user-activity API exposes, among others, `TRADE`, `SPLIT`, `MERGE`, `CONVERSION`, `MAKER_REBATE`, `TAKER_REBATE` and `REDEEM`, and documents `type` as a comma-separated list.
 
-R4.4 treats `MAKER_REBATE` and `SPLIT/MERGE/CONVERSION` as direct evidence that the observed source behavior is not cleanly represented by Sibyl's directional taker-copy model. `TAKER_REBATE` is included in the point-in-time sample and evidence hash as diagnostic context, but it is not by itself used to classify a source as non-directional because its presence does not establish directional intent or prove how source PnL attributes the rebate.
+R4.4 treats `SPLIT/MERGE/CONVERSION` and repeated two-sided outcome trading as structural evidence that the observed source behavior is not cleanly represented by Sibyl's directional taker-copy model. `MAKER_REBATE` is execution-style metadata only: its presence does not establish directionality or non-directionality and cannot by itself select or reject a source. Rebate/cashflow metadata remains research-only and does not alter score weights or execution.
 
 ### `ohehe` claim supplied for review
 
 The public profile exists and recent public esports leaderboard data shows substantial positive PnL. The supplied exact claims of USD 212k monthly profit, USD 3.3m volume and 54.1% win rate were not independently established during this review and are **not** encoded as facts or thresholds.
 
-The architectural lesson does not depend on those exact numbers: complete-set and two-sided economics are mechanically possible and must not be mislabeled directional alpha.
+The architectural lesson does not depend on those exact numbers: complete-set and two-sided economics are mechanically possible and must not be mislabeled as directional predictive evidence.
 
 ### External repositories
 
@@ -37,13 +37,13 @@ Reviewed conceptually, not vendored or copied into runtime:
 For a bounded point-in-time public activity sample captured before selection becomes effective:
 
 1. only events with a positive timestamp at or before the fixed cutoff are admissible evidence;
-2. any `MAKER_REBATE` => `NON_DIRECTIONAL_MAKER`;
+2. `MAKER_REBATE` is recorded as execution-style metadata only and has no directionality shortcut;
 3. any `SPLIT`, `MERGE` or `CONVERSION` => `NON_DIRECTIONAL_FULL_SET`;
 4. repeated trading of both outcomes in at least the configured number of conditions and at/above the configured trade fraction => `NON_DIRECTIONAL_TWO_SIDED`;
 5. fewer than the configured minimum **attributable** trades (condition + outcome) => `INSUFFICIENT_EVIDENCE`;
 6. only the remainder => `DIRECTIONAL_CANDIDATE`.
 
-The public activity request is bounded to the documented Data API limits (`limit <= 500` per page, `offset <= 5000`) and uses the documented comma-separated activity type filter. `start=1` requests full available history while `end=cutoff_at` fixes the point-in-time upper bound. The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
+The public activity request uses pages of at most 500 rows and a configured upper bound of 10,000 rows, but that bound is **not** treated as proof of completeness. `start=1` and `end=cutoff_at` define the point-in-time request. Selection is allowed only when pagination proves `COMPLETE + exhausted + no_more`; a full bound, malformed row, transport failure, missing completeness metadata, or unknown continuation fails closed. The thresholds are research policy, not universal market facts. They are persisted in the evidence profile and hashed with the point-in-time sample.
 
 `outcomeIndex` is preferred for paired-outcome classification. If it is absent, normalized `outcome` is the fallback and is also included in the canonical event hash. Missing/future/zero timestamps cannot authorize a source.
 

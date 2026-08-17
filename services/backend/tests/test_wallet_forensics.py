@@ -15,15 +15,18 @@ from app.models import AuditEvent, Wallet, WalletForensicsProfile
 from app.scanner import scan_wallets
 from app.source_strategy import (
     DIRECTIONAL_CANDIDATE,
-    NON_DIRECTIONAL_MAKER,
+    NON_DIRECTIONAL_TWO_SIDED,
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
     SourceStrategyPolicy,
+    canonical_hash,
     classify_source_strategy,
     fetch_public_activity_events,
     profile_hash_valid,
 )
 from app.wallet_forensics import (
     DIRECTIONAL_COPY_RESEARCH,
-    STRUCTURAL_MAKER_RESEARCH,
+    STRUCTURAL_TWO_SIDED_RESEARCH,
     compute_execution_mix,
     compute_wallet_forensics,
     fetch_public_execution_mix,
@@ -76,6 +79,23 @@ def session() -> Session:
     return Session(engine)
 
 
+def authoritative(rows: list[dict]) -> SourceActivityHistory:
+    evidence = ActivityHistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_FILTERED_HISTORY",
+        requested_limit=len(rows) + 1,
+        returned_rows=len(rows),
+        pages_fetched=1,
+        page_size=len(rows) + 1,
+        exhausted=True,
+        has_more=False,
+        malformed_rows=0,
+        invalid_timestamp_rows=0,
+        source_hash=canonical_hash("wallet-forensics-test-fixture"),
+    )
+    return SourceActivityHistory(rows, evidence)
+
+
 def test_activity_fetch_uses_corrected_csv_activity_enum_filter() -> None:
     calls: list[dict] = []
 
@@ -105,10 +125,7 @@ def test_activity_fetch_uses_corrected_csv_activity_enum_filter() -> None:
 
 
 def test_execution_mix_uses_only_comparable_window_and_reconciles_taker_subset() -> None:
-    all_rows = [
-        event("TRADE", 100 + index, asset=f"asset-{index}")
-        for index in range(5)
-    ]
+    all_rows = [event("TRADE", 100 + index, asset=f"asset-{index}") for index in range(5)]
     taker_rows = [all_rows[1], all_rows[2], event("TRADE", 50, asset="older-taker")]
     mix = compute_execution_mix(all_rows, taker_rows, row_limit=500)
     assert mix["proven"] is True
@@ -133,9 +150,7 @@ def test_execution_mix_fails_closed_when_taker_page_is_not_subset() -> None:
 
 
 def test_execution_mix_fails_closed_if_full_raw_page_contains_invalid_rows() -> None:
-    all_rows = [
-        event("TRADE", 100 + index, asset=f"all-{index}") for index in range(5)
-    ]
+    all_rows = [event("TRADE", 100 + index, asset=f"all-{index}") for index in range(5)]
     taker_rows = [all_rows[0], all_rows[1], {"timestamp": 0}]
     mix = compute_execution_mix(all_rows, taker_rows, row_limit=3)
     assert mix["proven"] is False
@@ -167,8 +182,10 @@ def test_forensics_routes_maker_to_research_without_inventing_maker_ratio() -> N
         event("REDEEM", 905, usdc=20),
     ]
     policy = SourceStrategyPolicy(min_trade_count=1, min_paired_conditions=1)
-    source = classify_source_strategy(MAKER, events, cutoff_at=cutoff, policy=policy).to_dict()
-    assert source["classification"] == NON_DIRECTIONAL_MAKER
+    source = classify_source_strategy(
+        MAKER, authoritative(events), cutoff_at=cutoff, policy=policy
+    ).to_dict()
+    assert source["classification"] == NON_DIRECTIONAL_TWO_SIDED
     assert source["taker_rebate_count"] == 0
     assert profile_hash_valid(source)
 
@@ -179,7 +196,7 @@ def test_forensics_routes_maker_to_research_without_inventing_maker_ratio() -> N
         cutoff_at=cutoff,
         source_strategy_profile=source,
     ).to_dict()
-    assert forensic["lane"] == STRUCTURAL_MAKER_RESEARCH
+    assert forensic["lane"] == STRUCTURAL_TWO_SIDED_RESEARCH
     assert forensic["copyable_directional"] is False
     assert forensic["research_only"] is True
     assert forensic["execution_gate"] is False
@@ -211,7 +228,7 @@ def test_forensics_keeps_directional_lane_separate_from_structural_research() ->
     ]
     policy = SourceStrategyPolicy(min_trade_count=5, min_paired_conditions=2)
     source = classify_source_strategy(
-        DIRECTIONAL, events, cutoff_at=cutoff, policy=policy
+        DIRECTIONAL, authoritative(events), cutoff_at=cutoff, policy=policy
     ).to_dict()
     assert source["classification"] == DIRECTIONAL_CANDIDATE
 
@@ -245,7 +262,7 @@ def test_forensics_rejects_tampered_source_strategy_evidence() -> None:
     ]
     source = classify_source_strategy(
         DIRECTIONAL,
-        events,
+        authoritative(events),
         cutoff_at=cutoff,
         policy=SourceStrategyPolicy(min_trade_count=5),
     ).to_dict()
@@ -273,7 +290,7 @@ def test_maker_heavy_execution_style_does_not_rewrite_directionality() -> None:
     ]
     source = classify_source_strategy(
         DIRECTIONAL,
-        events,
+        authoritative(events),
         cutoff_at=cutoff,
         policy=SourceStrategyPolicy(min_trade_count=5),
     ).to_dict()
@@ -325,6 +342,11 @@ class ScannerClient:
 
     def _get(self, _url: str, params: dict) -> list[dict]:
         wallet = params["user"]
+        if _url.endswith("/closed-positions"):
+            offset = int(params.get("offset") or 0)
+            limit = int(params.get("limit") or 50)
+            rows = closed_positions()
+            return rows[offset : offset + limit]
         if _url.endswith("/trades"):
             all_rows = [
                 event(
@@ -346,6 +368,16 @@ class ScannerClient:
                 )
                 for index in range(5)
             ]
+            for index in (0, 1):
+                rows.append(
+                    event(
+                        "TRADE",
+                        118 + index,
+                        asset=f"maker-opposite-{index}",
+                        condition=f"maker-condition-{index}",
+                        outcome_index=1,
+                    )
+                )
             rows.append(event("MAKER_REBATE", 120, usdc=2.5))
             return rows
         return [
@@ -382,7 +414,7 @@ def test_scanner_persists_forensics_but_does_not_let_it_bypass_directional_gate(
         directional_profile = db.get(WalletForensicsProfile, DIRECTIONAL)
         assert maker_profile is not None
         assert directional_profile is not None
-        assert maker_profile.lane == STRUCTURAL_MAKER_RESEARCH
+        assert maker_profile.lane == STRUCTURAL_TWO_SIDED_RESEARCH
         assert maker_profile.copyable_directional is False
         assert maker_profile.research_only is True
         assert directional_profile.lane == DIRECTIONAL_COPY_RESEARCH
@@ -392,7 +424,7 @@ def test_scanner_persists_forensics_but_does_not_let_it_bypass_directional_gate(
         maker_wallet = db.get(Wallet, MAKER)
         directional_wallet = db.get(Wallet, DIRECTIONAL)
         assert maker_wallet is not None and maker_wallet.selected is False
-        assert maker_wallet.rejection_reason == "source_strategy_maker_rebate"
+        assert maker_wallet.rejection_reason == "source_strategy_two_sided"
         assert directional_wallet is not None and directional_wallet.selected is True
 
         audit_event = db.scalar(
@@ -424,12 +456,14 @@ def test_forensics_failure_does_not_discard_valid_directional_source(
 
     class DirectionalOnlyClient(ScannerClient):
         def leaderboard(self, _period: str, _limit: int) -> list[dict]:
-            return [{
-                "proxyWallet": DIRECTIONAL,
-                "pnl": 500,
-                "vol": 50_000,
-                "userName": "directional",
-            }]
+            return [
+                {
+                    "proxyWallet": DIRECTIONAL,
+                    "pnl": 500,
+                    "vol": 50_000,
+                    "userName": "directional",
+                }
+            ]
 
     def broken_forensics(*_args, **_kwargs):
         raise RuntimeError("forensics exploded")
@@ -461,7 +495,9 @@ def test_forensics_failure_does_not_discard_valid_directional_source(
 
 class BrokenActivityClient(ScannerClient):
     def _get(self, _url: str, params: dict) -> list[dict]:
-        raise RuntimeError("activity unavailable")
+        if _url.endswith("/activity"):
+            raise RuntimeError("activity unavailable")
+        return super()._get(_url, params)
 
 
 def test_scanner_activity_failure_fails_closed_without_selecting_source(
