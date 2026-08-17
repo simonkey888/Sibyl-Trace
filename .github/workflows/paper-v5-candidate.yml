@@ -23,30 +23,6 @@ jobs:
     name: exact-head PAPER candidate no-production
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      STATE_DIR: ${{ github.workspace }}/.paper-v5-candidate-state
-      OUTPUT_DIR: ${{ github.workspace }}/paper-v5-candidate-output
-      DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-candidate-state/sibyl-v5.db
-      APP_ENV: github-trial
-      APP_VERSION: paper-v5-candidate-${{ github.event.pull_request.head.sha || github.sha }}
-      TRADING_MODE: PAPER
-      PAPER_TRADING_ENABLED: "true"
-      LIVE_TRADING_ENABLED: "false"
-      COST_AUTHORIZED_USD: "0"
-      EVIDENCE_GENERATION: SIBYL_PAPER_V5_EXECUTION_REALISTIC
-      INITIAL_BANKROLL_USD: "300"
-      CANDIDATE_LIMIT: "3"
-      TRACKED_WALLET_LIMIT: "2"
-      SOURCE_STRATEGY_ACTIVITY_LIMIT: "10000"
-      SOURCE_STRATEGY_MIN_TRADE_COUNT: "30"
-      SOURCE_STRATEGY_MIN_PAIRED_CONDITIONS: "2"
-      SOURCE_STRATEGY_MAX_PAIRED_TRADE_FRACTION: "0.25"
-      ACTIVITY_LOOKBACK_SECONDS: "5400"
-      ACTIVITY_FETCH_LIMIT: "1000"
-      RISK_MAX_SIGNAL_AGE_SECONDS: "5400"
-      HTTP_TIMEOUT_SECONDS: "20"
-      AI_ANALYSIS_ENABLED: "false"
-      RESEARCH_ENABLED: "false"
 
     steps:
       - name: Check out exact PR head
@@ -83,6 +59,30 @@ jobs:
       - name: Execute fresh PAPER R4.5 research-only candidate cycle
         shell: bash
         working-directory: services/backend
+        env:
+          STATE_DIR: ${{ github.workspace }}/.paper-v5-candidate-state
+          OUTPUT_DIR: ${{ github.workspace }}/paper-v5-candidate-output
+          DATABASE_URL: sqlite:///${{ github.workspace }}/.paper-v5-candidate-state/sibyl-v5.db
+          APP_ENV: github-trial
+          APP_VERSION: paper-v5-candidate-${{ github.event.pull_request.head.sha || github.sha }}
+          TRADING_MODE: PAPER
+          PAPER_TRADING_ENABLED: "true"
+          LIVE_TRADING_ENABLED: "false"
+          COST_AUTHORIZED_USD: "0"
+          EVIDENCE_GENERATION: SIBYL_PAPER_V5_EXECUTION_REALISTIC
+          INITIAL_BANKROLL_USD: "300"
+          CANDIDATE_LIMIT: "3"
+          TRACKED_WALLET_LIMIT: "2"
+          SOURCE_STRATEGY_ACTIVITY_LIMIT: "10000"
+          SOURCE_STRATEGY_MIN_TRADE_COUNT: "30"
+          SOURCE_STRATEGY_MIN_PAIRED_CONDITIONS: "2"
+          SOURCE_STRATEGY_MAX_PAIRED_TRADE_FRACTION: "0.25"
+          ACTIVITY_LOOKBACK_SECONDS: "5400"
+          ACTIVITY_FETCH_LIMIT: "1000"
+          RISK_MAX_SIGNAL_AGE_SECONDS: "5400"
+          HTTP_TIMEOUT_SECONDS: "20"
+          AI_ANALYSIS_ENABLED: "false"
+          RESEARCH_ENABLED: "false"
         run: |
           set -euo pipefail
           mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
@@ -95,6 +95,9 @@ jobs:
       - name: Verify candidate PAPER truth and accounting state
         shell: bash
         working-directory: services/backend
+        env:
+          STATE_DIR: ${{ github.workspace }}/.paper-v5-candidate-state
+          OUTPUT_DIR: ${{ github.workspace }}/paper-v5-candidate-output
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -136,6 +139,8 @@ jobs:
       - name: Build immutable candidate checksums and dry-verify public semantics
         shell: bash
         working-directory: services/backend
+        env:
+          OUTPUT_DIR: ${{ github.workspace }}/paper-v5-candidate-output
         run: |
           set -euo pipefail
           python - <<'PY'
