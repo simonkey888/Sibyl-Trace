@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.evidence_v1 import HistoryEvidence, history_evidence
+from app.evidence_v1 import (
+    HistoryEvidence,
+    canonicalize_closed_positions,
+    history_evidence,
+)
 from app.polymarket import PolymarketClient
 
 
@@ -38,7 +42,7 @@ def fetch_research_history(
                 requested_limit=target,
                 page_size=max(len(rows) + 1, page_size),
                 source_order="TIMESTAMP_DESC",
-                source_payload=rows,
+                source_payload=canonicalize_closed_positions(rows),
             ).source_hash,
         )
         return ResearchHistory(rows, evidence)
@@ -80,19 +84,15 @@ def fetch_research_history(
         if len(page) < current_limit:
             break
 
-    typed_pages = [
-        page
-        for page in pages
-        if all(isinstance(item, dict) for item in page)
-    ]
+    typed_pages = [page for page in pages if all(isinstance(item, dict) for item in page)]
     evidence = history_evidence(
         typed_pages,
         requested_limit=target,
         page_size=page_size,
         source_order="TIMESTAMP_DESC",
-        source_payload=pages,
-        transport_complete=(
-            transport_complete and len(typed_pages) == len(pages)
-        ),
+        source_payload=canonicalize_closed_positions(rows)
+        if len(typed_pages) == len(pages)
+        else pages,
+        transport_complete=(transport_complete and len(typed_pages) == len(pages)),
     )
     return ResearchHistory(rows, evidence)

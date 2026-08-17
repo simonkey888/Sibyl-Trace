@@ -16,7 +16,8 @@ SCORE_PROVENANCE_SCHEMA = "SCORE_PROVENANCE_V1"
 SCORE_DETERMINISM_SCHEMA = "SCORE_DETERMINISM_V1"
 EXTERNAL_FORENSICS_SCHEMA = "EXTERNAL_MARKET_FORENSICS_V1"
 OOS_CONTROL_SCHEMA = "OOS_CONTROL_GROUP_V2"
-PROSPECTIVE_OOS_COHORT_SCHEMA = "PROSPECTIVE_OOS_COHORT_V1"
+PROSPECTIVE_OOS_COHORT_SCHEMA = "PROSPECTIVE_OOS_COHORT_V2"
+TRUSTED_OOS_REGISTRATION_SCHEMA = "GITHUB_OOS_REGISTRATION_V1"
 
 
 def canonical_json(value: Any) -> str:
@@ -49,7 +50,7 @@ class HistoryEvidence:
 
     @property
     def authoritative(self) -> bool:
-        return self.status == "COMPLETE"
+        return self.status == "COMPLETE" and self.exhausted and not self.has_more
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -546,13 +547,7 @@ def build_prospective_oos_cohort(
     if len(algorithm_input_hash) != 64:
         raise ValueError("oos_algorithm_input_hash_invalid")
     wallets = tuple(
-        sorted(
-            {
-                wallet.strip().lower()
-                for wallet in treatment_wallets
-                if wallet.strip()
-            }
-        )
+        sorted({wallet.strip().lower() for wallet in treatment_wallets if wallet.strip()})
     )
     if not wallets:
         raise ValueError("oos_treatment_membership_required")
@@ -570,10 +565,7 @@ def build_prospective_oos_cohort(
         "feature_contract_hash": feature_contract_hash,
         "membership_hash": membership_hash,
     }
-    return ProspectiveOOSCohort(
-        **material,
-        cohort_hash=sha256_json(material),
-    )
+    return ProspectiveOOSCohort(**material, cohort_hash=sha256_json(material))
 
 
 def prospective_oos_cohort_hash_valid(cohort: ProspectiveOOSCohort) -> bool:
@@ -587,11 +579,105 @@ def persist_prospective_oos_cohort(path: Path, cohort: ProspectiveOOSCohort) -> 
     if not prospective_oos_cohort_hash_valid(cohort):
         raise ValueError("oos_cohort_hash_invalid")
     path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    descriptor = os.open(path, flags, 0o600)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        payload = json.dumps(cohort.to_dict(), indent=2, sort_keys=True) + "\n"
-        os.write(descriptor, payload.encode("utf-8"))
+        os.write(
+            descriptor, (json.dumps(cohort.to_dict(), indent=2, sort_keys=True) + "\n").encode()
+        )
+    finally:
+        os.close(descriptor)
+
+
+@dataclass(frozen=True)
+class TrustedOOSRegistrationProof:
+    schema_version: str
+    registration_provider: str
+    registration_run_id: int
+    registration_artifact_id: int
+    registration_artifact_digest: str
+    registration_created_at: int
+    registration_content_digest: str
+    cohort_hash: str
+    membership_hash: str
+    feature_contract_hash: str
+    selection_input_hash: str
+    selection_algorithm_source_sha: str
+    proof_hash: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _github_time(value: Any) -> int:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("oos_registration_github_timestamp_missing")
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("oos_registration_github_timestamp_unzoned")
+    return int(parsed.timestamp())
+
+
+def build_github_oos_registration_proof(
+    cohort: ProspectiveOOSCohort,
+    *,
+    github_run: dict[str, Any],
+    github_artifact: dict[str, Any],
+    registered_cohort_payload: dict[str, Any],
+) -> TrustedOOSRegistrationProof:
+    if not prospective_oos_cohort_hash_valid(cohort):
+        raise ValueError("oos_cohort_hash_invalid")
+    if (
+        str(github_run.get("status") or "") != "completed"
+        or str(github_run.get("conclusion") or "") != "success"
+    ):
+        raise ValueError("oos_registration_run_not_successful")
+    run_id = int(github_run.get("id") or 0)
+    artifact_id = int(github_artifact.get("id") or 0)
+    if run_id <= 0 or artifact_id <= 0:
+        raise ValueError("oos_registration_github_identity_invalid")
+    if str(github_run.get("head_sha") or "") != cohort.algorithm_source_sha:
+        raise ValueError("oos_registration_source_sha_mismatch")
+    run_created = _github_time(github_run.get("created_at"))
+    artifact_created = _github_time(github_artifact.get("created_at"))
+    if artifact_created < run_created:
+        raise ValueError("oos_registration_artifact_predates_run")
+    digest = str(github_artifact.get("digest") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise ValueError("oos_registration_artifact_digest_invalid")
+    if registered_cohort_payload != cohort.to_dict():
+        raise ValueError("oos_registration_content_mismatch")
+    material = {
+        "schema_version": TRUSTED_OOS_REGISTRATION_SCHEMA,
+        "registration_provider": "GITHUB",
+        "registration_run_id": run_id,
+        "registration_artifact_id": artifact_id,
+        "registration_artifact_digest": digest,
+        "registration_created_at": artifact_created,
+        "registration_content_digest": sha256_json(registered_cohort_payload),
+        "cohort_hash": cohort.cohort_hash,
+        "membership_hash": cohort.membership_hash,
+        "feature_contract_hash": cohort.feature_contract_hash,
+        "selection_input_hash": cohort.algorithm_input_hash,
+        "selection_algorithm_source_sha": cohort.algorithm_source_sha,
+    }
+    return TrustedOOSRegistrationProof(**material, proof_hash=sha256_json(material))
+
+
+def trusted_oos_registration_hash_valid(proof: TrustedOOSRegistrationProof) -> bool:
+    material = proof.to_dict()
+    claimed = str(material.pop("proof_hash", ""))
+    return len(claimed) == 64 and claimed == sha256_json(material)
+
+
+def persist_trusted_oos_registration(path: Path, proof: TrustedOOSRegistrationProof) -> None:
+    if not trusted_oos_registration_hash_valid(proof):
+        raise ValueError("oos_registration_proof_hash_invalid")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(
+            descriptor, (json.dumps(proof.to_dict(), indent=2, sort_keys=True) + "\n").encode()
+        )
     finally:
         os.close(descriptor)
 
@@ -602,6 +688,8 @@ class OOSControlResult:
     cohort_id: str
     membership_hash: str
     cutoff_timestamp: int
+    trusted_registration_run_id: int
+    trusted_registration_artifact_id: int
     in_sample_count: int
     out_of_sample_count: int
     control_count: int
@@ -620,56 +708,69 @@ def evaluate_oos_control(
     observations: list[dict[str, Any]],
     *,
     cohort: ProspectiveOOSCohort,
+    trusted_registration: TrustedOOSRegistrationProof | None = None,
     value_key: str = "realized_pnl",
 ) -> OOSControlResult:
     if not prospective_oos_cohort_hash_valid(cohort):
         raise ValueError("oos_cohort_hash_invalid")
+    if trusted_registration is None:
+        raise ValueError("oos_trusted_registration_required")
+    if not trusted_oos_registration_hash_valid(trusted_registration):
+        raise ValueError("oos_registration_proof_hash_invalid")
+    expected = {
+        "cohort_hash": cohort.cohort_hash,
+        "membership_hash": cohort.membership_hash,
+        "feature_contract_hash": cohort.feature_contract_hash,
+        "selection_input_hash": cohort.algorithm_input_hash,
+        "selection_algorithm_source_sha": cohort.algorithm_source_sha,
+    }
+    for field, value in expected.items():
+        if getattr(trusted_registration, field) != value:
+            raise ValueError(f"oos_registration_binding_mismatch:{field}")
+    if trusted_registration.registration_provider != "GITHUB":
+        raise ValueError("oos_registration_provider_untrusted")
     cutoff = cohort.selection_cutoff
-    if cohort.created_at >= cutoff:
-        raise ValueError("oos_cohort_not_prospective")
+    if trusted_registration.registration_created_at >= cutoff:
+        raise ValueError("oos_registration_not_before_cutoff")
 
-    in_sample = [
-        row for row in observations if int(row.get("timestamp") or 0) < cutoff
-    ]
-    oos = [
-        row for row in observations if int(row.get("timestamp") or 0) >= cutoff
-    ]
-    if oos and cohort.created_at >= min(
-        int(row.get("timestamp") or 0) for row in oos
-    ):
-        raise ValueError("oos_membership_not_fixed_before_evaluation")
+    timestamps: list[int] = []
+    for row in observations:
+        try:
+            ts = int(row.get("timestamp") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("oos_observation_timestamp_invalid") from exc
+        if ts <= 0:
+            raise ValueError("oos_observation_timestamp_invalid")
+        timestamps.append(ts)
+    in_sample = [row for row, ts in zip(observations, timestamps, strict=True) if ts < cutoff]
+    oos = [row for row, ts in zip(observations, timestamps, strict=True) if ts >= cutoff]
+    if oos:
+        first_oos = min(int(row["timestamp"]) for row in oos)
+        if trusted_registration.registration_created_at >= first_oos:
+            raise ValueError("oos_registration_not_before_first_observation")
+        if cutoff > first_oos:
+            raise ValueError("oos_cutoff_after_first_observation")
 
     treatment_wallets = set(cohort.treatment_wallets)
-    treatment = [
-        row
-        for row in oos
-        if str(row.get("wallet") or "").lower() in treatment_wallets
-    ]
-    control = [
-        row
-        for row in oos
-        if str(row.get("wallet") or "").lower() not in treatment_wallets
-    ]
+    treatment = [row for row in oos if str(row.get("wallet") or "").lower() in treatment_wallets]
+    control = [row for row in oos if str(row.get("wallet") or "").lower() not in treatment_wallets]
     treatment_values = [
-        float(row[value_key])
-        for row in treatment
-        if _finite_number(row.get(value_key))
+        float(row[value_key]) for row in treatment if _finite_number(row.get(value_key))
     ]
     control_values = [
-        float(row[value_key])
-        for row in control
-        if _finite_number(row.get(value_key))
+        float(row[value_key]) for row in control if _finite_number(row.get(value_key))
     ]
     treatment_mean = mean(treatment_values) if treatment_values else None
     control_mean = mean(control_values) if control_values else None
-    delta = None
-    if treatment_mean is not None and control_mean is not None:
-        delta = treatment_mean - control_mean
+    delta = (
+        treatment_mean - control_mean
+        if treatment_mean is not None and control_mean is not None
+        else None
+    )
     percentile = None
     if treatment_mean is not None and control_values:
         percentile = round(
-            sum(value <= treatment_mean for value in control_values) / len(control_values),
-            6,
+            sum(value <= treatment_mean for value in control_values) / len(control_values), 6
         )
     verified = bool(treatment_values and control_values)
     return OOSControlResult(
@@ -677,6 +778,8 @@ def evaluate_oos_control(
         cohort_id=cohort.cohort_id,
         membership_hash=cohort.membership_hash,
         cutoff_timestamp=cutoff,
+        trusted_registration_run_id=trusted_registration.registration_run_id,
+        trusted_registration_artifact_id=trusted_registration.registration_artifact_id,
         in_sample_count=len(in_sample),
         out_of_sample_count=len(oos),
         control_count=len(control_values),

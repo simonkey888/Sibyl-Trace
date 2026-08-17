@@ -52,6 +52,10 @@ R4.5 inherits the R4.3/R4.4 prospective-selection contract:
 
 There is no pre-selection backfill.
 
+### Trusted out-of-sample preregistration
+
+Any claim labeled `VERIFIED` out-of-sample requires a cohort registered before its cutoff through the GitHub-native two-phase preregistration workflow. Local `created_at` values are descriptive only and cannot establish prospective timing. The evaluator binds GitHub run/artifact identity and server timestamp to the cohort hash, membership hash, feature-contract hash, selection-input hash and algorithm/source SHA. Missing, post-cutoff, mismatched, or locally backdated registration evidence fails closed. No OOS result changes score weights or execution policy automatically.
+
 ## Execution model
 
 Canonical R4.5 never fills at midpoint.

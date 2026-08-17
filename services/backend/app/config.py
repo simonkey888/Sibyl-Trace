@@ -72,13 +72,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_unsafe_configuration(self) -> "Settings":
         if self.cost_authorized_usd != 0:
-            raise ValueError(
-                "Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0"
-            )
+            raise ValueError("Sibyl Trace PAPER research is restricted to COST_AUTHORIZED_USD=0")
         if self.trading_mode == "PAPER" and not self.paper_trading_enabled:
             raise ValueError("PAPER mode requires PAPER_TRADING_ENABLED=true")
         if self.research_enabled and self.trading_mode != "PAPER":
             raise ValueError("research capture requires explicit PAPER mode")
+        if self.app_env.lower() == "github-trial" and self.ai_analysis_enabled:
+            raise ValueError("github-trial forbids billable AI analysis at USD0")
 
         if self.app_env.lower() != "production":
             return self
@@ -102,19 +102,11 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [
-            origin.strip()
-            for origin in self.cors_origins.split(",")
-            if origin.strip()
-        ]
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
     def reference_username_list(self) -> list[str]:
-        return [
-            value.strip()
-            for value in self.reference_usernames.split(",")
-            if value.strip()
-        ]
+        return [value.strip() for value in self.reference_usernames.split(",") if value.strip()]
 
 
 @lru_cache

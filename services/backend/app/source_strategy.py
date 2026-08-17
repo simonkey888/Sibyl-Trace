@@ -128,6 +128,21 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def _canonical_source_hash(raw_pages: list[Any]) -> str:
+    material: list[dict[str, Any]] = []
+    for page in raw_pages:
+        if not isinstance(page, list):
+            material.append({"malformed_page_hash": canonical_hash(page)})
+            continue
+        for item in page:
+            if isinstance(item, dict):
+                material.append(_event_identity(item))
+            else:
+                material.append({"malformed_row_hash": canonical_hash(item)})
+    material.sort(key=canonical_hash)
+    return canonical_hash(material)
+
+
 def wallet_hash(address: str) -> str:
     return hashlib.sha256(str(address).strip().lower().encode()).hexdigest()
 
@@ -322,7 +337,7 @@ def fetch_public_activity_events(
         has_more=has_more,
         malformed_rows=malformed_rows,
         invalid_timestamp_rows=invalid_timestamp_rows,
-        source_hash=canonical_hash(raw_identity_material),
+        source_hash=_canonical_source_hash(raw_identity_material),
         reason=reason,
     )
     return SourceActivityHistory(results, evidence)
@@ -336,11 +351,7 @@ def classify_source_strategy(
     policy: SourceStrategyPolicy,
 ) -> SourceStrategyProfile:
     raw = [event for event in events if isinstance(event, dict)]
-    clean = [
-        event
-        for event in raw
-        if 0 < _event_timestamp(event) <= int(cutoff_at)
-    ]
+    clean = [event for event in raw if 0 < _event_timestamp(event) <= int(cutoff_at)]
     invalid_timestamp_event_count = len(raw) - len(clean)
     counts = {event_type: 0 for event_type in _ACTIVITY_TYPES}
     outcomes_by_condition: dict[str, set[str]] = {}
@@ -364,9 +375,7 @@ def classify_source_strategy(
             continue
         attributable_trade_count += 1
         outcomes_by_condition.setdefault(condition_id, set()).add(outcome_key)
-        trade_count_by_condition[condition_id] = (
-            trade_count_by_condition.get(condition_id, 0) + 1
-        )
+        trade_count_by_condition[condition_id] = trade_count_by_condition.get(condition_id, 0) + 1
 
     paired_conditions = {
         condition_id
@@ -374,8 +383,7 @@ def classify_source_strategy(
         if len(outcomes) >= 2
     }
     paired_trade_count = sum(
-        trade_count_by_condition.get(condition_id, 0)
-        for condition_id in paired_conditions
+        trade_count_by_condition.get(condition_id, 0) for condition_id in paired_conditions
     )
     trade_count = counts["TRADE"]
     unattributable_trade_count = max(trade_count - attributable_trade_count, 0)
@@ -392,7 +400,10 @@ def classify_source_strategy(
 
     classification = DIRECTIONAL_CANDIDATE
     rejection_reason: str | None = None
-    if history_evidence is not None and not history_evidence.authoritative:
+    if not isinstance(history_evidence, ActivityHistoryEvidence):
+        classification = UNAVAILABLE
+        rejection_reason = "source_strategy_history_evidence_missing"
+    elif not history_evidence.authoritative:
         classification = UNAVAILABLE
         rejection_reason = "source_strategy_history_incomplete"
     elif counts["SPLIT"] > 0 or counts["MERGE"] > 0 or counts["CONVERSION"] > 0:

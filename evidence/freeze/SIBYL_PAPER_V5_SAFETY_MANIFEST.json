@@ -1,0 +1,69 @@
+{
+  "audited_base_sha": "139f704375e0f71c4eeb1d4bebcd262c6d3599aa",
+  "contract_id": "SIBYL_PAPER_V5_CURRENT_SAFETY_V1",
+  "cost_policy": {
+    "authorized_usd": 0,
+    "paid_apis": false
+  },
+  "external_sources_policy": {
+    "boros_execution": false,
+    "external_research_can_change_score_or_execution": false,
+    "kalshi_execution": false
+  },
+  "live_policy": {
+    "available": false,
+    "order_placement": false,
+    "private_keys": false,
+    "real_money": false
+  },
+  "policy_checks": {
+    "audited_base_registered": true,
+    "billable_ai_runtime_blocked": true,
+    "candidate_read_only": true,
+    "canonical_v5_exact_ci_gate_before_state": true,
+    "canonical_v5_no_push_reset": true,
+    "canonical_v5_paper_only": true,
+    "canonical_v5_transition_idempotency": true,
+    "ci_requires_all_required_jobs": true,
+    "compatibility_computed_not_declared": true,
+    "cost_authorization_locked_zero": true,
+    "github_trial_billable_ai_rejected": true,
+    "live_unavailable": true,
+    "maker_rebate_not_directionality_shortcut": true,
+    "publisher_computed_compatibility": true,
+    "publisher_exact_ci_gate": true,
+    "publisher_no_manual_bypass": true,
+    "score_windows_50_200": true,
+    "secret_scan_fail_closed": true,
+    "source_history_incomplete_fails_closed": true,
+    "source_history_metadata_required": true,
+    "trusted_oos_github_registration_required": true
+  },
+  "protected_files_sha256": {
+    ".github/workflows/ci.yml": "bd0b900c2ef697c17913850f20ced4df98c1a9500af9988a41d73fa5497966e0",
+    ".github/workflows/github-paper-v5.yml": "8361c92b51ed340f4f28aa8722df883da242d44794a1132aad91be1e02bee209",
+    ".github/workflows/paper-v5-candidate.yml": "8925ab60280d242b0de6def3ef552790830ac9e9a92f3b1bfcbc066453cd9750",
+    ".github/workflows/paper-v5-oos-preregister.yml": "20f4ac5ecbf9395f6f06a37bcc1b1afdad59e46b84b5b6d9550cffa514cb6bf1",
+    ".github/workflows/paper-v5-oos-registration-finalize.yml": "be2c4681f978877985e6794d4aeb725a854d0e6ba93a5eec66c36a4d76db583c",
+    ".github/workflows/publish-cloudflare-terminal-v5.yml": "90493d90fc2f3aefd188511d57c093ee4c2f3ab49a2d5a1cae689f35a17323d3",
+    "scripts/freeze_manifest.py": "c88ddf29ae9a970580da71b64e10a1b144070d417d64e6d29ee2108b089c17f9",
+    "scripts/secret-scan.sh": "5550184801663f5004a1c1db5ed0375c2430f2e4263e6e18986e46f6a26f66cf",
+    "scripts/test-secret-scan.sh": "64665bc1d9b44cb74cefd234cd28348d631cd021dc8d8e65c93ac7e8293323c2",
+    "services/backend/app/ai.py": "0e0ad833702cb5fc5f3b63593d0df8cf816005a0379b709e95198011b8458dbe",
+    "services/backend/app/ci_gate.py": "04ccacddecd64b0ac9f4e865c7cebfe1ee0d2de655bf2b2d4ee9d1507438a23e",
+    "services/backend/app/cloudflare_snapshot_r45.py": "ea9b81c04aa26b34acc8c0a48f7a5487cafe113d38bf0e8641ed2ba8be84d39f",
+    "services/backend/app/config.py": "a6f221b2bbf96f5c174cf088c2dbc118232e7990b366989fdefc50e9e0a932e7",
+    "services/backend/app/evidence_lineage.py": "b9dffeed2c8a6d26df1465f4d4963ce685db0961434adaac61080b2f92cd75da",
+    "services/backend/app/evidence_v1.py": "123fdd543fed7a229d4a81221bdae4c803a5574984a774ab89b5fe9f7ccc40f6",
+    "services/backend/app/paper_v5_r43.py": "6a38c68969b8fd3f6bcdb64096b318b7ae40bc09fd71d6c7988dcab42214990d",
+    "services/backend/app/paper_v5_r44.py": "5024bb359f66d279bb7ff054d138ae8ae59e11140e111984fdd34941c9b185f2",
+    "services/backend/app/paper_v5_r45.py": "13a24ad6502846a217327043b778fc3bbfb64689a3ed138739a8d1daa114ba52",
+    "services/backend/app/research_history_v1.py": "ef64e5ee66245beead853223e7d05a4cba1c09201f940300951a4630739601fe",
+    "services/backend/app/scanner.py": "9314b2091d4cae06f090add0f06ca7cf8b2ec19ed44e95ad6766dad4db5e1e91",
+    "services/backend/app/scoring.py": "ce886678522976d69e9a83d81bb450f35449aaefaea6e4fcd88ec95a56c5ecc7",
+    "services/backend/app/source_strategy.py": "d4c1283c0a771e1aa70639acc4e40d2fe3c619603a4f1b2a95475ef666b1ffc7",
+    "services/backend/pyproject.toml": "a6c22a885ac78325f9fed1e79bdebb6d5e9bdb7d0a3171307666e596cfd1bca3"
+  },
+  "schema_version": 1,
+  "scope": "current Sibyl PAPER V5 safety and evidence contract"
+}

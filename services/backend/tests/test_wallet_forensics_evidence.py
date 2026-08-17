@@ -2,7 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.source_strategy import SourceStrategyPolicy, classify_source_strategy
+from app.source_strategy import (
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
+    SourceStrategyPolicy,
+    canonical_hash,
+    classify_source_strategy,
+)
 from app.wallet_forensics import (
     DIRECTIONAL_COPY_RESEARCH,
     compute_execution_mix,
@@ -57,7 +63,22 @@ def test_maker_heavy_mix_is_execution_style_not_directionality() -> None:
     events = [trade(1_900 + index, index) for index in range(30)]
     source = classify_source_strategy(
         WALLET,
-        events,
+        SourceActivityHistory(
+            events,
+            ActivityHistoryEvidence(
+                status="COMPLETE",
+                scope="FULL_AVAILABLE_FILTERED_HISTORY",
+                requested_limit=31,
+                returned_rows=30,
+                pages_fetched=1,
+                page_size=31,
+                exhausted=True,
+                has_more=False,
+                malformed_rows=0,
+                invalid_timestamp_rows=0,
+                source_hash=canonical_hash("forensics-evidence-authoritative"),
+            ),
+        ),
         cutoff_at=cutoff,
         policy=SourceStrategyPolicy(min_trade_count=20),
     ).to_dict()

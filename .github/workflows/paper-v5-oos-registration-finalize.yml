@@ -1,0 +1,92 @@
+name: PAPER V5 OOS Registration Finalizer
+
+on:
+  workflow_run:
+    workflows: ["PAPER V5 OOS Preregistration"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  finalize:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact preregistered source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve immutable GitHub run and artifact metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREREG_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PREREG_RUN_ID" > /tmp/prereg-run.json
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$PREREG_RUN_ID/artifacts" > /tmp/prereg-artifacts.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/prereg-artifacts.json').read_text())
+          expected = f"paper-v5-oos-cohort-{os.environ['PREREG_RUN_ID']}"
+          matches = [a for a in payload.get('artifacts', []) if a.get('name') == expected and not a.get('expired')]
+          assert len(matches) == 1, 'trusted cohort artifact must exist exactly once'
+          artifact = matches[0]
+          assert artifact.get('workflow_run', {}).get('id') in (None, int(os.environ['PREREG_RUN_ID']))
+          Path('/tmp/prereg-artifact.json').write_text(json.dumps(artifact, sort_keys=True))
+          print(artifact['id'])
+          PY
+          ARTIFACT_ID=$(python -c "import json;print(json.load(open('/tmp/prereg-artifact.json'))['id'])")
+          echo "ARTIFACT_ID=$ARTIFACT_ID" >> "$GITHUB_ENV"
+          rm -rf /tmp/cohort && mkdir -p /tmp/cohort
+          gh run download "$PREREG_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "paper-v5-oos-cohort-$PREREG_RUN_ID" --dir /tmp/cohort
+
+      - name: Build trusted registration proof from server metadata
+        env:
+          PREREG_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/backend python - <<'PY'
+          import json
+          from pathlib import Path
+          from app.evidence_v1 import ProspectiveOOSCohort, build_github_oos_registration_proof
+          files = [p for p in Path('/tmp/cohort').rglob('*.json') if p.is_file()]
+          assert len(files) == 1, 'cohort artifact must contain exactly one JSON file'
+          cohort_payload = json.loads(files[0].read_text())
+          cohort = ProspectiveOOSCohort(
+              **{**cohort_payload, 'treatment_wallets': tuple(cohort_payload['treatment_wallets'])}
+          )
+          run = json.loads(Path('/tmp/prereg-run.json').read_text())
+          artifact = json.loads(Path('/tmp/prereg-artifact.json').read_text())
+          proof = build_github_oos_registration_proof(
+              cohort,
+              github_run=run,
+              github_artifact=artifact,
+              registered_cohort_payload=cohort_payload,
+          )
+          assert proof.registration_created_at < cohort.selection_cutoff
+          Path('/tmp/registration-receipt.json').write_text(
+              json.dumps(proof.to_dict(), indent=2, sort_keys=True) + '\n'
+          )
+          print('OOS_TRUSTED_GITHUB_PREREGISTRATION=PASS')
+          PY
+
+      - name: Upload trusted registration receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paper-v5-oos-registration-${{ github.event.workflow_run.id }}
+          path: /tmp/registration-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9

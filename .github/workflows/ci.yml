@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main, "feat/**", "fix/**", "order-001-**"]
+    branches: [main, "feat/**", "fix/**"]
 
 permissions:
   contents: read
@@ -53,10 +53,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Scan repository boundaries
         run: bash scripts/secret-scan.sh
-      - name: Verify frozen PAPER V2 invariants
-        run: python scripts/freeze_manifest.py --check
+      - name: Verify historical PAPER V2 git-object freeze
+        run: python scripts/freeze_manifest.py --check-historical-v2
+      - name: Verify current PAPER V5 safety manifest
+        run: python scripts/freeze_manifest.py --check-v5
       - name: Exercise secret scanner fail-closed fixtures
         run: bash scripts/test-secret-scan.sh
+      - name: Verify no LIVE or paid execution path was introduced
+        run: |
+          ! git grep -n -E -e 'LIVE_TRADING_ENABLED:[[:space:]]*true' -- . ':!docs/**'
+          ! git grep -n -E -e 'COST_AUTHORIZED_USD:[[:space:]]*[1-9]' -- . ':!docs/**'
+          echo 'SAFETY_RUNTIME_STATIC_GATE=PASS'
 
   container:
     runs-on: ubuntu-latest
@@ -154,8 +161,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_SHA" == "$(git rev-parse HEAD)" ]]
-          run_url=$(gh workflow run github-paper-v5.yml --ref main)
-          run_id="${run_url##*/}"
-          [[ "$run_id" =~ ^[0-9]+$ ]]
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Dispatched PAPER V5 run $run_id after all exact-head CI gates passed."
+          gh workflow run github-paper-v5.yml --ref main \
+            -f transition_kind=code-change \
+            -f expected_source_sha="$GITHUB_SHA" \
+            -f source_ci_run_id="$GITHUB_RUN_ID"
+          echo "Dispatched canonical PAPER V5 transition after all exact-head CI gates passed."

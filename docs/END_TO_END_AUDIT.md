@@ -130,3 +130,8 @@ Allowed states:
 - `PROFITABILITY_UNPROVEN` — required until attributable settled OOS evidence proves otherwise.
 
 No aggregate numeric audit score may replace these evidence states.
+
+
+## Prospective OOS authority
+
+`VERIFIED` OOS evidence requires trusted GitHub preregistration created before the cohort cutoff and bound to immutable cohort, membership, feature-contract, selection-input, and algorithm/source hashes. Caller-supplied timestamps alone are never temporal authority. OOS findings remain evidence only and do not authorize LIVE, paid execution, or score/threshold tuning.

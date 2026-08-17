@@ -146,8 +146,8 @@ class ScannerClient:
             }
         ]
 
-    def closed_positions(self, _: str) -> list[dict]:
-        return [{"realizedPnl": 4.0} for _ in range(30)]
+    def closed_positions(self, _: str, limit: int = 1000) -> list[dict]:
+        return [{"realizedPnl": 4.0} for _ in range(min(30, limit))]
 
 
 def test_rescan_clears_stale_selected_wallets() -> None:

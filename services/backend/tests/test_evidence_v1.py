@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.evidence_v1 import (
     BinancePublicFeed,
+    build_github_oos_registration_proof,
     build_prospective_oos_cohort,
     canonicalize_closed_positions,
     classify_lead_lag,
@@ -18,6 +19,7 @@ from app.evidence_v1 import (
     infer_market_bias,
     make_score_provenance,
     persist_prospective_oos_cohort,
+    persist_trusted_oos_registration,
     score_input_hash,
 )
 from app.scoring import score_matrix
@@ -300,6 +302,26 @@ def prospective_cohort():
     )
 
 
+def trusted_registration(cohort=None, *, created_at="1970-01-01T00:00:15Z"):
+    cohort = cohort or prospective_cohort()
+    return build_github_oos_registration_proof(
+        cohort,
+        github_run={
+            "id": 100,
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": cohort.algorithm_source_sha,
+            "created_at": "1970-01-01T00:00:10Z",
+        },
+        github_artifact={
+            "id": 200,
+            "created_at": created_at,
+            "digest": "sha256:" + "c" * 64,
+        },
+        registered_cohort_payload=cohort.to_dict(),
+    )
+
+
 def test_oos_control_group_requires_preregistered_immutable_membership():
     observations = [
         {"wallet": "treatment", "timestamp": 10, "realized_pnl": 1.0},
@@ -307,7 +329,10 @@ def test_oos_control_group_requires_preregistered_immutable_membership():
         {"wallet": "treatment", "timestamp": 20, "realized_pnl": 5.0},
         {"wallet": "control", "timestamp": 20, "realized_pnl": 1.0},
     ]
-    result = evaluate_oos_control(observations, cohort=prospective_cohort())
+    cohort = prospective_cohort()
+    result = evaluate_oos_control(
+        observations, cohort=cohort, trusted_registration=trusted_registration(cohort)
+    )
     assert result.in_sample_count == 2
     assert result.out_of_sample_count == 2
     assert result.control_count == 1
@@ -317,6 +342,8 @@ def test_oos_control_group_requires_preregistered_immutable_membership():
     assert result.treatment_oos_percentile == 1.0
     assert result.status == "VERIFIED"
     assert len(result.membership_hash) == 64
+    assert result.trusted_registration_run_id == 100
+    assert result.trusted_registration_artifact_id == 200
 
 
 def test_oos_cohort_cannot_be_created_at_or_after_cutoff():
@@ -340,3 +367,74 @@ def test_oos_cohort_registry_is_write_once(tmp_path: Path):
     assert path.is_file()
     with pytest.raises(FileExistsError):
         persist_prospective_oos_cohort(path, cohort)
+
+
+def test_oos_evaluation_rejects_backdated_local_created_at_without_trusted_registration():
+    cohort = prospective_cohort()
+    observations = [
+        {"wallet": "treatment", "timestamp": 20, "realized_pnl": 5.0},
+        {"wallet": "control", "timestamp": 20, "realized_pnl": 1.0},
+    ]
+    with pytest.raises(ValueError, match="trusted_registration_required"):
+        evaluate_oos_control(observations, cohort=cohort)
+
+
+def test_oos_trusted_registration_must_predate_cutoff():
+    cohort = prospective_cohort()
+    proof = trusted_registration(cohort, created_at="1970-01-01T00:00:21Z")
+    with pytest.raises(ValueError, match="not_before_cutoff"):
+        evaluate_oos_control(
+            [{"wallet": "treatment", "timestamp": 20, "realized_pnl": 1.0}],
+            cohort=cohort,
+            trusted_registration=proof,
+        )
+
+
+def test_oos_registration_binding_rejects_changed_membership():
+    original = prospective_cohort()
+    proof = trusted_registration(original)
+    changed = build_prospective_oos_cohort(
+        cohort_id="test-oos-002",
+        created_at=15,
+        selection_cutoff=20,
+        algorithm_source_sha="a" * 40,
+        algorithm_input_hash="b" * 64,
+        treatment_wallets={"different-treatment"},
+        control_definition="all other preregistered eligible wallets",
+        feature_contract={"value_key": "realized_pnl", "version": 1},
+    )
+    with pytest.raises(ValueError, match="registration_binding_mismatch"):
+        evaluate_oos_control(
+            [{"wallet": "different-treatment", "timestamp": 20, "realized_pnl": 1}],
+            cohort=changed,
+            trusted_registration=proof,
+        )
+
+
+def test_oos_registration_artifact_is_write_once(tmp_path: Path):
+    path = tmp_path / "registrations" / "oos.json"
+    proof = trusted_registration()
+    persist_trusted_oos_registration(path, proof)
+    with pytest.raises(FileExistsError):
+        persist_trusted_oos_registration(path, proof)
+
+
+def test_github_registration_rejects_wrong_source_sha():
+    cohort = prospective_cohort()
+    with pytest.raises(ValueError, match="source_sha_mismatch"):
+        build_github_oos_registration_proof(
+            cohort,
+            github_run={
+                "id": 100,
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": "d" * 40,
+                "created_at": "1970-01-01T00:00:10Z",
+            },
+            github_artifact={
+                "id": 200,
+                "created_at": "1970-01-01T00:00:15Z",
+                "digest": "sha256:" + "c" * 64,
+            },
+            registered_cohort_payload=cohort.to_dict(),
+        )

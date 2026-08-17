@@ -18,7 +18,13 @@ from app.paper_v5_r44 import (
 )
 from app.repository import initialize_state, set_state
 from app.scanner import scan_wallets
-from app.source_strategy import SourceStrategyPolicy, classify_source_strategy
+from app.source_strategy import (
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
+    SourceStrategyPolicy,
+    canonical_hash,
+    classify_source_strategy,
+)
 
 
 def factory():
@@ -52,6 +58,7 @@ def matrix_stub():
         volume=1000.0,
         closed_count=100,
         concentration=0.2,
+        decided_count=100,
     )
     return SimpleNamespace(
         short_metrics=metrics,
@@ -64,6 +71,23 @@ def matrix_stub():
         execution_edge_sample_size=0,
         average_execution_edge=0.0,
     )
+
+
+def authoritative(rows: list[dict]) -> SourceActivityHistory:
+    evidence = ActivityHistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_FILTERED_HISTORY",
+        requested_limit=len(rows) + 1,
+        returned_rows=len(rows),
+        pages_fetched=1,
+        page_size=len(rows) + 1,
+        exhausted=True,
+        has_more=False,
+        malformed_rows=0,
+        invalid_timestamp_rows=0,
+        source_hash=canonical_hash("r44-test-fixture"),
+    )
+    return SourceActivityHistory(rows, evidence)
 
 
 def trades(wallet: str):
@@ -100,15 +124,32 @@ class ScanClient:
             },
         ]
 
-    def closed_positions(self, _address):
+    def closed_positions(self, _address, limit=1000):
         return []
 
     def _get(self, url, params=None):
+        if url.endswith("/closed-positions"):
+            return []
         assert url == "https://data.test/activity"
         wallet = params["user"]
         rows = trades(wallet)
         if wallet == self.maker:
-            rows.append({"type": "MAKER_REBATE", "timestamp": 1_700_000_100})
+            for index in (0, 1):
+                rows.append(
+                    {
+                        "type": "TRADE",
+                        "transactionHash": f"0xmaker-opposite-{index}",
+                        "conditionId": f"condition-{wallet[-1]}-{index}",
+                        "asset": f"asset-opposite-{index}",
+                        "side": "BUY",
+                        "outcomeIndex": 1,
+                        "timestamp": 1_700_000_100 + index,
+                        "price": 0.5,
+                        "size": 10,
+                        "usdcSize": 5,
+                    }
+                )
+            rows.append({"type": "MAKER_REBATE", "timestamp": 1_700_000_102})
         return rows if int(params.get("offset") or 0) == 0 else []
 
 
@@ -127,7 +168,7 @@ def test_prospective_source_gate_skips_maker_and_selects_directional(monkeypatch
         assert [wallet.address for wallet in selected] == [ScanClient.directional]
         maker = db.get(Wallet, ScanClient.maker)
         assert maker is not None
-        assert maker.rejection_reason == "source_strategy_maker_rebate"
+        assert maker.rejection_reason == "source_strategy_two_sided"
 
 
 def test_r44_engine_fails_closed_without_directional_profile():
@@ -162,7 +203,7 @@ def test_source_profile_must_predate_selection_effective_time():
 def test_strategy_hash_bridge_is_recomputable_and_tamper_evident():
     profile = classify_source_strategy(
         ScanClient.directional,
-        trades(ScanClient.directional),
+        authoritative(trades(ScanClient.directional)),
         cutoff_at=1_900_000_000,
         policy=SourceStrategyPolicy(
             min_trade_count=5,

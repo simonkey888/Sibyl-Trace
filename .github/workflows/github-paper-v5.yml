@@ -4,8 +4,24 @@ on:
   schedule:
     - cron: "47 * * * *"
   workflow_dispatch:
+    inputs:
+      transition_kind:
+        description: "manual or code-change transition"
+        required: false
+        default: manual
+        type: choice
+        options: [manual, code-change]
+      expected_source_sha:
+        description: "Required exact source SHA for code-change transition"
+        required: false
+        type: string
+      source_ci_run_id:
+        description: "Required exact successful CI run for code-change transition"
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -59,12 +75,49 @@ jobs:
         working-directory: services/backend
         run: pip install -e .
 
+      - name: Require exact-head CI before any rolling-state transition
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=$(git rev-parse HEAD)
+          [[ "$SOURCE_SHA" == "$GITHUB_SHA" ]]
+          MAIN_SHA=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ "$SOURCE_SHA" == "$MAIN_SHA" ]]
+          PYTHONPATH=services/backend python -m app.ci_gate \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --output /tmp/required-ci-gate.json
+          test -s /tmp/required-ci-gate.json
+          grep -q '"status": "PASS"' /tmp/required-ci-gate.json
+          CI_RUN_ID=$(python - <<'PYCI'
+          import json
+          print(json.load(open('/tmp/required-ci-gate.json'))['ci_run_id'])
+          PYCI
+          )
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            TRANSITION_KEY="schedule:${GITHUB_RUN_ID}"
+          elif [[ "${{ inputs.transition_kind || 'manual' }}" == "code-change" ]]; then
+            [[ "${{ inputs.expected_source_sha }}" == "$SOURCE_SHA" ]]
+            [[ "${{ inputs.source_ci_run_id }}" =~ ^[0-9]+$ ]]
+            [[ "${{ inputs.source_ci_run_id }}" == "$CI_RUN_ID" ]]
+            TRANSITION_KEY="ci:${CI_RUN_ID}:${SOURCE_SHA}"
+          else
+            TRANSITION_KEY="manual:${GITHUB_RUN_ID}"
+          fi
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+          echo "VERIFIED_CI_RUN_ID=$CI_RUN_ID" >> "$GITHUB_ENV"
+          echo "transition_key=$TRANSITION_KEY" >> "$GITHUB_ENV"
+          echo "EXACT_HEAD_CI_GATE=PASS transition_key=$TRANSITION_KEY"
+
       - name: Restore verified V5 rolling state
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$STATE_DIR" "$OUTPUT_DIR"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            printf '[]\n' > "$STATE_DIR/TRANSITIONS.json"
             echo "No rolling R4.5 state exists yet; starting the registered cohort clean."
             exit 0
           fi
@@ -82,6 +135,21 @@ jobs:
           gzip -t "$STATE_DIR/sibyl-v5.db.gz"
           gzip -dc "$STATE_DIR/sibyl-v5.db.gz" > "$STATE_DIR/sibyl-v5.db"
           rm -f "$STATE_DIR/sibyl-v5.db.gz" "$STATE_DIR/SHA256SUMS"
+          gh release download "$RELEASE_TAG" \
+            --pattern "TRANSITIONS.json" --dir "$STATE_DIR" --clobber >/dev/null 2>&1 || true
+          [[ -s "$STATE_DIR/TRANSITIONS.json" ]] || printf '[]\n' > "$STATE_DIR/TRANSITIONS.json"
+          python - <<'PYTRANSITION'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['STATE_DIR']) / 'TRANSITIONS.json'
+          rows = json.loads(path.read_text())
+          if not isinstance(rows, list):
+              raise SystemExit('rolling transition ledger invalid')
+          keys = [str(row.get('transition_key') or '') for row in rows]
+          if len(keys) != len(set(keys)):
+              raise SystemExit('rolling transition ledger contains duplicate keys')
+          print(f"ROLLING_TRANSITIONS_RESTORED={len(rows)}")
+          PYTRANSITION
           echo "Verified R4.5 V5 rolling state restored."
 
       - name: Verify import and truth contract
@@ -201,6 +269,7 @@ jobs:
                   if included
                   else None,
               }
+          assert packaged["prediction-ledger-v5.jsonl"]["empty_valid"] is True
           manifest["artifact_contract"] = {
               "primary_evidence": [
                   "paper-v5-summary.json",
@@ -335,10 +404,35 @@ jobs:
         run: |
           set -euo pipefail
           test -s "$OUTPUT_DIR/sibyl-v5.db.gz"
+          test -s "$STATE_DIR/TRANSITIONS.json"
+          set +e
+          python - <<'PYTRANSITION'
+          import hashlib, json, os
+          from pathlib import Path
+          state = Path(os.environ['STATE_DIR'])
+          output = Path(os.environ['OUTPUT_DIR'])
+          path = state / 'TRANSITIONS.json'
+          rows = json.loads(path.read_text())
+          key = os.environ['transition_key']
+          if any(row.get('transition_key') == key for row in rows):
+              print('CANONICAL_STATE_TRANSITION=IDEMPOTENT_NOOP')
+              raise SystemExit(78)
+          rows.append({
+              'transition_key': key,
+              'source_sha': os.environ['SOURCE_SHA'],
+              'verified_ci_run_id': int(os.environ['VERIFIED_CI_RUN_ID']),
+              'trigger': os.environ['GITHUB_EVENT_NAME'],
+              'workflow_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'state_sha256': hashlib.sha256((output / 'sibyl-v5.db.gz').read_bytes()).hexdigest(),
+          })
+          (output / 'TRANSITIONS.json').write_text(json.dumps(rows, indent=2, sort_keys=True) + '\n')
+          PYTRANSITION
+          rc=$?
+          set -e
+          if [[ "$rc" == "78" ]]; then exit 0; fi
+          [[ "$rc" == "0" ]]
           cd "$OUTPUT_DIR"
-          printf '%s  %s\n' \
-            "$(sha256sum sibyl-v5.db.gz | awk '{print $1}')" \
-            sibyl-v5.db.gz > RELEASE_SHA256SUMS
+          sha256sum sibyl-v5.db.gz TRANSITIONS.json > RELEASE_SHA256SUMS
           mv RELEASE_SHA256SUMS SHA256SUMS
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
@@ -362,6 +456,7 @@ jobs:
             paper-v5-summary.md \
             evidence-manifest-v5.json \
             copy-timing-analysis.json \
+            TRANSITIONS.json \
             SHA256SUMS \
             --clobber
 

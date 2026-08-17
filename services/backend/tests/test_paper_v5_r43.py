@@ -126,7 +126,7 @@ class ScanClient:
             }
         ]
 
-    def closed_positions(self, _address):
+    def closed_positions(self, _address, limit=1000):
         return []
 
 
@@ -155,6 +155,7 @@ def matrix_stub():
         realized_pnl=100.0,
         volume=1000.0,
         closed_count=100,
+        decided_count=100,
         concentration=0.2,
     )
     return SimpleNamespace(
@@ -219,9 +220,10 @@ def test_r43_valid_activity_persists_recomputable_selection_evidence(tmp_path: P
         wallet = add_wallet(db)
         set_state(db, CYCLE_SELECTION_EFFECTIVE_STATE, str(now - 1))
         db.commit()
-        assert PaperEngineV5R43(settings(), client).process(
-            db, wallet, activity(now, "0xprospective")
-        ) is True
+        assert (
+            PaperEngineV5R43(settings(), client).process(db, wallet, activity(now, "0xprospective"))
+            is True
+        )
         prediction = db.scalar(select(PaperV5Prediction))
         assert prediction is not None
         evidence = db.get(PaperV5ExecutionEvidence, prediction.id)
@@ -232,9 +234,7 @@ def test_r43_valid_activity_persists_recomputable_selection_evidence(tmp_path: P
         assert payload["selection_effective_at"] == now - 1
         assert payload["source_timestamp"] == now
         assert _selection_payload_hash_valid(payload) is True
-        assert _selection_evidence_binding_valid(
-            payload, evidence.execution_evidence_hash
-        ) is True
+        assert _selection_evidence_binding_valid(payload, evidence.execution_evidence_hash) is True
         assert len(payload["r4_2_execution_evidence_hash"]) == 64
         assert len(payload["r4_3_execution_evidence_hash"]) == 64
         assert payload["r4_2_execution_evidence_hash"] != payload["r4_3_execution_evidence_hash"]
@@ -250,9 +250,10 @@ def test_r43_valid_activity_persists_recomputable_selection_evidence(tmp_path: P
             >= row["selection_provenance"]["selection_effective_at"]
         )
         assert row["selection_evidence_bound"] is True
-        assert row["execution_evidence"]["execution_evidence_hash"] == payload[
-            "r4_3_execution_evidence_hash"
-        ]
+        assert (
+            row["execution_evidence"]["execution_evidence_hash"]
+            == payload["r4_3_execution_evidence_hash"]
+        )
         assert row["book_timing"]["decision_book_timestamp_ms"] is not None
         assert row["book_timing"]["arrival_book_timestamp_ms"] is not None
         assert "state timestamp" in row["book_timing"]["timestamp_semantics"]
@@ -333,9 +334,7 @@ def test_first_clean_r43_cycle_arms_selection_without_backfill(monkeypatch, tmp_
             processed, errors = r43.legacy.ingest_activity_v5(db, client, settings(), engine)
             assert processed == 0
             assert errors == []
-            next_selected = list(
-                db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all()
-            )
+            next_selected = list(db.scalars(select(Wallet).where(Wallet.selected.is_(True))).all())
             assert len(next_selected) == 1
             assert int(get_state(db, "paper_v5_selection_effective_at", "0")) > 0
         return 0

@@ -23,7 +23,13 @@ from app.paper_v5_r45 import (
     _regime_context_hash_valid,
 )
 from app.repository import audit
-from app.source_strategy import SourceStrategyPolicy, classify_source_strategy
+from app.source_strategy import (
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
+    SourceStrategyPolicy,
+    canonical_hash,
+    classify_source_strategy,
+)
 
 
 def factory():
@@ -247,9 +253,22 @@ def _strategy_profile(wallet: str) -> dict:
         }
         for i in range(5)
     ]
+    evidence = ActivityHistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_FILTERED_HISTORY",
+        requested_limit=len(rows) + 1,
+        returned_rows=len(rows),
+        pages_fetched=1,
+        page_size=len(rows) + 1,
+        exhausted=True,
+        has_more=False,
+        malformed_rows=0,
+        invalid_timestamp_rows=0,
+        source_hash=canonical_hash("r45-test-fixture"),
+    )
     return classify_source_strategy(
         wallet,
-        rows,
+        SourceActivityHistory(rows, evidence),
         cutoff_at=1_700_000_100,
         policy=SourceStrategyPolicy(
             min_trade_count=5,

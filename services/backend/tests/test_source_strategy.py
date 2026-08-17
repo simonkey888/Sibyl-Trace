@@ -10,7 +10,10 @@ from app.source_strategy import (
     NON_DIRECTIONAL_FULL_SET,
     NON_DIRECTIONAL_TWO_SIDED,
     UNAVAILABLE,
+    ActivityHistoryEvidence,
+    SourceActivityHistory,
     SourceStrategyPolicy,
+    canonical_hash,
     classify_source_strategy,
     fetch_public_activity_events,
     profile_hash_valid,
@@ -39,13 +42,45 @@ def trade(i: int, condition: str, outcome: int = 0) -> dict:
     }
 
 
+def authoritative(events):
+    if isinstance(events, SourceActivityHistory):
+        return events
+    rows = list(events)
+    evidence = ActivityHistoryEvidence(
+        status="COMPLETE",
+        scope="FULL_AVAILABLE_FILTERED_HISTORY",
+        requested_limit=max(len(rows) + 1, 1),
+        returned_rows=len(rows),
+        pages_fetched=1,
+        page_size=max(len(rows) + 1, 1),
+        exhausted=True,
+        has_more=False,
+        malformed_rows=0,
+        invalid_timestamp_rows=0,
+        source_hash=canonical_hash("authoritative-test-fixture"),
+    )
+    return SourceActivityHistory(rows, evidence)
+
+
 def classify(events):
     return classify_source_strategy(
         WALLET,
-        events,
+        authoritative(events),
         cutoff_at=1_900_000_000,
         policy=POLICY,
     )
+
+
+def test_raw_list_without_completeness_metadata_cannot_authorize_directional():
+    profile = classify_source_strategy(
+        WALLET,
+        [trade(i, f"condition-{i}") for i in range(6)],
+        cutoff_at=1_900_000_000,
+        policy=POLICY,
+    )
+    assert profile.classification == UNAVAILABLE
+    assert profile.directional is False
+    assert profile.rejection_reason == "source_strategy_history_evidence_missing"
 
 
 def test_directional_candidate_has_recomputable_hash():
@@ -319,3 +354,26 @@ def test_hash_detects_profile_tampering():
     assert profile_hash_valid(profile) is True
     profile["trade_count"] += 1
     assert profile_hash_valid(profile) is False
+
+
+def test_transport_order_permutation_preserves_authoritative_source_hash_and_profile():
+    rows = [trade(i, f"condition-{i}") for i in range(6)]
+
+    class Client:
+        settings = SimpleNamespace(data_api_base="https://data.test")
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def _get(self, _url, params=None):
+            return self.payload if int(params.get("offset") or 0) == 0 else []
+
+    one = fetch_public_activity_events(Client(rows), WALLET, cutoff_at=1_900_000_000, limit=30)
+    two = fetch_public_activity_events(
+        Client(list(reversed(rows))), WALLET, cutoff_at=1_900_000_000, limit=30
+    )
+    assert one.evidence.source_hash == two.evidence.source_hash
+    first = classify_source_strategy(WALLET, one, cutoff_at=1_900_000_000, policy=POLICY)
+    second = classify_source_strategy(WALLET, two, cutoff_at=1_900_000_000, policy=POLICY)
+    assert first.activity_sample_hash == second.activity_sample_hash
+    assert first.evidence_hash == second.evidence_hash

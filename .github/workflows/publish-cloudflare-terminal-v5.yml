@@ -4,12 +4,6 @@ on:
   workflow_run:
     workflows: ["GitHub PAPER V5 Truthful Execution"]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      source_run_id:
-        description: "Successful canonical PAPER V5 run ID to publish"
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -23,10 +17,8 @@ jobs:
   publish-v5:
     name: publish verified V5 truth plus research evidence
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -39,11 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
-            run_id="${{ github.event.workflow_run.id }}"
-          else
-            run_id="${{ inputs.source_run_id }}"
-          fi
+          run_id="${{ github.event.workflow_run.id }}"
           [[ "$run_id" =~ ^[0-9]+$ ]]
           run=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
           sha=$(jq -r '.head_sha' <<<"$run")
@@ -56,7 +44,10 @@ jobs:
           [[ "$branch" == "main" ]]
           [[ "$conclusion" == "success" ]]
           [[ "$workflow_name" == "GitHub PAPER V5 Truthful Execution" ]]
-          [[ "$sha" == "$main_sha" ]]
+          if [[ "$sha" != "$main_sha" ]]; then
+            echo "Refusing stale V5 publish: source SHA is not current main." >&2
+            exit 1
+          fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "updated_at=$updated_at" >> "$GITHUB_OUTPUT"
@@ -187,13 +178,18 @@ jobs:
               CURRENT,
               build_evidence_block,
               build_evidence_lineage,
+              compatibility_contract,
+              paper_v5_metadata,
               parse_rfc3339,
+              research_v4_metadata,
           )
 
           root = Path('/tmp/sibyl-combined')
           now = int(time.time())
           v5_path = root / 'paper-v5-summary.json'
           v4_path = root / 'research-v4-summary.json'
+          v5_payload = json.loads(v5_path.read_text())
+          v4_payload = json.loads(v4_path.read_text())
           v5_ts = parse_rfc3339(os.environ['SOURCE_UPDATED_AT'])
           v4_ts = parse_rfc3339(os.environ['V4_UPDATED_AT'])
           v5 = build_evidence_block(
@@ -204,7 +200,8 @@ jobs:
               observed_at=v5_ts,
               now=now,
               max_age_seconds=10_800,
-              compatibility_status='COMPATIBLE',
+              source_metadata=paper_v5_metadata(v5_payload),
+              consumer_contract=compatibility_contract('paper_v5'),
               content_hash=hashlib.sha256(v5_path.read_bytes()).hexdigest(),
           )
           if v5['effective_status'] != CURRENT:
@@ -217,7 +214,8 @@ jobs:
               observed_at=v4_ts,
               now=now,
               max_age_seconds=604_800,
-              compatibility_status='COMPATIBLE',
+              source_metadata=research_v4_metadata(v4_payload),
+              consumer_contract=compatibility_contract('research_v4'),
               content_hash=hashlib.sha256(v4_path.read_bytes()).hexdigest(),
           )
           lineage = build_evidence_lineage({
@@ -342,9 +340,7 @@ jobs:
           assert paper.get('source_sha') == os.environ['SOURCE_SHA']
           assert paper.get('source_run_id') == int(os.environ['SOURCE_RUN_ID'])
           assert paper.get('effective_status') == CURRENT
-          assert contract.get('canonical_cohort_id') == (
-              'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'
-          )
+          assert contract.get('canonical_cohort_id') == 'PAPER_V5_R4_5_REGIME_EVIDENCE_2026_08_09'
           assert contract.get('canonical_publisher_workflow') == (
               'publish-cloudflare-terminal-v5.yml'
           )
