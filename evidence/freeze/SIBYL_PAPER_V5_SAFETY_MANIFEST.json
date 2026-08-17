@@ -40,9 +40,9 @@
     "trusted_oos_github_registration_required": true
   },
   "protected_files_sha256": {
-    ".github/workflows/ci.yml": "bd0b900c2ef697c17913850f20ced4df98c1a9500af9988a41d73fa5497966e0",
+    ".github/workflows/ci.yml": "2b7ab63734b651c957259c9b80edbbb939c00d4e86153b36c48b525b3a641d9d",
     ".github/workflows/github-paper-v5.yml": "8361c92b51ed340f4f28aa8722df883da242d44794a1132aad91be1e02bee209",
-    ".github/workflows/paper-v5-candidate.yml": "8925ab60280d242b0de6def3ef552790830ac9e9a92f3b1bfcbc066453cd9750",
+    ".github/workflows/paper-v5-candidate.yml": "a89cefda8c903d9222fd91388ed79bb1f17dc52d7cd711afb9986923dbd3cf4a",
     ".github/workflows/paper-v5-oos-preregister.yml": "20f4ac5ecbf9395f6f06a37bcc1b1afdad59e46b84b5b6d9550cffa514cb6bf1",
     ".github/workflows/paper-v5-oos-registration-finalize.yml": "be2c4681f978877985e6794d4aeb725a854d0e6ba93a5eec66c36a4d76db583c",
     ".github/workflows/publish-cloudflare-terminal-v5.yml": "90493d90fc2f3aefd188511d57c093ee4c2f3ab49a2d5a1cae689f35a17323d3",
