@@ -6,6 +6,8 @@ from typing import Any
 
 from .feeds import _get_json
 
+SEARCH_ENTITIES = ("Bitcoin", "Ethereum", "Solana", "XRP", "Dogecoin")
+
 
 def fetch_limitless() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -46,34 +48,53 @@ def fetch_limitless() -> list[dict[str, Any]]:
     return out
 
 
-def fetch_polymarket() -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+def _polymarket_entity_events(entity: str, now_iso: str) -> list[dict[str, Any]]:
+    events_out: list[dict[str, Any]] = []
     cursor: str | None = None
     seen_cursors: set[str] = set()
-    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-    now_iso = now.isoformat().replace("+00:00", "Z")
-    for _ in range(30):
-        # This is the live/current discovery universe: not closed, already started,
-        # and not ended yet. Keyset pagination remains exhaustive inside that set.
+    for _ in range(20):
         params: dict[str, Any] = {
             "limit": 500,
             "closed": "false",
             "start_date_max": now_iso,
             "end_date_min": now_iso,
+            "title_search": entity,
         }
         if cursor:
             params["after_cursor"] = cursor
         url = "https://gamma-api.polymarket.com/events/keyset?" + urllib.parse.urlencode(params)
         _, payload = _get_json(url)
         if not isinstance(payload, dict):
-            raise RuntimeError("POLYMARKET_KEYSET_CATALOG_INVALID")
+            raise RuntimeError(f"POLYMARKET_KEYSET_CATALOG_INVALID:{entity}")
         events = payload.get("events", [])
         if not isinstance(events, list):
-            raise RuntimeError("POLYMARKET_KEYSET_EVENTS_INVALID")
-        for event in events:
-            if not isinstance(event, dict):
+            raise RuntimeError(f"POLYMARKET_KEYSET_EVENTS_INVALID:{entity}")
+        events_out.extend(event for event in events if isinstance(event, dict))
+        next_cursor = str(payload.get("next_cursor") or "").strip()
+        if not next_cursor:
+            break
+        if next_cursor in seen_cursors:
+            raise RuntimeError(f"POLYMARKET_KEYSET_CURSOR_LOOP:{entity}")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    else:
+        raise RuntimeError(f"POLYMARKET_KEYSET_PAGE_CAP_EXCEEDED:{entity}")
+    return events_out
+
+
+def fetch_polymarket() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen_markets: set[str] = set()
+    seen_events: set[str] = set()
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    now_iso = now.isoformat().replace("+00:00", "Z")
+    for entity in SEARCH_ENTITIES:
+        for event in _polymarket_entity_events(entity, now_iso):
+            event_slug = str(event.get("slug") or event.get("id") or "")
+            if event_slug and event_slug in seen_events:
                 continue
+            if event_slug:
+                seen_events.add(event_slug)
             if event.get("closed") is True or event.get("archived") is True or event.get("active") is False:
                 continue
             for market in event.get("markets") or []:
@@ -82,24 +103,15 @@ def fetch_polymarket() -> list[dict[str, Any]]:
                 if market.get("archived") or market.get("closed") or market.get("active") is False:
                     continue
                 slug = str(market.get("slug") or "")
-                if not slug or slug in seen:
+                if not slug or slug in seen_markets:
                     continue
                 row = dict(market)
                 row["eventSlug"] = event.get("slug")
                 row["eventTitle"] = event.get("title")
                 row["eventStartDate"] = event.get("startDate")
                 row["eventEndDate"] = event.get("endDate")
-                seen.add(slug)
+                seen_markets.add(slug)
                 out.append(row)
-        next_cursor = str(payload.get("next_cursor") or "").strip()
-        if not next_cursor:
-            break
-        if next_cursor in seen_cursors:
-            raise RuntimeError("POLYMARKET_KEYSET_CURSOR_LOOP")
-        seen_cursors.add(next_cursor)
-        cursor = next_cursor
-    else:
-        raise RuntimeError("POLYMARKET_KEYSET_PAGE_CAP_EXCEEDED")
     return out
 
 
