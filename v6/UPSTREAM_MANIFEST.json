@@ -1,16 +1,35 @@
 {
-  "schema_version": "SIBYL_V6_UPSTREAM_V1",
+  "schema_version": "SIBYL_V6_UPSTREAM_V2",
   "repository": "https://github.com/limitless-labs-group/agents-starter.git",
-  "sha": "e35ad881f88c7b5d60388461095ee11b7aa161c5",
+  "SOURCE_PROVENANCE_SHA": "e35ad881f88c7b5d60388461095ee11b7aa161c5",
   "strategy_path": "src/strategies/cross-market-mm",
   "execution_command": ["npm", "run", "cross-market-mm"],
   "attribution": "Limitless Labs agents-starter cross-market-mm",
   "license": "MIT",
   "license_declared_in": "package.json",
   "license_file_present_at_root": false,
+  "DEPENDENCY_RESOLUTION_PROVENANCE": {
+    "mode": "SIBYL_MINIMAL_LOCK_REPAIR",
+    "reason": "upstream package-lock references an expired pkg.pr.new ox preview tarball returning HTTP 404",
+    "patch": "v6/upstream/repair_lock.py",
+    "from": "https://pkg.pr.new/ox@386a3439fe1ce76d237930f8c6e6bb493746069a",
+    "from_version": "0.14.26-386a343.0",
+    "to": "https://registry.npmjs.org/ox/-/ox-0.14.26.tgz",
+    "to_version": "0.14.26",
+    "PACKAGE_INTEGRITY_HASH": "sha512-t68x49i+heyvHFp1iSq+JjgGyNGJ0AujNMTGXKt96sPGxX4T74c5QUE3LL57hDxGXYG/PM4sq2xCJ4/wCGOQ/w==",
+    "lock_deleted": false,
+    "floating_dependency_versions_added": false
+  },
+  "runtime_provenance_files": [
+    "/opt/agents-starter/.sibyl-upstream-sha",
+    "/opt/agents-starter/.sibyl-dependency-provenance.json",
+    "/opt/agents-starter/.sibyl-patched-lock-sha256"
+  ],
   "policy": {
     "dry_run_only": true,
     "live_allowed": false,
-    "copy_source_into_sibyl": false
+    "copy_source_into_sibyl": false,
+    "upstream_source_mutated": false,
+    "dependency_lock_repair_is_sibyl_owned_and_audited": true
   }
 }
