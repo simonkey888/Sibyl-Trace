@@ -10,7 +10,7 @@ class CloudContractTests(unittest.TestCase):
     def workflow(self) -> str:
         return (ROOT / ".github/workflows/sibyl-v6-r1.yml").read_text(encoding="utf-8")
 
-    def test_builder_job_never_references_trading_secret_values(self):
+    def test_builder_jobs_never_reference_trading_secret_values(self):
         source = self.workflow()
         gcp = source[source.index("  gcp-inventory:") :]
         for forbidden in (
@@ -20,10 +20,11 @@ class CloudContractTests(unittest.TestCase):
             "POLY_SECRET",
             "LIVE_ARMED",
             "secrets.",
+            "credentials_json",
         ):
             self.assertNotIn(forbidden, gcp)
 
-    def test_keyless_wif_permissions_are_scoped_to_gcp_job(self):
+    def test_keyless_wif_permissions_are_scoped_to_gcp_jobs(self):
         source = self.workflow()
         before_gcp = source[: source.index("  gcp-inventory:")]
         gcp = source[source.index("  gcp-inventory:") :]
@@ -44,13 +45,22 @@ class CloudContractTests(unittest.TestCase):
         self.assertNotIn(forbidden_binding, source)
         self.assertIn("BUILDER_SECRET_ACCESSOR_FORBIDDEN", source)
 
+    def test_live_armed_secret_container_has_no_r1_value_or_accessor(self):
+        source = (ROOT / "v6/cloud/bootstrap.sh").read_text(encoding="utf-8")
+        self.assertIn("GCP_LIVE_ARMED_SECRET", source)
+        self.assertIn("LIVE_ARMED_ENABLED_VERSIONS=0", source)
+        self.assertNotIn("secrets versions add", source)
+        self.assertNotIn("versions access", source)
+
     def test_worker_pool_is_exactly_one_and_r1_has_no_live_armed(self):
         source = (ROOT / "v6/cloud/deploy-worker.sh").read_text(encoding="utf-8")
         self.assertIn("--instances 1", source)
         self.assertIn("DRY_RUN=true", source)
         self.assertIn("SIBYL_V6_LIVE_ALLOWED=false", source)
+        self.assertIn("SIBYL_V6_RUN_UPSTREAM=0", source)
         self.assertNotIn("--set-secrets", source)
         self.assertNotIn("LIVE_ARMED=", source)
+        self.assertIn("manualInstanceCount", source)
 
     def test_worker_deploy_requires_digest_not_mutable_tag(self):
         source = (ROOT / "v6/cloud/deploy-worker.sh").read_text(encoding="utf-8")
@@ -59,10 +69,38 @@ class CloudContractTests(unittest.TestCase):
         self.assertIn("^sha256:[0-9a-f]{64}$", source)
 
     def test_region_cannot_be_guessed(self):
-        source = (ROOT / "v6/cloud/deploy-worker.sh").read_text(encoding="utf-8")
-        self.assertIn("GCP_WORKER_REGION:?region must come from completed probe evidence", source)
+        deploy = (ROOT / "v6/cloud/deploy-worker.sh").read_text(encoding="utf-8")
+        probes = (ROOT / "v6/cloud/probe-regions.sh").read_text(encoding="utf-8")
+        self.assertIn("GCP_WORKER_REGION:?region must come from completed probe evidence", deploy)
         for region in ("us-east1", "us-central1", "southamerica-east1"):
-            self.assertIn(region, source)
+            self.assertIn(region, deploy)
+            self.assertIn(region, probes)
+        self.assertIn("sibyl_v6.select_region", probes)
+
+    def test_probe_jobs_use_exact_digest_and_are_disposable(self):
+        source = (ROOT / "v6/cloud/probe-regions.sh").read_text(encoding="utf-8")
+        self.assertIn('IMAGE_REF="${IMAGE_URI}@${IMAGE_DIGEST}"', source)
+        self.assertIn("gcloud run jobs delete", source)
+        self.assertIn("--max-retries 0", source)
+        self.assertIn("--repetitions,5", source)
+
+    def test_deploy_lane_requires_explicit_dispatch_and_positive_cost_gate(self):
+        source = self.workflow()
+        deploy = source[source.index("  gcp-deploy:") :]
+        self.assertIn("github.event_name == 'workflow_dispatch'", deploy)
+        self.assertIn("inputs.apply == true", deploy)
+        self.assertIn("COST_AUTHORIZED_USD", deploy)
+        self.assertIn("value <= 0", deploy)
+        self.assertIn("refs/heads/feat/sibyl-v6-cross-market-mm-r1", deploy)
+
+    def test_container_default_is_continuous_paper_worker(self):
+        dockerfile = (ROOT / "v6/Dockerfile").read_text(encoding="utf-8")
+        worker = (ROOT / "v6/sibyl_v6/worker.py").read_text(encoding="utf-8")
+        self.assertIn('ENTRYPOINT ["python3", "-m", "sibyl_v6.worker"]', dockerfile)
+        self.assertIn("DRY_RUN=true", dockerfile)
+        self.assertIn("SIBYL_V6_LIVE_ALLOWED=false", dockerfile)
+        self.assertIn("time.sleep(interval)", worker)
+        self.assertIn("if code == 2", worker)
 
     def test_no_gcs_fuse_or_bucket_mount(self):
         cloud = "\n".join(
