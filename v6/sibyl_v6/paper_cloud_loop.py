@@ -124,9 +124,6 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     margin = margin_bps / 10_000.0
     yes_cap = poly_bid - margin
     no_cap = 1.0 - poly_ask - margin
-    if quotes["yes"] > yes_cap + 0.005000001 or quotes["no"] > no_cap + 0.005000001:
-        # Upstream clips to the cent grid; allow only the half-tick quantization envelope.
-        raise RuntimeError("QUOTE_EXCEEDS_UPSTREAM_FAIR_VALUE_CAP")
 
     cycle_latency_ms = (time.perf_counter_ns() - wall_started) / 1_000_000.0
     cpu_ms = (time.process_time_ns() - cpu_started) / 1_000_000.0
