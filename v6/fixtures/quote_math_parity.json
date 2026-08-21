@@ -1,0 +1,9 @@
+[
+  {"poly_bid":0.60,"poly_ask":0.62,"margin_bps":100,"yes_book":null},
+  {"poly_bid":0.55,"poly_ask":0.57,"margin_bps":0,"yes_book":null},
+  {"poly_bid":0.50,"poly_ask":0.99,"margin_bps":100,"yes_book":null},
+  {"poly_bid":0.69,"poly_ask":0.71,"margin_bps":0,"yes_book":{"bid":0.60,"ask":0.65}},
+  {"poly_bid":0.60,"poly_ask":0.62,"margin_bps":100,"yes_book":{"bid":0.50,"ask":0.70}},
+  {"poly_bid":0.60,"poly_ask":0.62,"margin_bps":100,"yes_book":{"bid":0.99,"ask":0.05}},
+  {"poly_bid":0.627,"poly_ask":0.643,"margin_bps":37,"yes_book":{"bid":0.61,"ask":0.66}}
+]
