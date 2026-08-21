@@ -79,6 +79,8 @@ class PairComparison:
     right_market_id: str
     left_rule_fingerprint: str | None
     right_rule_fingerprint: str | None
+    left_source_payload_hash: str | None
+    right_source_payload_hash: str | None
     differing_fields: tuple[str, ...]
     unknown_fields: tuple[str, ...]
     comparison_fingerprint: str
@@ -129,6 +131,8 @@ def _comparison(
         "right": right.market_id,
         "left_rule": left.rule.fingerprint if left.rule else None,
         "right_rule": right.rule.fingerprint if right.rule else None,
+        "left_source_payload_hash": left.source_payload_hash,
+        "right_source_payload_hash": right.source_payload_hash,
         "differing": differing,
         "unknown": unknown,
     }
@@ -141,6 +145,8 @@ def _comparison(
         right_market_id=right.market_id,
         left_rule_fingerprint=left.rule.fingerprint if left.rule else None,
         right_rule_fingerprint=right.rule.fingerprint if right.rule else None,
+        left_source_payload_hash=left.source_payload_hash,
+        right_source_payload_hash=right.source_payload_hash,
         differing_fields=differing,
         unknown_fields=unknown,
         comparison_fingerprint=digest,
