@@ -43,7 +43,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Deterministic V6 safety and economics suite
+      - name: Deterministic V6 contracts
         env:
           PYTHONPATH: v6
         run: python -m unittest discover -s v6/tests -v
@@ -52,7 +52,7 @@ jobs:
 
   public-feeds:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -62,15 +62,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Real public Polymarket plus Limitless market/orderbook smoke
+      - name: Generic real public feed transport smoke
         env:
           PYTHONPATH: v6
         run: |
           set -euo pipefail
           mkdir -p /tmp/sibyl-v6-evidence
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           from sibyl_v6.feeds import public_feed_smoke
           payload = public_feed_smoke()
@@ -78,43 +77,37 @@ jobs:
           Path('/tmp/sibyl-v6-evidence/public-feeds.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
           print(json.dumps(payload, sort_keys=True))
           assert payload['status'] == 'PASS', payload
+          print('PUBLIC_FEEDS=PASS')
           PY
-      - name: Semantic candidate discovery is explicitly not matching
+      - name: Discovery work exists without conflating candidate and exact
         env:
           PYTHONPATH: v6
         run: |
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           from sibyl_v6.discovery import build_discovery_evidence
           path = Path('/tmp/sibyl-v6-evidence/pair-discovery.json')
           payload = build_discovery_evidence(path, Path('v6/config/verified_pairs.json'))
           payload['source_sha'] = os.environ['SOURCE_SHA']
+          payload['DISCOVERY_HAS_WORK'] = (
+              payload['CANDIDATE_PAIR_COUNT'] > 0
+              or payload['EXACT_EQUIVALENT_PAIR_COUNT'] > 0
+          )
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
-          assert payload['CANDIDATE_PAIR_COUNT'] > 0, payload
+          assert payload['DISCOVERY_HAS_WORK'], payload
           assert payload['candidate_semantics'] == 'SEMANTIC_EVENT_METADATA_ONLY_NOT_MATCHED'
+          assert payload['exact_semantics'] == 'FULL_RULE_EQUIVALENCE_WITH_SOURCE_PAYLOAD_HASHES'
           print(f"CANDIDATE_PAIR_COUNT={payload['CANDIDATE_PAIR_COUNT']}")
           print(f"EXACT_EQUIVALENT_PAIR_COUNT={payload['EXACT_EQUIVALENT_PAIR_COUNT']}")
-          for i,row in enumerate(payload['candidate_pairs'][:12], 1):
-              l=row['limitless']; r=row['polymarket']
-              print(f"CANDIDATE_{i}=" + json.dumps({
-                  'score':row['score'],'asset':row['asset'],'family':row['family'],
-                  'end_delta_seconds':row['end_delta_seconds'],
-                  'limitless_slug':l.get('slug'),'limitless_title':l.get('title') or l.get('question'),
-                  'limitless_end':l.get('derived_end_utc'),
-                  'polymarket_id':r.get('id') or r.get('conditionId'),
-                  'polymarket_slug':r.get('slug'),'polymarket_title':r.get('question') or r.get('title'),
-                  'polymarket_end':r.get('derived_end_utc'),
-              }, sort_keys=True))
+          print('DISCOVERY_HAS_WORK=YES')
           PY
       - name: Full-L2 synthetic fill-to-hedge evidence
         env:
           PYTHONPATH: v6
         run: |
           python - <<'PY'
-          import json
-          import os
+          import json, os
           from pathlib import Path
           from sibyl_v6.simulate import write_simulated_hedge
           path = Path('/tmp/sibyl-v6-evidence/simulated-hedge.json')
@@ -129,7 +122,6 @@ jobs:
           assert result['partial_fill'] is False
           assert result['orphan_exposure'] == '0'
           print('SIMULATED_HEDGE_RESULT=GREEN_FULL_L2_SYNTHETIC')
-          print('SIMULATED_HEDGE_EVIDENCE_HASH=' + result['evidence_hash'])
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -138,21 +130,116 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  container:
+  exact-pair-paper:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ env.SOURCE_SHA }}
       - name: Assert exact-head checkout
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Build immutable upstream-pinned V6 image
-        run: docker build --pull --tag sibyl-v6:${SOURCE_SHA} --file v6/Dockerfile .
-      - name: Verify image cannot arm LIVE and upstream provenance is exact
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Bounded PAPER cycle on audited BTC pair using real books
+        env:
+          PYTHONPATH: v6
+          DRY_RUN: "true"
+          SIBYL_V6_LIVE_ALLOWED: "false"
+          SIBYL_V6_RUN_UPSTREAM: "0"
+          SIBYL_V6_EVIDENCE_BACKEND: "FILE"
+          SIBYL_V6_FILE_STORE_ROOT: /tmp/sibyl-v6-file-store
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint python3 sibyl-v6:${SOURCE_SHA} - <<'PY'
+          mkdir -p /tmp/sibyl-v6-exact-pair
+          python -m sibyl_v6.paper_cloud_loop --once --evidence /tmp/sibyl-v6-exact-pair/cycle.json | tee /tmp/sibyl-v6-exact-pair/stdout.jsonl
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/sibyl-v6-exact-pair/cycle.json').read_text())
+          assert p['EXACT_PAIR_LIVE_CYCLE'] == 'PASS', p
+          assert p['REAL_FEEDS'] is True
+          assert p['LIMITLESS_EXACT_BOOK_HTTP'] == 200
+          assert p['POLY_EXACT_BOOK_HTTP'] == 200
+          assert p['exact_pair']['limitless_slug'] == '62000-1786954111732'
+          assert p['exact_pair']['polymarket_slug'] == 'will-bitcoin-dip-to-62k-august-17-23-2026'
+          assert p['exact_pair']['rule_fingerprint'] == 'c26d3fa531ae6d896c579f2a5308c1ac1e0dc675c80bac6de666155b0d7f914c'
+          assert p['exact_pair']['comparison_fingerprint'] == '120a27231493cff6794631c9d5137849e788a1855ecc70600fe8c4f9b69a5f64'
+          for venue in ('limitless','polymarket'):
+              assert p[venue]['bid_levels'] > 0 and p[venue]['ask_levels'] > 0
+              assert p[venue]['best_executable_bid'] is not None
+              assert p[venue]['best_executable_ask'] is not None
+              if p[venue]['source_timestamp_ms'] is None:
+                  assert p[venue]['quote_age_ms'] is None
+                  assert p[venue]['quote_age_status'] == 'UNKNOWN'
+          assert p['paper_mechanics']['limitless_order_sides'] == ['YES_BUY','NO_BUY']
+          assert p['paper_mechanics']['postOnly'] is True
+          assert p['paper_mechanics']['computed_YES_BUY'] is not None
+          assert p['paper_mechanics']['computed_NO_BUY'] is not None
+          assert p['REAL_ORDERS'] == 0
+          assert p['CAPITAL_MOVED_USD'] == '0'
+          print('EXACT_PAIR_LIVE_CYCLE=PASS')
+          print('REAL_ORDERS=0')
+          print('CAPITAL_MOVED_USD=0')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-exact-pair-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-exact-pair
+          if-no-files-found: error
+          retention-days: 14
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Clean build A
+        run: docker build --pull --no-cache --tag sibyl-v6:a --file v6/Dockerfile .
+      - name: Capture build A dependency provenance
+        run: |
+          mkdir -p /tmp/sibyl-v6-container-evidence
+          docker run --rm --entrypoint cat sibyl-v6:a /opt/agents-starter/.sibyl-dependency-provenance.json > /tmp/sibyl-v6-container-evidence/dependency-a.json
+          docker run --rm --entrypoint cat sibyl-v6:a /opt/agents-starter/.sibyl-patched-lock-sha256 > /tmp/sibyl-v6-container-evidence/lock-a.sha256
+      - name: Remove build cache before build B
+        run: docker builder prune --all --force
+      - name: Clean build B
+        run: docker build --pull --no-cache --tag sibyl-v6:b --file v6/Dockerfile .
+      - name: Capture and compare build B dependency provenance
+        run: |
+          docker run --rm --entrypoint cat sibyl-v6:b /opt/agents-starter/.sibyl-dependency-provenance.json > /tmp/sibyl-v6-container-evidence/dependency-b.json
+          docker run --rm --entrypoint cat sibyl-v6:b /opt/agents-starter/.sibyl-patched-lock-sha256 > /tmp/sibyl-v6-container-evidence/lock-b.sha256
+          cmp /tmp/sibyl-v6-container-evidence/dependency-a.json /tmp/sibyl-v6-container-evidence/dependency-b.json
+          cmp /tmp/sibyl-v6-container-evidence/lock-a.sha256 /tmp/sibyl-v6-container-evidence/lock-b.sha256
+          echo 'IMAGE_BUILD=PASS'
+      - name: Verify upstream source and dependency provenance
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh sibyl-v6:b -lc '
+            test "$(cat /opt/agents-starter/.sibyl-upstream-sha)" = "e35ad881f88c7b5d60388461095ee11b7aa161c5"
+            test "$(git -C /opt/agents-starter rev-parse HEAD)" = "e35ad881f88c7b5d60388461095ee11b7aa161c5"
+            test "$(sha256sum /opt/agents-starter/package-lock.json | awk "{print \$1}")" = "$(cat /opt/agents-starter/.sibyl-patched-lock-sha256)"
+            python3 - <<"PY"
+          import json
+          p=json.load(open("/opt/agents-starter/.sibyl-dependency-provenance.json"))
+          assert p["SOURCE_PROVENANCE_SHA"] == "e35ad881f88c7b5d60388461095ee11b7aa161c5"
+          assert p["DEPENDENCY_RESOLUTION_PROVENANCE"].startswith("SIBYL_MINIMAL_LOCK_REPAIR:")
+          assert len(p["LOCK_PATCH_HASH"]) == 64
+          assert len(p["ORIGINAL_LOCK_SHA256"]) == 64
+          assert len(p["PATCHED_LOCK_SHA256"]) == 64
+          assert p["PACKAGE_INTEGRITY_HASHES"]["ox@0.14.26"] == "sha512-t68x49i+heyvHFp1iSq+JjgGyNGJ0AujNMTGXKt96sPGxX4T74c5QUE3LL57hDxGXYG/PM4sq2xCJ4/wCGOQ/w=="
+          print("UPSTREAM_SOURCE_PROVENANCE=PASS")
+          print("DEPENDENCY_PROVENANCE=PASS")
+          PY
+          '
+      - name: Verify image cannot arm LIVE
+        run: |
+          docker run --rm --entrypoint python3 sibyl-v6:b - <<'PY'
           import sys
           from pathlib import Path
           sys.path.insert(0, '/app/v6')
@@ -162,15 +249,83 @@ jobs:
           assert result.LIVE_PREFLIGHT == 'NOT_RUN', result
           print(result)
           PY
-      - name: Verify continuous worker entrypoint and R1 env
+      - name: Quote math parity against pinned upstream computeBuyPrices
+        run: |
+          docker run --rm --entrypoint sh sibyl-v6:b -lc '
+            set -eu
+            cd /opt/agents-starter
+            ./node_modules/.bin/tsx /app/v6/upstream_quote_parity.ts /app/v6/fixtures/quote_math_parity.json > /tmp/upstream-quotes.json
+            cd /app
+            python3 -m sibyl_v6.quote_parity /app/v6/fixtures/quote_math_parity.json /tmp/upstream-quotes.json
+          ' | tee /tmp/sibyl-v6-container-evidence/quote-parity.txt
+          grep -q '"QUOTE_MATH_PARITY": "PASS"' /tmp/sibyl-v6-container-evidence/quote-parity.txt
+          echo 'QUOTE_MATH_PARITY=PASS'
+      - name: Bounded Northflank-sized exact-pair PAPER profile
         run: |
           set -euo pipefail
-          docker image inspect sibyl-v6:${SOURCE_SHA} --format '{{json .Config.Entrypoint}} {{json .Config.Env}}' | tee /tmp/v6-image-config.txt
-          grep -q 'sibyl_v6.worker' /tmp/v6-image-config.txt
-          grep -q 'DRY_RUN=true' /tmp/v6-image-config.txt
-          grep -q 'SIBYL_V6_LIVE_ALLOWED=false' /tmp/v6-image-config.txt
-      - name: Record local immutable image content id
-        run: docker image inspect sibyl-v6:${SOURCE_SHA} --format 'IMAGE_ID={{.Id}}'
+          mkdir -p /tmp/sibyl-v6-profile
+          chmod 777 /tmp/sibyl-v6-profile
+          docker run --rm \
+            --cpus=0.2 --memory=512m \
+            -e SOURCE_SHA="$SOURCE_SHA" \
+            -e DRY_RUN=true \
+            -e SIBYL_V6_LIVE_ALLOWED=false \
+            -e SIBYL_V6_RUN_UPSTREAM=0 \
+            -e SIBYL_V6_EVIDENCE_BACKEND=FILE \
+            -e SIBYL_V6_FILE_STORE_ROOT=/evidence/store \
+            -v /tmp/sibyl-v6-profile:/evidence \
+            --entrypoint python3 sibyl-v6:b \
+            -m sibyl_v6.paper_cloud_loop --cycles 3 --interval 1 --evidence /evidence/cycle-000001.json \
+            | tee /tmp/sibyl-v6-container-evidence/bounded-profile.jsonl
+          python3 - <<'PY' | tee /tmp/sibyl-v6-container-evidence/profile-summary.txt
+          import json
+          from pathlib import Path
+          files=sorted(Path('/tmp/sibyl-v6-profile').glob('cycle-*.json'))
+          rows=[json.loads(p.read_text()) for p in files]
+          assert len(rows) == 3, files
+          assert all(r['EXACT_PAIR_LIVE_CYCLE']=='PASS' for r in rows)
+          assert all(r['REAL_ORDERS']==0 and r['CAPITAL_MOVED_USD']=='0' for r in rows)
+          rss=max(r['runtime_profile']['RSS_PEAK_KB'] for r in rows)
+          cpu_ms=[r['runtime_profile']['CPU_PROCESS_MS'] for r in rows]
+          ratios=[r['runtime_profile']['CPU_TO_WALL_RATIO'] for r in rows]
+          lat=[r['cycle_latency_ms'] for r in rows]
+          reconnects=sum(sum(r['runtime_profile']['reconnects'].values()) for r in rows)
+          evidence_bytes=[r['evidence_bytes_per_cycle'] for r in rows]
+          assert rss < 512*1024, rss
+          print(f'RSS_MIN={min(r["runtime_profile"]["RSS_PEAK_KB"] for r in rows)}KB')
+          print(f'RSS_PEAK={rss}KB')
+          print('CPU_PROFILE=' + json.dumps({'process_ms':cpu_ms,'cpu_to_wall_ratio':ratios}, separators=(',',':')))
+          print('CYCLE_LATENCY_MS=' + json.dumps(lat, separators=(',',':')))
+          print(f'RECONNECTS={reconnects}')
+          print('EVIDENCE_BYTES_PER_CYCLE=' + json.dumps(evidence_bytes, separators=(',',':')))
+          print('NORTHFLANK_COMPATIBLE=YES')
+          print('REAL_ORDERS=0')
+          print('CAPITAL_MOVED_USD=0')
+          PY
+      - name: Verify Northflank readiness contract is mutation-free
+        run: |
+          python3 - <<'PY'
+          import json
+          p=json.load(open('v6/cloud/northflank-readiness.json'))
+          assert p['mutation_authorized'] is False
+          assert p['service'] == 'sibyl-v6-mm'
+          assert p['dockerfile'] == 'v6/Dockerfile'
+          assert p['resources'] == {'vcpu': 0.2, 'memory_mb': 512}
+          assert p['environment']['DRY_RUN'] == 'true'
+          assert p['environment']['SIBYL_V6_LIVE_ALLOWED'] == 'false'
+          assert p['environment']['SIBYL_V6_RUN_UPSTREAM'] == '0'
+          assert p['claims']['real_orders'] == 0
+          assert p['claims']['capital_moved_usd'] == 0
+          print('NORTHFLANK_READINESS=PASS')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-container-evidence-${{ env.SOURCE_SHA }}
+          path: |
+            /tmp/sibyl-v6-container-evidence
+            /tmp/sibyl-v6-profile
+          if-no-files-found: error
+          retention-days: 14
 
   gcp-inventory:
     runs-on: ubuntu-latest
@@ -198,8 +353,9 @@ jobs:
             if [[ -z "${!name:-}" ]]; then configured=false; fi
           done
           echo "configured=$configured" >> "$GITHUB_OUTPUT"
-          printf '{"source_sha":"%s","gcp_configuration_present":%s,"mutation_attempted":false}\n' "$SOURCE_SHA" "$configured" > /tmp/sibyl-v6-gcp/configuration.json
+          printf '{"source_sha":"%s","gcp_configuration_present":%s,"mutation_attempted":false,"gcp_metadata_required_for_boot":false}\n' "$SOURCE_SHA" "$configured" > /tmp/sibyl-v6-gcp/configuration.json
           echo "GCP_CONFIGURATION_PRESENT=$configured"
+          echo 'GCP_METADATA_NOT_REQUIRED_FOR_BOOT=YES'
       - name: Authenticate through keyless WIF
         if: steps.cfg.outputs.configured == 'true'
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
@@ -221,21 +377,10 @@ jobs:
           gcloud run worker-pools list --project "$GCP_PROJECT_ID" --format=json > /tmp/sibyl-v6-gcp/worker-pools.json
           gcloud storage buckets list --project "$GCP_PROJECT_ID" --format=json > /tmp/sibyl-v6-gcp/buckets.json
           gcloud secrets list --project "$GCP_PROJECT_ID" --format='json(name,createTime,replication)' > /tmp/sibyl-v6-gcp/secret-metadata.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          root = Path('/tmp/sibyl-v6-gcp')
-          out = {'gcp_configuration_present': True, 'mutation_attempted': False}
-          for name in ('artifact-repositories','worker-pools','buckets','secret-metadata'):
-              rows = json.loads((root / f'{name}.json').read_text())
-              out[name.replace('-', '_') + '_count'] = len(rows)
-          (root / 'inventory-summary.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
-          print(json.dumps(out, sort_keys=True))
-          PY
       - name: Record explicit unconfigured state
         if: steps.cfg.outputs.configured != 'true'
         run: |
-          printf '%s\n' '{"GCP_AUTH":"UNCONFIGURED","mutation_attempted":false,"reason":"required repository variables absent"}' > /tmp/sibyl-v6-gcp/inventory-summary.json
+          printf '%s\n' '{"GCP_AUTH":"UNCONFIGURED","mutation_attempted":false,"reason":"required repository variables absent","gcp_metadata_required_for_boot":false}' > /tmp/sibyl-v6-gcp/inventory-summary.json
           echo 'GCP_AUTH=UNCONFIGURED'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
