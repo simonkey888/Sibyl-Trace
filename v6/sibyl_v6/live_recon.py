@@ -71,11 +71,26 @@ def _parse_number(token: str) -> int | None:
 
 
 def _threshold(row: dict[str, Any]) -> int | None:
-    primary = " ".join(str(row.get(k) or "") for k in ("groupItemTitle", "title", "question"))
-    for token in re.findall(r"\$?\d[\d,]*(?:\.\d+)?[kKmM]?", primary):
-        value = _parse_number(token)
-        if value is not None:
-            return value
+    # A price threshold must be marked as a price/directional value. Bare years/dates
+    # are not thresholds. This deliberately prefers false negatives to false matches.
+    sources = [
+        str(row.get("groupItemTitle") or ""),
+        str(row.get("title") or ""),
+        str(row.get("question") or ""),
+        str(row.get("eventTitle") or ""),
+    ]
+    patterns = (
+        r"[↑↓]\s*(\d[\d,]*(?:\.\d+)?[kKmM]?)",
+        r"\$(\d[\d,]*(?:\.\d+)?[kKmM]?)",
+        r"(?:above|below|over|under|higher than|lower than|greater than|less than)\s*\$?\s*(\d[\d,]*(?:\.\d+)?[kKmM]?)",
+    )
+    for source in sources:
+        for pattern in patterns:
+            match = re.search(pattern, source, re.I)
+            if match:
+                value = _parse_number(match.group(1))
+                if value is not None:
+                    return value
     return None
 
 
@@ -245,8 +260,9 @@ def semantic_candidates() -> dict[str, Any]:
             if lf == "OTHER" or rf == "OTHER" or lf != rf:
                 continue
             rt = _threshold(right)
-            if lf in ("ABOVE", "BELOW") and lt is not None and rt is not None and lt != rt:
-                continue
+            if lf in ("ABOVE", "BELOW"):
+                if lt is None or rt is None or lt != rt:
+                    continue
             rend = _end(right)
             time_delta_s = abs((lend - rend).total_seconds()) if lend and rend else None
             token_overlap = len(_event_tokens(left) & _event_tokens(right))
@@ -255,7 +271,7 @@ def semantic_candidates() -> dict[str, Any]:
             if time_delta_s is not None and time_delta_s > 86400 and token_overlap < 2:
                 continue
             score = 10
-            if lt is not None and rt is not None and lt == rt:
+            if lt == rt:
                 score += 12
             if time_delta_s is not None:
                 if time_delta_s == 0:
