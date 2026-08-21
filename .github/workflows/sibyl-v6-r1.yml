@@ -86,6 +86,29 @@ jobs:
           print(f"CANDIDATE_PAIR_COUNT={payload['CANDIDATE_PAIR_COUNT']}")
           print("EXACT_EQUIVALENT_PAIR_COUNT=0")
           PY
+      - name: Full-L2 synthetic fill-to-hedge evidence
+        env:
+          PYTHONPATH: v6
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from sibyl_v6.simulate import write_simulated_hedge
+          path = Path('/tmp/sibyl-v6-evidence/simulated-hedge.json')
+          payload = write_simulated_hedge(path)
+          payload['source_sha'] = os.environ['SOURCE_SHA']
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          result = payload['result']
+          assert payload['evidence_class'] == 'SYNTHETIC_PAPER_NOT_REAL_FILL'
+          assert result['status'] == 'GREEN'
+          assert result['L2_levels_consumed'] == 2
+          assert result['hedge_fill_status'] == 'SUCCESS'
+          assert result['partial_fill'] is False
+          assert result['orphan_exposure'] == '0'
+          print('SIMULATED_HEDGE_RESULT=GREEN_FULL_L2_SYNTHETIC')
+          print('SIMULATED_HEDGE_EVIDENCE_HASH=' + result['evidence_hash'])
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sibyl-v6-public-evidence-${{ env.SOURCE_SHA }}
