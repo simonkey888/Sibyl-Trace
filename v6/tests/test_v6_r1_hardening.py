@@ -8,6 +8,7 @@ from pathlib import Path
 from sibyl_v6.discovery import load_verified_pairs
 from sibyl_v6.feeds import _freshness
 from sibyl_v6.probe import Sample, summarize_samples
+from sibyl_v6.select_region import REQUIRED_REGIONS, REQUIRED_TARGETS, select_region
 from sibyl_v6.upstream_adapter import build_upstream_config
 
 
@@ -61,6 +62,33 @@ def verified_pair_record() -> dict:
         "polymarket_rule_payload_hash": "1" * 64,
         "limitless_rule_payload_hash": "2" * 64,
         "verified_at_utc": "2026-08-21T12:00:00Z",
+    }
+
+
+def probe_payload(region: str, score_base: float, *, geoblock_target: str | None = None) -> dict:
+    summary = {}
+    for offset, target in enumerate(sorted(REQUIRED_TARGETS)):
+        value = score_base + offset
+        is_ws = target.endswith("_ws")
+        summary[target] = {
+            "samples": 5,
+            "transport_samples": 5,
+            "protocol_successful_samples": 5,
+            "connect": {"median_ms": value, "p95_ms": value},
+            "tls": {"median_ms": value, "p95_ms": value},
+            "ttfb": {"median_ms": value, "p95_ms": value},
+            "ws_connect": {"median_ms": value, "p95_ms": value} if is_ws else None,
+            "http_statuses": [101 if is_ws else 200] * 5,
+            "expected_status": 101 if is_ws else 200,
+            "geoblock_451_observed": target == geoblock_target,
+            "errors": [],
+        }
+    return {
+        "schema_version": "SIBYL_V6_REGION_PROBE_V2",
+        "region": region,
+        "repetitions": 5,
+        "summary": summary,
+        "jurisdiction_bypass_attempted": False,
     }
 
 
@@ -168,6 +196,35 @@ class RegionProbeSummaryTests(unittest.TestCase):
         summary = summarize_samples(samples)
         self.assertTrue(summary["limitless_rest"]["geoblock_451_observed"])
         self.assertEqual(summary["limitless_rest"]["http_statuses"], [451])
+
+
+class RegionSelectionTests(unittest.TestCase):
+    def test_fastest_complete_region_is_selected_from_evidence(self):
+        payloads = [
+            probe_payload("us-east1", 10.0),
+            probe_payload("us-central1", 20.0),
+            probe_payload("southamerica-east1", 30.0),
+        ]
+        result = select_region(payloads)
+        self.assertEqual(result["status"], "SELECTED")
+        self.assertEqual(result["selected_region"], "us-east1")
+        self.assertFalse(result["jurisdiction_bypass_attempted"])
+
+    def test_any_451_blocks_all_region_selection(self):
+        payloads = [
+            probe_payload("us-east1", 10.0),
+            probe_payload("us-central1", 20.0, geoblock_target="polymarket_rest"),
+            probe_payload("southamerica-east1", 30.0),
+        ]
+        result = select_region(payloads)
+        self.assertEqual(result["status"], "BLOCKED_GEOBLOCK")
+        self.assertIsNone(result["selected_region"])
+        self.assertFalse(result["jurisdiction_bypass_attempted"])
+
+    def test_missing_required_region_fails_closed(self):
+        payloads = [probe_payload(region, 10.0) for region in sorted(REQUIRED_REGIONS)[:2]]
+        with self.assertRaisesRegex(RuntimeError, "REGION_SET_INVALID"):
+            select_region(payloads)
 
 
 if __name__ == "__main__":
