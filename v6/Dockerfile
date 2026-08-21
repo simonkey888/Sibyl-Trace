@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 git ca-
     && mkdir -p /var/lib/sibyl-v6/evidence /var/lib/sibyl-v6/store \
     && chown -R node:node /var/lib/sibyl-v6
 COPY --from=upstream /opt/agents-starter /opt/agents-starter
+RUN git config --system --add safe.directory /opt/agents-starter \
+    && test "$(git -C /opt/agents-starter rev-parse HEAD)" = "$(cat /opt/agents-starter/.sibyl-upstream-sha)"
 COPY v6 /app/v6
 ENV PYTHONPATH=/app/v6 \
     SIBYL_V6_UPSTREAM_ROOT=/opt/agents-starter \
