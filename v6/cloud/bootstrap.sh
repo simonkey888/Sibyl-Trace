@@ -10,6 +10,7 @@ set -Eeuo pipefail
 : "${GCP_WIF_PROVIDER:=sibyl-v6-github-provider}"
 : "${GCP_LIVE_ARMED_SECRET:=sibyl-v6-live-armed}"
 : "${GITHUB_REPOSITORY:=simonkey888/Sibyl-Trace}"
+: "${GITHUB_REF_ALLOWED:=refs/heads/feat/sibyl-v6-cross-market-mm-r1}"
 : "${SIBYL_V6_APPLY:=NO}"
 : "${SIBYL_V6_COST_AUTHORIZED_USD:=0}"
 
@@ -26,6 +27,7 @@ PY
 PROJECT_NUMBER="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
 BUILDER_SA="sibyl-v6-builder@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 RUNTIME_SA="sibyl-v6-runtime@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+WIF_CONDITION="assertion.repository=='$GITHUB_REPOSITORY' && assertion.ref=='$GITHUB_REF_ALLOWED'"
 
 # APIs required for the declared architecture only.
 gcloud services enable \
@@ -105,7 +107,9 @@ gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   --member "serviceAccount:$BUILDER_SA" \
   --role roles/iam.serviceAccountUser >/dev/null
 
-# WIF pool/provider: GitHub repository restricted by attribute condition.
+# WIF provider: repository AND exact deployment branch are mandatory. The
+# condition is updated on every bootstrap so a pre-existing broader provider is
+# tightened rather than silently trusted.
 if ! gcloud iam workload-identity-pools describe "$GCP_WIF_POOL" --location=global --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
   gcloud iam workload-identity-pools create "$GCP_WIF_POOL" --location=global --project "$GCP_PROJECT_ID"
 fi
@@ -116,7 +120,13 @@ if ! gcloud iam workload-identity-pools providers describe "$GCP_WIF_PROVIDER" -
     --project "$GCP_PROJECT_ID" \
     --issuer-uri https://token.actions.githubusercontent.com \
     --attribute-mapping 'google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref' \
-    --attribute-condition "assertion.repository=='$GITHUB_REPOSITORY'"
+    --attribute-condition "$WIF_CONDITION"
+else
+  gcloud iam workload-identity-pools providers update-oidc "$GCP_WIF_PROVIDER" \
+    --workload-identity-pool "$GCP_WIF_POOL" \
+    --location global \
+    --project "$GCP_PROJECT_ID" \
+    --attribute-condition "$WIF_CONDITION"
 fi
 
 gcloud iam service-accounts add-iam-policy-binding "$BUILDER_SA" \
@@ -139,6 +149,7 @@ BUILDER_SA=$BUILDER_SA
 RUNTIME_SA=$RUNTIME_SA
 ARTIFACT_REPO=$GCP_ARTIFACT_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_ARTIFACT_REPO
 WIF_PROVIDER=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$GCP_WIF_POOL/providers/$GCP_WIF_PROVIDER
+WIF_REF_ALLOWED=$GITHUB_REF_ALLOWED
 LIVE_ARMED_SECRET=$GCP_LIVE_ARMED_SECRET
 LIVE_ARMED_ENABLED_VERSIONS=0
 EOF
