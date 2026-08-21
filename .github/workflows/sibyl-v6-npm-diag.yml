@@ -1,6 +1,9 @@
 name: Sibyl V6 NPM Provenance Diagnostic
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/sibyl-v6-npm-diag.yml"
   push:
     branches:
       - feat/sibyl-v6-cross-market-mm-r1
