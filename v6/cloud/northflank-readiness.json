@@ -1,0 +1,39 @@
+{
+  "schema_version": "SIBYL_V6_NORTHFLANK_READINESS_V1",
+  "mutation_authorized": false,
+  "service": "sibyl-v6-mm",
+  "dockerfile": "v6/Dockerfile",
+  "resources": {
+    "vcpu": 0.2,
+    "memory_mb": 512
+  },
+  "environment": {
+    "DRY_RUN": "true",
+    "SIBYL_V6_LIVE_ALLOWED": "false",
+    "SIBYL_V6_RUN_UPSTREAM": "0",
+    "SIBYL_V6_EVIDENCE_BACKEND": "R2"
+  },
+  "r2": {
+    "storage_class": "STANDARD",
+    "non_secret_runtime_values": [
+      "SIBYL_V6_R2_ACCOUNT_ID",
+      "SIBYL_V6_R2_BUCKET"
+    ],
+    "runtime_secret_injection_only": [
+      "SIBYL_V6_R2_ACCESS_KEY_ID",
+      "SIBYL_V6_R2_SECRET_ACCESS_KEY"
+    ],
+    "trading_secrets": []
+  },
+  "initial_command": [
+    "python3",
+    "-m",
+    "sibyl_v6.paper_cloud_loop"
+  ],
+  "claims": {
+    "live": false,
+    "real_orders": 0,
+    "capital_moved_usd": 0,
+    "cloudflare_terminal_runtime_mutated": false
+  }
+}
