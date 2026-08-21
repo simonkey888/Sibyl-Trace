@@ -12,6 +12,17 @@ on:
       - "v6/**"
       - ".github/workflows/sibyl-v6-r1.yml"
   workflow_dispatch:
+    inputs:
+      apply:
+        description: "Explicitly authorize GCP mutations for this exact branch head"
+        required: true
+        type: boolean
+        default: false
+      cost_authorized_usd:
+        description: "Positive maximum technical cloud spend explicitly authorized for this run"
+        required: true
+        type: string
+        default: "0"
 
 permissions:
   contents: read
@@ -140,6 +151,13 @@ jobs:
           assert result.LIVE_PREFLIGHT == 'NOT_RUN', result
           print(result)
           PY
+      - name: Verify continuous worker entrypoint and R1 env
+        run: |
+          set -euo pipefail
+          docker image inspect sibyl-v6:${SOURCE_SHA} --format '{{json .Config.Entrypoint}} {{json .Config.Env}}' | tee /tmp/v6-image-config.txt
+          grep -q 'sibyl_v6.worker' /tmp/v6-image-config.txt
+          grep -q 'DRY_RUN=true' /tmp/v6-image-config.txt
+          grep -q 'SIBYL_V6_LIVE_ALLOWED=false' /tmp/v6-image-config.txt
       - name: Record local immutable image content id
         run: docker image inspect sibyl-v6:${SOURCE_SHA} --format 'IMAGE_ID={{.Id}}'
 
@@ -214,3 +232,57 @@ jobs:
           path: /tmp/sibyl-v6-gcp
           if-no-files-found: error
           retention-days: 14
+
+  gcp-deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.apply == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.SIBYL_V6_GCP_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.SIBYL_V6_GCP_WIF_PROVIDER }}
+      GCP_BUILDER_SERVICE_ACCOUNT: ${{ vars.SIBYL_V6_GCP_BUILDER_SERVICE_ACCOUNT }}
+      GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.SIBYL_V6_GCP_RUNTIME_SERVICE_ACCOUNT }}
+      GCP_ARTIFACT_REGION: ${{ vars.SIBYL_V6_GCP_ARTIFACT_REGION }}
+      GCP_ARTIFACT_REPO: ${{ vars.SIBYL_V6_GCP_ARTIFACT_REPO }}
+      GCP_EVIDENCE_BUCKET: ${{ vars.SIBYL_V6_GCP_EVIDENCE_BUCKET }}
+      COST_AUTHORIZED_USD: ${{ inputs.cost_authorized_usd }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Exact-head and explicit cloud mutation gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/feat/sibyl-v6-cross-market-mm-r1'
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          for name in GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_BUILDER_SERVICE_ACCOUNT GCP_RUNTIME_SERVICE_ACCOUNT GCP_ARTIFACT_REGION GCP_ARTIFACT_REPO GCP_EVIDENCE_BUCKET; do
+            test -n "${!name:-}" || { echo "GCP_DEPLOY_BLOCKED_MISSING_$name" >&2; exit 20; }
+          done
+          python3 - <<'PY'
+          import os
+          value = float(os.environ['COST_AUTHORIZED_USD'])
+          if value <= 0:
+              raise SystemExit('GCP_DEPLOY_BLOCKED_NO_POSITIVE_COST_AUTHORIZATION')
+          PY
+      - name: Authenticate builder through keyless WIF
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_BUILDER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+      - name: Build, push immutable digest, probe regions, deploy one PAPER worker
+        shell: bash
+        run: bash v6/cloud/build-push-probe-deploy.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-cloud-deployment-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-cloud-evidence
+          if-no-files-found: error
+          retention-days: 30
