@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .feeds import _get_json
+from .live_recon import semantic_candidates
 from .matcher import MarketDescriptor, PairState, ResolutionRule, compare_markets
 
 
@@ -61,6 +62,7 @@ def discover_candidates(
     limit_per_venue: int = 100,
     minimum_similarity: float = 0.35,
 ) -> list[CandidatePair]:
+    """Legacy title-only reconnaissance kept for comparison, never matching."""
     _, lmts_payload = _get_json(
         "https://api.limitless.exchange/markets/active?limit=25&page=1"
     )
@@ -166,16 +168,20 @@ def load_verified_pairs(path: Path) -> list[dict[str, Any]]:
 
 
 def build_discovery_evidence(output: Path, verified_pairs_path: Path) -> dict[str, Any]:
-    candidates = discover_candidates()
+    recon = semantic_candidates()
     exact = load_verified_pairs(verified_pairs_path)
     payload = {
-        "schema_version": "SIBYL_V6_PAIR_DISCOVERY_V2",
+        "schema_version": "SIBYL_V6_PAIR_DISCOVERY_V3",
         "observed_at_ms": int(time.time() * 1000),
-        "CANDIDATE_PAIR_COUNT": len(candidates),
+        "CANDIDATE_PAIR_COUNT": int(recon["semantic_candidate_count"]),
         "EXACT_EQUIVALENT_PAIR_COUNT": len(exact),
-        "candidate_pairs": [row.to_dict() for row in candidates[:50]],
+        "candidate_pairs": recon["top_candidates"][:50],
         "exact_pairs": exact,
-        "candidate_semantics": "TITLE_SIMILARITY_ONLY_NOT_MATCHED",
+        "catalog_counts": {
+            "limitless": recon["limitless_market_count"],
+            "polymarket": recon["polymarket_market_count"],
+        },
+        "candidate_semantics": "SEMANTIC_EVENT_METADATA_ONLY_NOT_MATCHED",
         "exact_semantics": "FULL_RULE_EQUIVALENCE_WITH_SOURCE_PAYLOAD_HASHES",
     }
     output.parent.mkdir(parents=True, exist_ok=True)
