@@ -15,7 +15,9 @@ TARGETS = {
     "polymarket_rest": "https://clob.polymarket.com/time",
     "limitless_rest": "https://api.limitless.exchange/markets/active?limit=1&page=1",
     "polymarket_ws": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
-    "limitless_ws": "wss://ws.limitless.exchange/",
+    # Official pinned upstream uses socket.io-client with path=/socket.io and
+    # websocket-only transport. Probe the same Engine.IO transport endpoint.
+    "limitless_ws": "wss://ws.limitless.exchange/socket.io/?EIO=4&transport=websocket",
 }
 
 
@@ -25,12 +27,12 @@ class Sample:
     connect_ms: float | None
     tls_ms: float | None
     ttfb_ms: float | None
+    ws_connect_ms: float | None
     status: int | None
     error: str | None
 
 
-
-def _probe(url: str, timeout: float = 8.0) -> tuple[float, float, float, int]:
+def _probe(url: str, timeout: float = 8.0) -> tuple[float, float, float, float | None, int]:
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname
     if not host:
@@ -52,7 +54,7 @@ def _probe(url: str, timeout: float = 8.0) -> tuple[float, float, float, int]:
             f"Host: {host}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
-            "Sec-WebSocket-Key: c2lieWwtdjYtcHJvYmU=\r\n"
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
             "Sec-WebSocket-Version: 13\r\n"
             "User-Agent: sibyl-v6-region-probe/1.0\r\n\r\n"
         )
@@ -73,12 +75,53 @@ def _probe(url: str, timeout: float = 8.0) -> tuple[float, float, float, int]:
     except (IndexError, ValueError) as exc:
         raise RuntimeError(f"invalid status line: {line}") from exc
     tls.close()
-    return (
-        round((connected - start) * 1000, 3),
-        round((tls_done - connected) * 1000, 3),
-        round((first_byte - tls_done) * 1000, 3),
-        status,
+
+    connect_ms = round((connected - start) * 1000, 3)
+    tls_ms = round((tls_done - connected) * 1000, 3)
+    ttfb_ms = round((first_byte - tls_done) * 1000, 3)
+    ws_connect_ms = (
+        round((first_byte - start) * 1000, 3) if parsed.scheme == "wss" else None
     )
+    return connect_ms, tls_ms, ttfb_ms, ws_connect_ms, status
+
+
+def _metric(values: list[float]) -> dict[str, float | None]:
+    return {
+        "median_ms": round(statistics.median(values), 3) if values else None,
+        "p95_ms": round(_p95(values), 3) if values else None,
+    }
+
+
+def summarize_samples(samples: list[Sample]) -> dict[str, dict]:
+    summary: dict[str, dict] = {}
+    for target, url in TARGETS.items():
+        rows = [row for row in samples if row.target == target]
+        statuses = [row.status for row in rows if row.status is not None]
+        is_ws = urllib.parse.urlparse(url).scheme == "wss"
+        protocol_ok = [row for row in rows if row.status == (101 if is_ws else 200)]
+        metric_rows = [row for row in rows if row.connect_ms is not None]
+        connect_values = [float(row.connect_ms) for row in metric_rows if row.connect_ms is not None]
+        tls_values = [float(row.tls_ms) for row in metric_rows if row.tls_ms is not None]
+        ttfb_values = [float(row.ttfb_ms) for row in metric_rows if row.ttfb_ms is not None]
+        ws_values = [
+            float(row.ws_connect_ms)
+            for row in metric_rows
+            if row.ws_connect_ms is not None
+        ]
+        summary[target] = {
+            "samples": len(rows),
+            "transport_samples": len(metric_rows),
+            "protocol_successful_samples": len(protocol_ok),
+            "connect": _metric(connect_values),
+            "tls": _metric(tls_values),
+            "ttfb": _metric(ttfb_values),
+            "ws_connect": _metric(ws_values) if is_ws else None,
+            "http_statuses": statuses,
+            "expected_status": 101 if is_ws else 200,
+            "geoblock_451_observed": 451 in statuses,
+            "errors": [row.error for row in rows if row.error],
+        }
+    return summary
 
 
 def run_probe(region: str, repetitions: int = 5) -> dict:
@@ -86,28 +129,15 @@ def run_probe(region: str, repetitions: int = 5) -> dict:
     for name, url in TARGETS.items():
         for _ in range(repetitions):
             try:
-                connect, tls, ttfb, status = _probe(url)
-                samples.append(Sample(name, connect, tls, ttfb, status, None))
+                connect, tls, ttfb, ws_connect, status = _probe(url)
+                samples.append(Sample(name, connect, tls, ttfb, ws_connect, status, None))
             except Exception as exc:
-                samples.append(Sample(name, None, None, None, None, str(exc)))
+                samples.append(Sample(name, None, None, None, None, None, str(exc)))
             time.sleep(0.15)
 
-    summary = {}
-    for target in TARGETS:
-        rows = [row for row in samples if row.target == target]
-        good = [row for row in rows if row.ttfb_ms is not None]
-        values = [row.ttfb_ms for row in good if row.ttfb_ms is not None]
-        statuses = [row.status for row in good]
-        summary[target] = {
-            "samples": len(rows),
-            "successful_samples": len(good),
-            "median_ttfb_ms": round(statistics.median(values), 3) if values else None,
-            "p95_ttfb_ms": round(_p95(values), 3) if values else None,
-            "http_statuses": statuses,
-            "geoblock_451_observed": 451 in statuses,
-        }
+    summary = summarize_samples(samples)
     return {
-        "schema_version": "SIBYL_V6_REGION_PROBE_V1",
+        "schema_version": "SIBYL_V6_REGION_PROBE_V2",
         "region": region,
         "measured_at_unix_ms": int(time.time() * 1000),
         "repetitions": repetitions,
