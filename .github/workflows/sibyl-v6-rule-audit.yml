@@ -38,7 +38,7 @@ jobs:
       - name: Audit authoritative venue rules field-by-field
         env:
           PYTHONPATH: v6
-        run: python -m sibyl_v6.rule_audit > /tmp/sibyl-v6-rule-audit/rule-audit.json
+        run: python -m sibyl_v6.rule_audit_runner_v2 > /tmp/sibyl-v6-rule-audit/rule-audit.json
       - name: Verify audit result
         env:
           PYTHONPATH: v6
