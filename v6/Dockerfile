@@ -23,8 +23,9 @@ ENV PYTHONPATH=/app/v6 \
     SIBYL_V6_UPSTREAM_ROOT=/opt/agents-starter \
     SIBYL_V6_EVIDENCE_DIR=/var/lib/sibyl-v6/evidence \
     SIBYL_V6_VERIFIED_PAIRS=/app/v6/config/verified_pairs.json \
+    SIBYL_V6_CYCLE_INTERVAL_SECONDS=60 \
     DRY_RUN=true \
     SIBYL_V6_LIVE_ALLOWED=false
 WORKDIR /app
 USER node
-ENTRYPOINT ["python3", "-m", "sibyl_v6.runner"]
+ENTRYPOINT ["python3", "-m", "sibyl_v6.worker"]
