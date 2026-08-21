@@ -138,34 +138,33 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         summaries[outcome] = _book_summary(book, seen)
 
     ls = _book_summary(lbook, l_observed)
-    # The upstream fair-value frame requires a real YES bid+ask. The opposite
-    # token hedge book is allowed to be one-sided: a BUY hedge only consumes
-    # asks, and absent/insufficient asks are a quote-safety rejection rather
-    # than a failure to observe the market-data cycle.
-    if not summaries["YES"]["two_sided"]:
-        raise RuntimeError("POLYMARKET_YES_FAIR_VALUE_TWO_SIDED_REQUIRED")
-
-    # Upstream parity remains literal: computeBuyPrices consumes the YES frame.
-    poly_bid = float(summaries["YES"]["best_executable_bid"])
-    poly_ask = float(summaries["YES"]["best_executable_ask"])
+    poly_bid = summaries["YES"]["best_executable_bid"]
+    poly_ask = summaries["YES"]["best_executable_ask"]
+    fair_value_frame_complete = poly_bid is not None and poly_ask is not None
     ltop = BookTop(ls["best_executable_bid"], ls["best_executable_ask"])
-    quotes = compute_buy_prices(poly_bid, poly_ask, margin_bps, ltop)
     margin = margin_bps / 10_000.0
-    yes_cap = poly_bid - margin
-    no_cap = 1.0 - poly_ask - margin
+    if fair_value_frame_complete:
+        poly_bid = float(poly_bid)
+        poly_ask = float(poly_ask)
+        quotes: dict[str, float | None] = compute_buy_prices(poly_bid, poly_ask, margin_bps, ltop)
+        yes_cap: float | None = poly_bid - margin
+        no_cap: float | None = 1.0 - poly_ask - margin
+    else:
+        # Do not synthesize a complement or midpoint for a missing live side.
+        # Deterministic upstream parity remains a separate exact-head test.
+        quotes = {"yes": None, "no": None}
+        yes_cap = None
+        no_cap = None
 
     quote_size = float(os.environ.get("SIBYL_V6_QUOTE_SIZE_SHARES", "5"))
     min_edge_bps = float(os.environ.get("SIBYL_V6_MIN_EXPECTED_NET_EDGE_BPS", str(margin_bps)))
-    # Pinned upstream documentation at e35ad881 explicitly states Limitless
-    # makers pay no fee. Polymarket Gamma is the authority for takerBaseFee;
-    # absence is UNKNOWN and therefore fail-closed.
     poly_taker_fee_bps = _optional_nonnegative_number(pmarket.get("takerBaseFee"))
     limitless_maker_fee_bps = 0.0
 
     yes_safety = assess_buy_quote(
         side="YES",
         raw_cap=yes_cap,
-        upstream_price=float(quotes["yes"]),
+        upstream_price=quotes["yes"],
         hedge_book=books["NO"],
         hedge_book_status=str(summaries["NO"]["quote_age_status"]),
         hedge_token=tokens["NO"],
@@ -173,11 +172,12 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         polymarket_taker_fee_bps=poly_taker_fee_bps,
         minimum_net_edge_bps=min_edge_bps,
         limitless_maker_fee_bps=limitless_maker_fee_bps,
+        fair_value_frame_complete=fair_value_frame_complete,
     )
     no_safety = assess_buy_quote(
         side="NO",
         raw_cap=no_cap,
-        upstream_price=float(quotes["no"]),
+        upstream_price=quotes["no"],
         hedge_book=books["YES"],
         hedge_book_status=str(summaries["YES"]["quote_age_status"]),
         hedge_token=tokens["YES"],
@@ -185,16 +185,11 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         polymarket_taker_fee_bps=poly_taker_fee_bps,
         minimum_net_edge_bps=min_edge_bps,
         limitless_maker_fee_bps=limitless_maker_fee_bps,
+        fair_value_frame_complete=fair_value_frame_complete,
     )
 
-    # The pinned upstream replace-all places both Limitless sides together.
-    # Until future order authority is explicitly side-filtered, strategy
-    # quoteability requires BOTH Sibyl side gates to pass.
     strategy_quoteable = bool(yes_safety["QUOTEABLE"] and no_safety["QUOTEABLE"])
-    cap_gate_ok = all(
-        (not side["QUOTEABLE"]) or side["CAP_COMPLIANT"]
-        for side in (yes_safety, no_safety)
-    )
+    cap_gate_ok = all((not side["QUOTEABLE"]) or side["CAP_COMPLIANT"] for side in (yes_safety, no_safety))
     net_edge_gate_ok = all(
         (not side["QUOTEABLE"])
         or (
@@ -223,9 +218,7 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "MARKET_DATA_CYCLE": "PASS",
         "STRATEGY_QUOTEABLE": "YES" if strategy_quoteable else "NO",
         "EXACT_PAIR_LIVE_CYCLE": (
-            "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES"
-            if strategy_quoteable
-            else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
+            "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES" if strategy_quoteable else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
         ),
         "SIBYL_QUOTE_SAFETY": "PASS",
         "CAP_COMPLIANCE": "PASS",
@@ -245,6 +238,7 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "polymarket": {
             "market_endpoint": pdetail_url,
             "taker_base_fee_bps": poly_taker_fee_bps,
+            "fair_value_frame_complete": fair_value_frame_complete,
             "YES": {"endpoint": book_urls["YES"], "token": tokens["YES"], **summaries["YES"]},
             "NO": {"endpoint": book_urls["NO"], "token": tokens["NO"], **summaries["NO"]},
         },
@@ -254,6 +248,7 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
             "postOnly": True,
             "poly_yes_bid": poly_bid,
             "poly_yes_ask": poly_ask,
+            "fair_value_frame_complete": fair_value_frame_complete,
             "margin_bps": margin_bps,
             "minimum_net_edge_bps": min_edge_bps,
             "quote_size_shares": quote_size,
