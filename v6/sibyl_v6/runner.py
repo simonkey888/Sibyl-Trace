@@ -12,19 +12,26 @@ from .discovery import build_discovery_evidence, load_verified_pairs
 from .economics import EconomicsLedger
 from .feeds import public_feed_smoke
 from .preflight import dry_run_preflight, emit_preflight, sanitized_upstream_env
+from .simulate import write_simulated_hedge
+from .upstream_adapter import write_upstream_config
 
 
 def _persist(evidence_dir: Path, source_sha: str) -> list[str]:
     uploaded = persist_evidence_directory(evidence_dir, source_sha=source_sha)
     if uploaded:
-        print(json.dumps({"event": "v6_gcs_checkpoint", "objects": uploaded}, sort_keys=True), flush=True)
+        print(
+            json.dumps({"event": "v6_gcs_checkpoint", "objects": uploaded}, sort_keys=True),
+            flush=True,
+        )
     return uploaded
 
 
 def main() -> int:
     evidence_dir = Path(os.environ.get("SIBYL_V6_EVIDENCE_DIR", "/var/lib/sibyl-v6/evidence"))
     upstream_root = Path(os.environ.get("SIBYL_V6_UPSTREAM_ROOT", "/opt/agents-starter"))
-    pair_file = Path(os.environ.get("SIBYL_V6_VERIFIED_PAIRS", "/app/v6/config/verified_pairs.json"))
+    pair_file = Path(
+        os.environ.get("SIBYL_V6_VERIFIED_PAIRS", "/app/v6/config/verified_pairs.json")
+    )
     source_sha = os.environ.get("SOURCE_SHA", "UNKNOWN")
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,6 +58,13 @@ def main() -> int:
         json.dumps(discovery, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     exact = load_verified_pairs(pair_file)
+
+    synthetic = write_simulated_hedge(evidence_dir / "simulated-hedge.json")
+    synthetic["source_sha"] = source_sha
+    (evidence_dir / "simulated-hedge.json").write_text(
+        json.dumps(synthetic, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
     economics = EconomicsLedger()
     economics_payload = economics.to_dict()
     economics_payload["source_sha"] = source_sha
@@ -67,7 +81,10 @@ def main() -> int:
         "LIVE_PREFLIGHT": preflight.LIVE_PREFLIGHT,
         "CANDIDATE_PAIR_COUNT": discovery["CANDIDATE_PAIR_COUNT"],
         "EXACT_EQUIVALENT_PAIR_COUNT": discovery["EXACT_EQUIVALENT_PAIR_COUNT"],
+        "SIMULATED_HEDGE_RESULT": synthetic["result"]["status"],
+        "SIMULATED_HEDGE_EVIDENCE_HASH": synthetic["result"]["evidence_hash"],
         "TARGET_80_STATUS": economics.target_80_status().value,
+        "REALIZED_NET_24H": "0",
         "LIVE": "NO",
         "REAL_ORDERS": 0,
         "CAPITAL_MOVED_USD": "0",
@@ -92,10 +109,25 @@ def main() -> int:
         return 0
 
     if os.environ.get("SIBYL_V6_RUN_UPSTREAM", "0") != "1":
-        print(json.dumps({"event": "v6_upstream_execution_disabled", "exact_pairs": len(exact)}), flush=True)
+        print(
+            json.dumps({"event": "v6_upstream_execution_disabled", "exact_pairs": len(exact)}),
+            flush=True,
+        )
         return 0
 
+    # No caller-controlled upstream config is accepted. The only config handed
+    # to the official strategy is generated from the exact-equivalent set.
+    config_path = Path("/tmp/sibyl-v6-cross-market-mm.config.json")
+    upstream_config = write_upstream_config(exact, config_path)
+    binding_path = evidence_dir / "upstream-binding.json"
+    binding_path.write_text(
+        json.dumps(upstream_config["binding"], indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _persist(evidence_dir, source_sha)
+
     env = sanitized_upstream_env()
+    env["CROSS_MARKET_MM_CONFIG_PATH"] = str(config_path)
     # The wrapper delegates execution; it does not copy/reimplement cross-market-mm.
     proc = subprocess.run(
         ["npm", "run", "cross-market-mm"],
