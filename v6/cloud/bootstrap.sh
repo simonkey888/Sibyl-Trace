@@ -8,6 +8,7 @@ set -Eeuo pipefail
 : "${GCP_EVIDENCE_BUCKET:?GCP_EVIDENCE_BUCKET required}"
 : "${GCP_WIF_POOL:=sibyl-v6-github}"
 : "${GCP_WIF_PROVIDER:=sibyl-v6-github-provider}"
+: "${GCP_LIVE_ARMED_SECRET:=sibyl-v6-live-armed}"
 : "${GITHUB_REPOSITORY:=simonkey888/Sibyl-Trace}"
 : "${SIBYL_V6_APPLY:=NO}"
 : "${SIBYL_V6_COST_AUTHORIZED_USD:=0}"
@@ -66,7 +67,29 @@ for bucket in "$GCP_STATE_BUCKET" "$GCP_EVIDENCE_BUCKET"; do
     --role roles/storage.objectAdmin
  done
 
-# Builder can push immutable images and deploy Worker Pools, but never read Secret Manager values.
+# Builder may read non-secret evidence back from the evidence bucket so CI can
+# select a region from exact probe artifacts. It cannot modify runtime evidence.
+gcloud storage buckets add-iam-policy-binding "gs://$GCP_EVIDENCE_BUCKET" \
+  --member "serviceAccount:$BUILDER_SA" \
+  --role roles/storage.objectViewer
+
+# Secret Manager is the only future secret store. R1 creates a secret container
+# with NO secret version/value and grants no accessor role to builder or runtime.
+if ! gcloud secrets describe "$GCP_LIVE_ARMED_SECRET" --project "$GCP_PROJECT_ID" >/dev/null 2>&1; then
+  gcloud secrets create "$GCP_LIVE_ARMED_SECRET" \
+    --project "$GCP_PROJECT_ID" \
+    --replication-policy=automatic
+fi
+if gcloud secrets versions list "$GCP_LIVE_ARMED_SECRET" \
+  --project "$GCP_PROJECT_ID" \
+  --filter='state=ENABLED' \
+  --format='value(name)' | grep -q .; then
+  echo 'R1_LIVE_ARMED_SECRET_MUST_HAVE_NO_ENABLED_VERSION' >&2
+  exit 1
+fi
+
+# Builder can push immutable images and deploy Worker Pools/Jobs, but never read
+# Secret Manager values.
 gcloud artifacts repositories add-iam-policy-binding "$GCP_ARTIFACT_REPO" \
   --location "$GCP_ARTIFACT_REGION" \
   --project "$GCP_PROJECT_ID" \
@@ -116,4 +139,6 @@ BUILDER_SA=$BUILDER_SA
 RUNTIME_SA=$RUNTIME_SA
 ARTIFACT_REPO=$GCP_ARTIFACT_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GCP_ARTIFACT_REPO
 WIF_PROVIDER=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$GCP_WIF_POOL/providers/$GCP_WIF_PROVIDER
+LIVE_ARMED_SECRET=$GCP_LIVE_ARMED_SECRET
+LIVE_ARMED_ENABLED_VERSIONS=0
 EOF
