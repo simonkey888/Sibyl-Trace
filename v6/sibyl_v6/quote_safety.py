@@ -6,12 +6,19 @@ from typing import Any
 from .quote_math import TICK, norm_price
 
 
+def _finite(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def floor_buy_cap(value: float, tick: float = TICK) -> float | None:
     """Floor a maximum BUY price to the venue tick; never rounds upward."""
-    if not math.isfinite(value) or not math.isfinite(tick) or tick <= 0:
+    if not _finite(value) or not _finite(tick) or tick <= 0:
         return None
-    units = math.floor((value + 1e-12) / tick)
-    floored = units * tick
+    units = math.floor((float(value) + 1e-12) / float(tick))
+    floored = units * float(tick)
     if floored < tick or floored > 1.0 - tick + 1e-12:
         return None
     return round(floored, 12)
@@ -45,7 +52,7 @@ def _asks(book: dict[str, Any] | None) -> list[tuple[float, float]]:
 
 def executable_buy_cost(book: dict[str, Any] | None, shares: float) -> dict[str, Any]:
     """Return actual ask-side VWAP needed to BUY ``shares`` of the hedge token."""
-    if not math.isfinite(shares) or shares <= 0:
+    if not _finite(shares) or float(shares) <= 0:
         return {
             "requested_shares": shares,
             "filled_shares": 0.0,
@@ -54,7 +61,7 @@ def executable_buy_cost(book: dict[str, Any] | None, shares: float) -> dict[str,
             "total_cost": None,
             "levels_consumed": 0,
         }
-    remaining = shares
+    remaining = float(shares)
     filled = 0.0
     total = 0.0
     consumed = 0
@@ -86,8 +93,8 @@ def _reason(reasons: list[str]) -> str:
 def assess_buy_quote(
     *,
     side: str,
-    raw_cap: float,
-    upstream_price: float,
+    raw_cap: float | None,
+    upstream_price: float | None,
     hedge_book: dict[str, Any] | None,
     hedge_book_status: str,
     hedge_token: str,
@@ -96,32 +103,43 @@ def assess_buy_quote(
     minimum_net_edge_bps: float,
     tick: float = TICK,
     limitless_maker_fee_bps: float | None = 0.0,
+    fair_value_frame_complete: bool = True,
 ) -> dict[str, Any]:
     """Fail-closed Sibyl gate applied after pinned upstream quote math.
+
+    If the public fair-value frame is incomplete, upstream live quote math is
+    deliberately not invented: raw_cap/upstream_price remain ``None`` and the
+    side is rejected. Deterministic upstream parity is tested separately.
 
     The hedge is an actual executable BUY of the opposite Polymarket token:
       Limitless YES fill -> BUY Polymarket NO
       Limitless NO fill  -> BUY Polymarket YES
     """
     reasons: list[str] = []
-    raw_cap_ok = math.isfinite(raw_cap)
-    upstream_ok = math.isfinite(upstream_price)
+    raw_cap_ok = _finite(raw_cap)
+    upstream_ok = _finite(upstream_price)
+    if not fair_value_frame_complete:
+        reasons.append("FAIR_VALUE_FRAME_INCOMPLETE")
     if not raw_cap_ok:
         reasons.append("RAW_CAP_INVALID")
     if not upstream_ok:
         reasons.append("UPSTREAM_PRICE_INVALID")
 
     safe_quote = None
-    if raw_cap_ok and raw_cap < tick:
+    if raw_cap_ok and float(raw_cap) < tick:
         reasons.append("RAW_CAP_BELOW_MIN_TICK")
-    if raw_cap_ok and upstream_ok and raw_cap >= tick:
+    if raw_cap_ok and upstream_ok and float(raw_cap) >= tick:
         # A BUY cap is a maximum. Use min(upstream, cap), then FLOOR to tick.
-        safe_quote = floor_buy_cap(min(upstream_price, raw_cap), tick)
+        safe_quote = floor_buy_cap(min(float(upstream_price), float(raw_cap)), tick)
         if safe_quote is None:
             reasons.append("NO_VALID_FLOOR_TICK")
 
-    upstream_cap_compliant = bool(raw_cap_ok and upstream_ok and upstream_price <= raw_cap + 1e-12)
-    cap_compliant = bool(safe_quote is not None and safe_quote <= raw_cap + 1e-12)
+    upstream_cap_compliant = bool(
+        raw_cap_ok and upstream_ok and float(upstream_price) <= float(raw_cap) + 1e-12
+    )
+    cap_compliant = bool(
+        safe_quote is not None and raw_cap_ok and safe_quote <= float(raw_cap) + 1e-12
+    )
     if safe_quote is not None and not cap_compliant:
         reasons.append("CAP_BREACH")
 
@@ -142,10 +160,10 @@ def assess_buy_quote(
 
     fee_known = (
         polymarket_taker_fee_bps is not None
-        and math.isfinite(float(polymarket_taker_fee_bps))
+        and _finite(polymarket_taker_fee_bps)
         and float(polymarket_taker_fee_bps) >= 0
         and limitless_maker_fee_bps is not None
-        and math.isfinite(float(limitless_maker_fee_bps))
+        and _finite(limitless_maker_fee_bps)
         and float(limitless_maker_fee_bps) >= 0
     )
     if not fee_known:
@@ -165,7 +183,8 @@ def assess_buy_quote(
             reasons.append("NET_EDGE_BELOW_MINIMUM")
 
     quoteable = bool(
-        cap_compliant
+        fair_value_frame_complete
+        and cap_compliant
         and tick_quoteable
         and hedge["depth_sufficient"]
         and hedge_book_status == "FRESH"
