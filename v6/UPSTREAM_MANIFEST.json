@@ -5,7 +5,9 @@
   "strategy_path": "src/strategies/cross-market-mm",
   "execution_command": ["npm", "run", "cross-market-mm"],
   "attribution": "Limitless Labs agents-starter cross-market-mm",
-  "license_file": "LICENSE",
+  "license": "MIT",
+  "license_declared_in": "package.json",
+  "license_file_present_at_root": false,
   "policy": {
     "dry_run_only": true,
     "live_allowed": false,

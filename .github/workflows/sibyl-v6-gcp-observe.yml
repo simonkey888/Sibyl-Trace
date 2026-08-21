@@ -1,0 +1,93 @@
+name: Sibyl V6 GCP Read-Only Inventory
+
+on:
+  push:
+    branches:
+      - "feat/sibyl-v6-cross-market-mm-r1"
+    paths:
+      - "v6/cloud/**"
+      - ".github/workflows/sibyl-v6-gcp-observe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+  GCP_PROJECT_ID: ${{ vars.SIBYL_V6_GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.SIBYL_V6_GCP_WIF_PROVIDER }}
+  GCP_BUILDER_SERVICE_ACCOUNT: ${{ vars.SIBYL_V6_GCP_BUILDER_SERVICE_ACCOUNT }}
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact source and record remote configuration state
+        id: cfg
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p /tmp/sibyl-v6-gcp
+          configured=true
+          for name in GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_BUILDER_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then configured=false; fi
+          done
+          printf '{"source_sha":"%s","gcp_configuration_present":%s}\n' "$SOURCE_SHA" "$configured" \
+            > /tmp/sibyl-v6-gcp/configuration.json
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+          echo "GCP_CONFIGURATION_PRESENT=$configured"
+
+      - name: Authenticate through keyless WIF
+        id: auth
+        if: steps.cfg.outputs.configured == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_BUILDER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        if: steps.cfg.outputs.configured == 'true'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+
+      - name: Read-only inventory; never read secret values
+        if: steps.cfg.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth list --filter=status:ACTIVE --format=json > /tmp/sibyl-v6-gcp/auth.json
+          gcloud artifacts repositories list --project "$GCP_PROJECT_ID" --format=json > /tmp/sibyl-v6-gcp/artifact-repositories.json
+          gcloud run worker-pools list --project "$GCP_PROJECT_ID" --format=json > /tmp/sibyl-v6-gcp/worker-pools.json
+          gcloud storage buckets list --project "$GCP_PROJECT_ID" --format=json > /tmp/sibyl-v6-gcp/buckets.json
+          gcloud secrets list --project "$GCP_PROJECT_ID" --format='json(name,createTime,replication)' > /tmp/sibyl-v6-gcp/secret-metadata.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/sibyl-v6-gcp')
+          out = {'gcp_configuration_present': True}
+          for name in ('artifact-repositories','worker-pools','buckets','secret-metadata'):
+              rows = json.loads((root / f'{name}.json').read_text())
+              out[name.replace('-', '_') + '_count'] = len(rows)
+          (root / 'inventory-summary.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(out, sort_keys=True))
+          PY
+
+      - name: Explicit unconfigured evidence
+        if: steps.cfg.outputs.configured != 'true'
+        run: |
+          printf '%s\n' '{"GCP_AUTH":"UNCONFIGURED","mutation_attempted":false,"reason":"required repository variables absent"}' \
+            > /tmp/sibyl-v6-gcp/inventory-summary.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-gcp-inventory-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-gcp
+          if-no-files-found: error
+          retention-days: 14
