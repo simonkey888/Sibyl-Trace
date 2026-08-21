@@ -7,55 +7,76 @@ import sys
 import time
 from pathlib import Path
 
+from .checkpoint import persist_evidence_directory
 from .discovery import build_discovery_evidence, load_verified_pairs
 from .economics import EconomicsLedger
 from .feeds import public_feed_smoke
 from .preflight import dry_run_preflight, emit_preflight, sanitized_upstream_env
 
 
+def _persist(evidence_dir: Path, source_sha: str) -> list[str]:
+    uploaded = persist_evidence_directory(evidence_dir, source_sha=source_sha)
+    if uploaded:
+        print(json.dumps({"event": "v6_gcs_checkpoint", "objects": uploaded}, sort_keys=True), flush=True)
+    return uploaded
+
+
 def main() -> int:
     evidence_dir = Path(os.environ.get("SIBYL_V6_EVIDENCE_DIR", "/var/lib/sibyl-v6/evidence"))
     upstream_root = Path(os.environ.get("SIBYL_V6_UPSTREAM_ROOT", "/opt/agents-starter"))
     pair_file = Path(os.environ.get("SIBYL_V6_VERIFIED_PAIRS", "/app/v6/config/verified_pairs.json"))
+    source_sha = os.environ.get("SOURCE_SHA", "UNKNOWN")
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     preflight = dry_run_preflight(upstream_root)
     emit_preflight(evidence_dir / "preflight.json", preflight)
     if preflight.DRY_RUN_PREFLIGHT != "PASS":
         print(json.dumps({"event": "v6_preflight_failed", **preflight.to_dict()}), flush=True)
+        _persist(evidence_dir, source_sha)
         return 2
 
     feeds = public_feed_smoke()
+    feeds["source_sha"] = source_sha
     (evidence_dir / "public-feeds.json").write_text(
         json.dumps(feeds, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     if feeds["status"] != "PASS":
         print(json.dumps({"event": "v6_public_feed_failed", "feeds": feeds}), flush=True)
+        _persist(evidence_dir, source_sha)
         return 3
 
     discovery = build_discovery_evidence(evidence_dir / "pair-discovery.json", pair_file)
+    discovery["source_sha"] = source_sha
+    (evidence_dir / "pair-discovery.json").write_text(
+        json.dumps(discovery, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     exact = load_verified_pairs(pair_file)
     economics = EconomicsLedger()
+    economics_payload = economics.to_dict()
+    economics_payload["source_sha"] = source_sha
     (evidence_dir / "economics.json").write_text(
-        json.dumps(economics.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(economics_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    print(
-        json.dumps(
-            {
-                "event": "v6_ready",
-                "timestamp_ms": int(time.time() * 1000),
-                "DRY_RUN_PREFLIGHT": preflight.DRY_RUN_PREFLIGHT,
-                "LIVE_PREFLIGHT": preflight.LIVE_PREFLIGHT,
-                "CANDIDATE_PAIR_COUNT": discovery["CANDIDATE_PAIR_COUNT"],
-                "EXACT_EQUIVALENT_PAIR_COUNT": discovery["EXACT_EQUIVALENT_PAIR_COUNT"],
-                "TARGET_80_STATUS": economics.target_80_status().value,
-                "LIVE": "NO",
-            },
-            sort_keys=True,
-        ),
-        flush=True,
+    summary = {
+        "schema_version": "SIBYL_V6_RUNTIME_SUMMARY_V1",
+        "event": "v6_ready",
+        "timestamp_ms": int(time.time() * 1000),
+        "source_sha": source_sha,
+        "DRY_RUN_PREFLIGHT": preflight.DRY_RUN_PREFLIGHT,
+        "LIVE_PREFLIGHT": preflight.LIVE_PREFLIGHT,
+        "CANDIDATE_PAIR_COUNT": discovery["CANDIDATE_PAIR_COUNT"],
+        "EXACT_EQUIVALENT_PAIR_COUNT": discovery["EXACT_EQUIVALENT_PAIR_COUNT"],
+        "TARGET_80_STATUS": economics.target_80_status().value,
+        "LIVE": "NO",
+        "REAL_ORDERS": 0,
+        "CAPITAL_MOVED_USD": "0",
+    }
+    (evidence_dir / "runtime-summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    print(json.dumps(summary, sort_keys=True), flush=True)
+    _persist(evidence_dir, source_sha)
 
     if not exact:
         print(
