@@ -38,7 +38,7 @@ jobs:
           for name in GCP_PROJECT_ID GCP_WIF_PROVIDER GCP_BUILDER_SERVICE_ACCOUNT; do
             if [[ -z "${!name:-}" ]]; then configured=false; fi
           done
-          printf '{"source_sha":"%s","gcp_configuration_present":%s}\n' "$SOURCE_SHA" "$configured" \
+          printf '{"source_sha":"%s","gcp_configuration_present":%s,"mutation_attempted":false}\n' "$SOURCE_SHA" "$configured" \
             > /tmp/sibyl-v6-gcp/configuration.json
           echo "configured=$configured" >> "$GITHUB_OUTPUT"
           echo "GCP_CONFIGURATION_PRESENT=$configured"
@@ -71,7 +71,7 @@ jobs:
           import json
           from pathlib import Path
           root = Path('/tmp/sibyl-v6-gcp')
-          out = {'gcp_configuration_present': True}
+          out = {'gcp_configuration_present': True, 'mutation_attempted': False}
           for name in ('artifact-repositories','worker-pools','buckets','secret-metadata'):
               rows = json.loads((root / f'{name}.json').read_text())
               out[name.replace('-', '_') + '_count'] = len(rows)
