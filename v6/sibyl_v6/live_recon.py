@@ -19,7 +19,10 @@ ASSETS = {
 
 def _text(row: dict[str, Any]) -> str:
     parts = []
-    for key in ("title", "question", "description", "slug", "rules", "resolutionSource"):
+    for key in (
+        "title", "question", "description", "slug", "rules", "resolutionSource",
+        "eventTitle", "eventSlug", "groupItemTitle",
+    ):
         value = row.get(key)
         if value is not None:
             parts.append(str(value))
@@ -88,8 +91,9 @@ def _compact(row: dict[str, Any], venue: str) -> dict[str, Any]:
     preferred = (
         "id", "conditionId", "slug", "title", "question", "description", "rules",
         "resolutionSource", "oracle", "oracleSource", "oracleAddress", "endDate",
-        "expirationDate", "closeTime", "resolutionDate", "eventId", "marketType",
-        "outcomes", "outcomePrices", "groupItemTitle", "umaResolutionStatus",
+        "expirationDate", "closeTime", "resolutionDate", "eventId", "eventSlug",
+        "eventTitle", "marketType", "tradeType", "outcomes", "outcomePrices",
+        "groupItemTitle", "umaResolutionStatus",
     )
     out: dict[str, Any] = {"venue": venue, "asset": _asset(row), "family": _family(row)}
     ending = _end(row)
@@ -97,32 +101,81 @@ def _compact(row: dict[str, Any], venue: str) -> dict[str, Any]:
     for key in preferred:
         if key in row and row[key] not in (None, "", [], {}):
             value = row[key]
-            if isinstance(value, str) and len(value) > 1600:
-                value = value[:1600] + "…"
+            if isinstance(value, str) and len(value) > 2400:
+                value = value[:2400] + "…"
             out[key] = value
     out["available_keys"] = sorted(row.keys())
     return out
 
 
-def fetch_live_catalogs(limitless_pages: int = 12, polymarket_limit: int = 1000) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    limitless: list[dict[str, Any]] = []
-    for page in range(1, limitless_pages + 1):
-        url = "https://api.limitless.exchange/markets/active?" + urllib.parse.urlencode({"limit": 50, "page": page})
+def _fetch_limitless() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in range(1, 41):
+        url = "https://api.limitless.exchange/markets/active?" + urllib.parse.urlencode({"limit": 25, "page": page})
         _, payload = _get_json(url)
         rows = payload.get("data", []) if isinstance(payload, dict) else []
         if not isinstance(rows, list) or not rows:
             break
-        limitless.extend(row for row in rows if isinstance(row, dict))
-        if len(rows) < 50:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            slug = str(row.get("slug") or "")
+            if slug and slug not in seen:
+                seen.add(slug)
+                out.append(row)
+            subs = row.get("markets") or row.get("outcomeTokens") or []
+            if isinstance(subs, list):
+                for sub in subs:
+                    if not isinstance(sub, dict):
+                        continue
+                    sub_slug = str(sub.get("slug") or "")
+                    if not sub_slug or sub_slug in seen:
+                        continue
+                    merged = dict(sub)
+                    merged.setdefault("eventTitle", row.get("title"))
+                    merged.setdefault("eventSlug", row.get("slug"))
+                    merged.setdefault("tradeType", row.get("tradeType"))
+                    seen.add(sub_slug)
+                    out.append(merged)
+        if len(rows) < 25:
             break
+    return out
 
-    _, poly_payload = _get_json(
-        "https://gamma-api.polymarket.com/markets?" + urllib.parse.urlencode(
-            {"active": "true", "closed": "false", "limit": polymarket_limit}
-        )
-    )
-    polymarket = [row for row in poly_payload if isinstance(row, dict)] if isinstance(poly_payload, list) else []
-    return limitless, polymarket
+
+def _fetch_polymarket() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for offset in range(0, 2000, 500):
+        url = "https://gamma-api.polymarket.com/events?" + urllib.parse.urlencode({
+            "active": "true", "closed": "false", "archived": "false", "limit": 500, "offset": offset,
+        })
+        _, events = _get_json(url)
+        if not isinstance(events, list) or not events:
+            break
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            for market in event.get("markets") or []:
+                if not isinstance(market, dict):
+                    continue
+                if market.get("archived") or market.get("closed") or market.get("active") is False:
+                    continue
+                slug = str(market.get("slug") or "")
+                if not slug or slug in seen:
+                    continue
+                row = dict(market)
+                row["eventSlug"] = event.get("slug")
+                row["eventTitle"] = event.get("title")
+                seen.add(slug)
+                out.append(row)
+        if len(events) < 500:
+            break
+    return out
+
+
+def fetch_live_catalogs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    return _fetch_limitless(), _fetch_polymarket()
 
 
 def semantic_candidates() -> dict[str, Any]:
@@ -143,7 +196,10 @@ def semantic_candidates() -> dict[str, Any]:
             if lend and rend:
                 time_delta_s = abs((lend - rend).total_seconds())
             same_family = lf == rf and lf != "OTHER"
-            if not same_family and (time_delta_s is None or time_delta_s > 3600):
+            same_event_tokens = bool(set(re.findall(r"[a-z0-9]+", _text(left))) & set(re.findall(r"[a-z0-9]+", _text(right))))
+            if not same_family and not same_event_tokens:
+                continue
+            if time_delta_s is not None and time_delta_s > 86400 and not same_family:
                 continue
             score = 0
             if same_family:
@@ -157,6 +213,8 @@ def semantic_candidates() -> dict[str, Any]:
                     score += 5
                 elif time_delta_s <= 3600:
                     score += 2
+            if same_event_tokens:
+                score += 1
             candidates.append({
                 "score": score,
                 "asset": la,
@@ -166,13 +224,13 @@ def semantic_candidates() -> dict[str, Any]:
                 "polymarket": _compact(right, "POLYMARKET"),
             })
     candidates.sort(key=lambda x: (-x["score"], x["end_delta_seconds"] if x["end_delta_seconds"] is not None else 10**18))
-    focused_limitless = [_compact(r, "LIMITLESS") for r in limitless if _asset(r) and _family(r) != "OTHER"][:40]
-    focused_poly = [_compact(r, "POLYMARKET") for r in polymarket if _asset(r) and _family(r) != "OTHER"][:80]
+    focused_limitless = [_compact(r, "LIMITLESS") for r in limitless if _asset(r) and _family(r) != "OTHER"][:100]
+    focused_poly = [_compact(r, "POLYMARKET") for r in polymarket if _asset(r) and _family(r) != "OTHER"][:160]
     return {
         "limitless_market_count": len(limitless),
         "polymarket_market_count": len(polymarket),
         "semantic_candidate_count": len(candidates),
-        "top_candidates": candidates[:60],
+        "top_candidates": candidates[:100],
         "focused_limitless": focused_limitless,
         "focused_polymarket": focused_poly,
     }
