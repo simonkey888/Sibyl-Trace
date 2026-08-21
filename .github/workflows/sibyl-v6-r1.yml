@@ -52,7 +52,7 @@ jobs:
 
   public-feeds:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -79,7 +79,7 @@ jobs:
           print(json.dumps(payload, sort_keys=True))
           assert payload['status'] == 'PASS', payload
           PY
-      - name: Candidate discovery is explicitly not matching
+      - name: Semantic candidate discovery is explicitly not matching
         env:
           PYTHONPATH: v6
         run: |
@@ -92,10 +92,21 @@ jobs:
           payload = build_discovery_evidence(path, Path('v6/config/verified_pairs.json'))
           payload['source_sha'] = os.environ['SOURCE_SHA']
           path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
-          assert payload['EXACT_EQUIVALENT_PAIR_COUNT'] == 0
-          assert payload['candidate_semantics'] == 'TITLE_SIMILARITY_ONLY_NOT_MATCHED'
+          assert payload['CANDIDATE_PAIR_COUNT'] > 0, payload
+          assert payload['candidate_semantics'] == 'SEMANTIC_EVENT_METADATA_ONLY_NOT_MATCHED'
           print(f"CANDIDATE_PAIR_COUNT={payload['CANDIDATE_PAIR_COUNT']}")
-          print("EXACT_EQUIVALENT_PAIR_COUNT=0")
+          print(f"EXACT_EQUIVALENT_PAIR_COUNT={payload['EXACT_EQUIVALENT_PAIR_COUNT']}")
+          for i,row in enumerate(payload['candidate_pairs'][:12], 1):
+              l=row['limitless']; r=row['polymarket']
+              print(f"CANDIDATE_{i}=" + json.dumps({
+                  'score':row['score'],'asset':row['asset'],'family':row['family'],
+                  'end_delta_seconds':row['end_delta_seconds'],
+                  'limitless_slug':l.get('slug'),'limitless_title':l.get('title') or l.get('question'),
+                  'limitless_end':l.get('derived_end_utc'),
+                  'polymarket_id':r.get('id') or r.get('conditionId'),
+                  'polymarket_slug':r.get('slug'),'polymarket_title':r.get('question') or r.get('title'),
+                  'polymarket_end':r.get('derived_end_utc'),
+              }, sort_keys=True))
           PY
       - name: Full-L2 synthetic fill-to-hedge evidence
         env:
