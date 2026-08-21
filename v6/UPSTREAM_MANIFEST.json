@@ -1,0 +1,14 @@
+{
+  "schema_version": "SIBYL_V6_UPSTREAM_V1",
+  "repository": "https://github.com/limitless-labs-group/agents-starter.git",
+  "sha": "e35ad881f88c7b5d60388461095ee11b7aa161c5",
+  "strategy_path": "src/strategies/cross-market-mm",
+  "execution_command": ["npm", "run", "cross-market-mm"],
+  "attribution": "Limitless Labs agents-starter cross-market-mm",
+  "license_file": "LICENSE",
+  "policy": {
+    "dry_run_only": true,
+    "live_allowed": false,
+    "copy_source_into_sibyl": false
+  }
+}

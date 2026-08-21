@@ -1,0 +1,5 @@
+{
+  "schema_version": "SIBYL_V6_VERIFIED_PAIRS_V1",
+  "pairs": [],
+  "note": "R1 starts fail-closed. Add a pair only after both complete resolution-rule records independently compare EXACT_EQUIVALENT."
+}
