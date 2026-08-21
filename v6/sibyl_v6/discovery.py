@@ -138,6 +138,8 @@ def load_verified_pairs(path: Path) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         _require_rule_provenance(row)
+        if not row.get("polymarket_slug"):
+            raise RuntimeError("EXACT_PAIR_POLYMARKET_SLUG_MISSING")
         left_rule = ResolutionRule(**row["limitless_rule"])
         right_rule = ResolutionRule(**row["polymarket_rule"])
         left = MarketDescriptor(
@@ -147,15 +149,16 @@ def load_verified_pairs(path: Path) -> list[dict[str, Any]]:
             left_rule,
             str(row["limitless_rule_payload_hash"]).casefold(),
         )
+        # The operational pair key consumed by pinned cross-market-mm is the
+        # Polymarket slug, so comparison identity must remain slug-stable across
+        # audit, persisted config, runtime loading, and upstream binding.
         right = MarketDescriptor(
             "POLYMARKET",
-            str(row["polymarket_id"]),
+            str(row["polymarket_slug"]),
             str(row["polymarket_title"]),
             right_rule,
             str(row["polymarket_rule_payload_hash"]).casefold(),
         )
-        if not row.get("polymarket_slug"):
-            raise RuntimeError("EXACT_PAIR_POLYMARKET_SLUG_MISSING")
         comparison = compare_markets(left, right)
         if comparison.state is not PairState.EXACT_EQUIVALENT:
             raise RuntimeError(
@@ -163,6 +166,10 @@ def load_verified_pairs(path: Path) -> list[dict[str, Any]]:
                 f"{comparison.state.value} "
                 f"{comparison.differing_fields or comparison.unknown_fields}"
             )
+        evidence = row.get("audit_evidence")
+        if isinstance(evidence, dict) and evidence.get("comparison_fingerprint"):
+            if str(evidence["comparison_fingerprint"]).casefold() != comparison.comparison_fingerprint:
+                raise RuntimeError("EXACT_PAIR_AUDIT_FINGERPRINT_MISMATCH")
         accepted.append({**row, "comparison": comparison.to_dict()})
     return accepted
 
