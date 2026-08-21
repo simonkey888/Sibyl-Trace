@@ -16,12 +16,19 @@ on:
 permissions:
   contents: read
 
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   deterministic:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -37,6 +44,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -48,9 +59,11 @@ jobs:
           mkdir -p /tmp/sibyl-v6-evidence
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           from sibyl_v6.feeds import public_feed_smoke
           payload = public_feed_smoke()
+          payload['source_sha'] = os.environ['SOURCE_SHA']
           Path('/tmp/sibyl-v6-evidence/public-feeds.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
           print(json.dumps(payload, sort_keys=True))
           assert payload['status'] == 'PASS', payload
@@ -60,12 +73,14 @@ jobs:
           PYTHONPATH: v6
         run: |
           python - <<'PY'
+          import json
+          import os
           from pathlib import Path
           from sibyl_v6.discovery import build_discovery_evidence
-          payload = build_discovery_evidence(
-              Path('/tmp/sibyl-v6-evidence/pair-discovery.json'),
-              Path('v6/config/verified_pairs.json'),
-          )
+          path = Path('/tmp/sibyl-v6-evidence/pair-discovery.json')
+          payload = build_discovery_evidence(path, Path('v6/config/verified_pairs.json'))
+          payload['source_sha'] = os.environ['SOURCE_SHA']
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
           assert payload['EXACT_EQUIVALENT_PAIR_COUNT'] == 0
           assert payload['candidate_semantics'] == 'TITLE_SIMILARITY_ONLY_NOT_MATCHED'
           print(f"CANDIDATE_PAIR_COUNT={payload['CANDIDATE_PAIR_COUNT']}")
@@ -73,7 +88,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: sibyl-v6-public-evidence-${{ github.sha }}
+          name: sibyl-v6-public-evidence-${{ env.SOURCE_SHA }}
           path: /tmp/sibyl-v6-evidence
           if-no-files-found: error
           retention-days: 14
@@ -83,12 +98,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Build immutable upstream-pinned V6 image
-        run: docker build --pull --tag sibyl-v6:${GITHUB_SHA} --file v6/Dockerfile .
+        run: docker build --pull --tag sibyl-v6:${SOURCE_SHA} --file v6/Dockerfile .
       - name: Verify image cannot arm LIVE and upstream provenance is exact
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint python3 sibyl-v6:${GITHUB_SHA} - <<'PY'
+          docker run --rm --entrypoint python3 sibyl-v6:${SOURCE_SHA} - <<'PY'
           import sys
           from pathlib import Path
           sys.path.insert(0, '/app/v6')
@@ -99,4 +118,4 @@ jobs:
           print(result)
           PY
       - name: Record local immutable image content id
-        run: docker image inspect sibyl-v6:${GITHUB_SHA} --format 'IMAGE_ID={{.Id}}'
+        run: docker image inspect sibyl-v6:${SOURCE_SHA} --format 'IMAGE_ID={{.Id}}'
