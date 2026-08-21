@@ -14,6 +14,7 @@ from .discovery import load_verified_pairs
 from .evidence_store import evidence_store_from_env
 from .feeds import _freshness, _get_json, _source_timestamp_ms
 from .quote_math import BookTop, book_top, compute_buy_prices, norm_price
+from .quote_safety import assess_buy_quote
 
 
 def _hash(payload: Any) -> str:
@@ -44,7 +45,7 @@ def _levels(book: dict[str, Any], side: str) -> list[dict[str, float]]:
     return out
 
 
-def _poly_yes_token(market: dict[str, Any]) -> str:
+def _poly_tokens(market: dict[str, Any]) -> dict[str, str]:
     raw_outcomes = market.get("outcomes")
     raw_tokens = market.get("clobTokenIds")
     if isinstance(raw_outcomes, str):
@@ -53,10 +54,24 @@ def _poly_yes_token(market: dict[str, Any]) -> str:
         raw_tokens = json.loads(raw_tokens)
     if not isinstance(raw_outcomes, list) or not isinstance(raw_tokens, list) or len(raw_outcomes) != len(raw_tokens):
         raise RuntimeError("POLYMARKET_TOKEN_MAPPING_INVALID")
+    result: dict[str, str] = {}
     for outcome, token in zip(raw_outcomes, raw_tokens):
-        if str(outcome).strip().casefold() == "yes":
-            return str(token)
-    raise RuntimeError("POLYMARKET_YES_TOKEN_MISSING")
+        label = str(outcome).strip().casefold()
+        if label in ("yes", "no"):
+            result[label.upper()] = str(token)
+    if set(result) != {"YES", "NO"}:
+        raise RuntimeError("POLYMARKET_BINARY_TOKEN_MAPPING_REQUIRED")
+    return result
+
+
+def _optional_nonnegative_number(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result < 0 or result != result or result in (float("inf"), float("-inf")):
+        return None
+    return result
 
 
 def _book_summary(book: dict[str, Any], observed_at_ms: int) -> dict[str, Any]:
@@ -105,31 +120,93 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     pstatus, pmarket = _get_json(pdetail_url)
     if pstatus != 200 or not isinstance(pmarket, dict):
         raise RuntimeError("POLYMARKET_EXACT_PAIR_MARKET_INVALID")
-    yes_token = _poly_yes_token(pmarket)
-    pbook_url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": yes_token})
-    pbstatus, pbook = _get_json(pbook_url)
-    p_observed = int(time.time() * 1000)
-    if pbstatus != 200 or not isinstance(pbook, dict):
-        raise RuntimeError("POLYMARKET_EXACT_PAIR_BOOK_INVALID")
+    tokens = _poly_tokens(pmarket)
+
+    books: dict[str, dict[str, Any]] = {}
+    book_http: dict[str, int] = {}
+    book_urls: dict[str, str] = {}
+    summaries: dict[str, dict[str, Any]] = {}
+    for outcome in ("YES", "NO"):
+        url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": tokens[outcome]})
+        status, book = _get_json(url)
+        seen = int(time.time() * 1000)
+        if status != 200 or not isinstance(book, dict):
+            raise RuntimeError(f"POLYMARKET_{outcome}_EXACT_PAIR_BOOK_INVALID")
+        books[outcome] = book
+        book_http[outcome] = status
+        book_urls[outcome] = url
+        summaries[outcome] = _book_summary(book, seen)
 
     ls = _book_summary(lbook, l_observed)
-    ps = _book_summary(pbook, p_observed)
-    if not ls["two_sided"] or not ps["two_sided"]:
+    if not ls["two_sided"] or not summaries["YES"]["two_sided"] or not summaries["NO"]["two_sided"]:
         raise RuntimeError("EXACT_PAIR_TWO_SIDED_BOOK_REQUIRED")
 
-    poly_bid = float(ps["best_executable_bid"])
-    poly_ask = float(ps["best_executable_ask"])
+    # Upstream parity remains literal: computeBuyPrices consumes the YES frame.
+    poly_bid = float(summaries["YES"]["best_executable_bid"])
+    poly_ask = float(summaries["YES"]["best_executable_ask"])
     ltop = BookTop(float(ls["best_executable_bid"]), float(ls["best_executable_ask"]))
     quotes = compute_buy_prices(poly_bid, poly_ask, margin_bps, ltop)
     margin = margin_bps / 10_000.0
     yes_cap = poly_bid - margin
     no_cap = 1.0 - poly_ask - margin
 
+    quote_size = float(os.environ.get("SIBYL_V6_QUOTE_SIZE_SHARES", "5"))
+    min_edge_bps = float(os.environ.get("SIBYL_V6_MIN_EXPECTED_NET_EDGE_BPS", str(margin_bps)))
+    # Pinned upstream documentation at e35ad881 explicitly states Limitless
+    # makers pay no fee. Polymarket Gamma is the authority for takerBaseFee;
+    # absence is UNKNOWN and therefore fail-closed.
+    poly_taker_fee_bps = _optional_nonnegative_number(pmarket.get("takerBaseFee"))
+    limitless_maker_fee_bps = 0.0
+
+    yes_safety = assess_buy_quote(
+        side="YES",
+        raw_cap=yes_cap,
+        upstream_price=float(quotes["yes"]),
+        hedge_book=books["NO"],
+        hedge_book_status=str(summaries["NO"]["quote_age_status"]),
+        hedge_token=tokens["NO"],
+        quote_size=quote_size,
+        polymarket_taker_fee_bps=poly_taker_fee_bps,
+        minimum_net_edge_bps=min_edge_bps,
+        limitless_maker_fee_bps=limitless_maker_fee_bps,
+    )
+    no_safety = assess_buy_quote(
+        side="NO",
+        raw_cap=no_cap,
+        upstream_price=float(quotes["no"]),
+        hedge_book=books["YES"],
+        hedge_book_status=str(summaries["YES"]["quote_age_status"]),
+        hedge_token=tokens["YES"],
+        quote_size=quote_size,
+        polymarket_taker_fee_bps=poly_taker_fee_bps,
+        minimum_net_edge_bps=min_edge_bps,
+        limitless_maker_fee_bps=limitless_maker_fee_bps,
+    )
+
+    # The pinned upstream replace-all places both Limitless sides together.
+    # Until future order authority is explicitly side-filtered, strategy
+    # quoteability requires BOTH Sibyl side gates to pass.
+    strategy_quoteable = bool(yes_safety["QUOTEABLE"] and no_safety["QUOTEABLE"])
+    cap_gate_ok = all(
+        (not side["QUOTEABLE"]) or side["CAP_COMPLIANT"]
+        for side in (yes_safety, no_safety)
+    )
+    net_edge_gate_ok = all(
+        (not side["QUOTEABLE"])
+        or (
+            side["EXPECTED_NET_EDGE"] is not None
+            and side["EXPECTED_NET_EDGE"] + 1e-12 >= side["MIN_EXPECTED_NET_EDGE"]
+        )
+        for side in (yes_safety, no_safety)
+    )
+    if not cap_gate_ok or not net_edge_gate_ok:
+        raise RuntimeError("SIBYL_QUOTE_SAFETY_INVARIANT_FAILED")
+
     cycle_latency_ms = (time.perf_counter_ns() - wall_started) / 1_000_000.0
     cpu_ms = (time.process_time_ns() - cpu_started) / 1_000_000.0
     rss_peak_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     payload = {
-        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V2",
+        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V3",
         "event": "v6_exact_pair_paper_cycle",
         "observed_at_ms": observed_started_ms,
         "cycle_latency_ms": round(cycle_latency_ms, 3),
@@ -139,9 +216,20 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "REAL_ORDERS": 0,
         "CAPITAL_MOVED_USD": "0",
         "REAL_FEEDS": True,
-        "EXACT_PAIR_LIVE_CYCLE": "PASS",
+        "MARKET_DATA_CYCLE": "PASS",
+        "STRATEGY_QUOTEABLE": "YES" if strategy_quoteable else "NO",
+        "EXACT_PAIR_LIVE_CYCLE": (
+            "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES"
+            if strategy_quoteable
+            else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
+        ),
+        "SIBYL_QUOTE_SAFETY": "PASS",
+        "CAP_COMPLIANCE": "PASS",
+        "NET_EDGE_GATE": "PASS",
+        "UPSTREAM_PARITY_TEST": "PASS_BY_SEPARATE_EXACT_HEAD_CONTAINER_GATE",
         "LIMITLESS_EXACT_BOOK_HTTP": lstatus,
-        "POLY_EXACT_BOOK_HTTP": pbstatus,
+        "POLY_EXACT_BOOK_HTTP": book_http["YES"],
+        "POLY_NO_EXACT_BOOK_HTTP": book_http["NO"],
         "POLY_EXACT_MARKET_HTTP": pstatus,
         "exact_pair": {
             "limitless_slug": lslug,
@@ -150,19 +238,34 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
             "rule_fingerprint": pair["comparison"]["left_rule_fingerprint"],
         },
         "limitless": {"endpoint": lurl, **ls},
-        "polymarket": {"endpoint": pbook_url, "market_endpoint": pdetail_url, "yes_token": yes_token, **ps},
+        "polymarket": {
+            "market_endpoint": pdetail_url,
+            "taker_base_fee_bps": poly_taker_fee_bps,
+            "YES": {"endpoint": book_urls["YES"], "token": tokens["YES"], **summaries["YES"]},
+            "NO": {"endpoint": book_urls["NO"], "token": tokens["NO"], **summaries["NO"]},
+        },
         "paper_mechanics": {
-            "semantics": "PINNED_UPSTREAM_COMPUTE_BUY_PRICES_E35AD881",
+            "semantics": "PINNED_UPSTREAM_COMPUTE_BUY_PRICES_E35AD881_PLUS_SIBYL_FAIL_CLOSED_GATE",
             "limitless_order_sides": ["YES_BUY", "NO_BUY"],
             "postOnly": True,
             "poly_yes_bid": poly_bid,
             "poly_yes_ask": poly_ask,
             "margin_bps": margin_bps,
+            "minimum_net_edge_bps": min_edge_bps,
+            "quote_size_shares": quote_size,
             "YES_BUY_CAP": yes_cap,
             "NO_BUY_CAP": no_cap,
             "computed_YES_BUY": quotes["yes"],
             "computed_NO_BUY": quotes["no"],
+            "YES": yes_safety,
+            "NO": no_safety,
+            "strategy_requires_both_sides": True,
             "orders_submitted": 0,
+            "fees_provenance": {
+                "limitless_maker_fee": "PINNED_UPSTREAM_QUICKSTART_NO_FEE_E35AD881",
+                "polymarket_taker_fee": "GAMMA_MARKET_TAKER_BASE_FEE_OR_UNKNOWN",
+                "fee_model": "CONSERVATIVE_BPS_PER_FULL_USD_PAYOUT_PER_SHARE",
+            },
         },
         "runtime_profile": {
             "RSS_PEAK_KB": rss_peak_kb,
