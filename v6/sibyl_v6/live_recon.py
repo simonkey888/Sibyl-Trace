@@ -42,11 +42,41 @@ def _family(row: dict[str, Any]) -> str:
     text = _text(row)
     if "up or down" in text or ("higher" in text and "lower" in text):
         return "UP_DOWN"
-    if any(x in text for x in ("above", "greater than", "higher than", "over $", "over ")):
+    if any(x in text for x in ("above", "greater than", "higher than", "over $", "over ", "hit $", "hit  $")):
         return "ABOVE"
     if any(x in text for x in ("below", "less than", "lower than", "under $", "under ")):
         return "BELOW"
+    title = str(row.get("title") or row.get("question") or "")
+    if title.lstrip().startswith("↑"):
+        return "ABOVE"
+    if title.lstrip().startswith("↓"):
+        return "BELOW"
     return "OTHER"
+
+
+def _parse_number(token: str) -> int | None:
+    text = token.strip().lower().replace("$", "").replace(",", "")
+    mult = 1
+    if text.endswith("k"):
+        mult, text = 1000, text[:-1]
+    elif text.endswith("m"):
+        mult, text = 1_000_000, text[:-1]
+    try:
+        value = float(text) * mult
+    except ValueError:
+        return None
+    if value < 100:
+        return None
+    return int(round(value))
+
+
+def _threshold(row: dict[str, Any]) -> int | None:
+    primary = " ".join(str(row.get(k) or "") for k in ("groupItemTitle", "title", "question"))
+    for token in re.findall(r"\$?\d[\d,]*(?:\.\d+)?[kKmM]?", primary):
+        value = _parse_number(token)
+        if value is not None:
+            return value
+    return None
 
 
 def _parse_time(value: Any) -> dt.datetime | None:
@@ -69,13 +99,19 @@ def _parse_time(value: Any) -> dt.datetime | None:
             parsed = parsed.replace(tzinfo=dt.timezone.utc)
         return parsed.astimezone(dt.timezone.utc)
     except ValueError:
-        return None
+        pass
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return dt.datetime.strptime(text, fmt).replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+    return None
 
 
 def _end(row: dict[str, Any]) -> dt.datetime | None:
     for key in (
-        "endDate", "end_date", "expirationDate", "expiration_date", "expiresAt",
-        "expires_at", "closeTime", "close_time", "resolutionDate", "resolution_date",
+        "endDate", "end_date", "expirationTimestamp", "expirationDate", "expiration_date",
+        "expiresAt", "expires_at", "closeTime", "close_time", "resolutionDate", "resolution_date",
     ):
         parsed = _parse_time(row.get(key))
         if parsed:
@@ -91,18 +127,23 @@ def _compact(row: dict[str, Any], venue: str) -> dict[str, Any]:
     preferred = (
         "id", "conditionId", "slug", "title", "question", "description", "rules",
         "resolutionSource", "oracle", "oracleSource", "oracleAddress", "endDate",
-        "expirationDate", "closeTime", "resolutionDate", "eventId", "eventSlug",
-        "eventTitle", "marketType", "tradeType", "outcomes", "outcomePrices",
-        "groupItemTitle", "umaResolutionStatus",
+        "expirationDate", "expirationTimestamp", "startAt", "closeTime", "resolutionDate",
+        "eventId", "eventSlug", "eventTitle", "marketType", "tradeType", "outcomes",
+        "outcomePrices", "groupItemTitle", "umaResolutionStatus",
     )
-    out: dict[str, Any] = {"venue": venue, "asset": _asset(row), "family": _family(row)}
+    out: dict[str, Any] = {
+        "venue": venue,
+        "asset": _asset(row),
+        "family": _family(row),
+        "derived_threshold": _threshold(row),
+    }
     ending = _end(row)
     out["derived_end_utc"] = ending.isoformat() if ending else None
     for key in preferred:
         if key in row and row[key] not in (None, "", [], {}):
             value = row[key]
-            if isinstance(value, str) and len(value) > 2400:
-                value = value[:2400] + "…"
+            if isinstance(value, str) and len(value) > 3000:
+                value = value[:3000] + "…"
             out[key] = value
     out["available_keys"] = sorted(row.keys())
     return out
@@ -133,9 +174,12 @@ def _fetch_limitless() -> list[dict[str, Any]]:
                     if not sub_slug or sub_slug in seen:
                         continue
                     merged = dict(sub)
-                    merged.setdefault("eventTitle", row.get("title"))
-                    merged.setdefault("eventSlug", row.get("slug"))
-                    merged.setdefault("tradeType", row.get("tradeType"))
+                    for source_key, dest_key in (
+                        ("title", "eventTitle"), ("slug", "eventSlug"), ("tradeType", "tradeType"),
+                        ("expirationDate", "expirationDate"), ("expirationTimestamp", "expirationTimestamp"),
+                        ("startAt", "startAt"),
+                    ):
+                        merged.setdefault(dest_key, row.get(source_key))
                     seen.add(sub_slug)
                     out.append(merged)
         if len(rows) < 25:
@@ -178,6 +222,12 @@ def fetch_live_catalogs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return _fetch_limitless(), _fetch_polymarket()
 
 
+def _event_tokens(row: dict[str, Any]) -> set[str]:
+    text = " ".join(str(row.get(k) or "") for k in ("eventTitle", "eventSlug", "title", "question")).casefold()
+    stop = {"will", "the", "what", "price", "hit", "by", "or", "and", "to", "of", "in", "on"}
+    return {t for t in re.findall(r"[a-z0-9]+", text) if len(t) > 1 and t not in stop}
+
+
 def semantic_candidates() -> dict[str, Any]:
     limitless, polymarket = fetch_live_catalogs()
     candidates: list[dict[str, Any]] = []
@@ -186,51 +236,57 @@ def semantic_candidates() -> dict[str, Any]:
         if not la:
             continue
         lf = _family(left)
+        lt = _threshold(left)
         lend = _end(left)
         for right in polymarket:
             if _asset(right) != la:
                 continue
             rf = _family(right)
+            if lf == "OTHER" or rf == "OTHER" or lf != rf:
+                continue
+            rt = _threshold(right)
+            if lf in ("ABOVE", "BELOW") and lt is not None and rt is not None and lt != rt:
+                continue
             rend = _end(right)
-            time_delta_s = None
-            if lend and rend:
-                time_delta_s = abs((lend - rend).total_seconds())
-            same_family = lf == rf and lf != "OTHER"
-            same_event_tokens = bool(set(re.findall(r"[a-z0-9]+", _text(left))) & set(re.findall(r"[a-z0-9]+", _text(right))))
-            if not same_family and not same_event_tokens:
+            time_delta_s = abs((lend - rend).total_seconds()) if lend and rend else None
+            token_overlap = len(_event_tokens(left) & _event_tokens(right))
+            if time_delta_s is None and token_overlap < 2:
                 continue
-            if time_delta_s is not None and time_delta_s > 86400 and not same_family:
+            if time_delta_s is not None and time_delta_s > 86400 and token_overlap < 2:
                 continue
-            score = 0
-            if same_family:
-                score += 5
+            score = 10
+            if lt is not None and rt is not None and lt == rt:
+                score += 12
             if time_delta_s is not None:
                 if time_delta_s == 0:
-                    score += 10
+                    score += 20
                 elif time_delta_s <= 300:
-                    score += 8
-                elif time_delta_s <= 900:
-                    score += 5
+                    score += 16
                 elif time_delta_s <= 3600:
+                    score += 10
+                elif time_delta_s <= 14400:
+                    score += 6
+                elif time_delta_s <= 86400:
                     score += 2
-            if same_event_tokens:
-                score += 1
+            score += min(token_overlap, 6)
             candidates.append({
                 "score": score,
                 "asset": la,
                 "family": [lf, rf],
+                "thresholds": [lt, rt],
                 "end_delta_seconds": time_delta_s,
+                "event_token_overlap": token_overlap,
                 "limitless": _compact(left, "LIMITLESS"),
                 "polymarket": _compact(right, "POLYMARKET"),
             })
     candidates.sort(key=lambda x: (-x["score"], x["end_delta_seconds"] if x["end_delta_seconds"] is not None else 10**18))
-    focused_limitless = [_compact(r, "LIMITLESS") for r in limitless if _asset(r) and _family(r) != "OTHER"][:100]
-    focused_poly = [_compact(r, "POLYMARKET") for r in polymarket if _asset(r) and _family(r) != "OTHER"][:160]
+    focused_limitless = [_compact(r, "LIMITLESS") for r in limitless if _asset(r) and _family(r) != "OTHER"][:160]
+    focused_poly = [_compact(r, "POLYMARKET") for r in polymarket if _asset(r) and _family(r) != "OTHER"][:240]
     return {
         "limitless_market_count": len(limitless),
         "polymarket_market_count": len(polymarket),
         "semantic_candidate_count": len(candidates),
-        "top_candidates": candidates[:100],
+        "top_candidates": candidates[:160],
         "focused_limitless": focused_limitless,
         "focused_polymarket": focused_poly,
     }
