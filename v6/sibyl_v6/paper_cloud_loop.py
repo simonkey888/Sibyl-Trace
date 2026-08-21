@@ -138,13 +138,17 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         summaries[outcome] = _book_summary(book, seen)
 
     ls = _book_summary(lbook, l_observed)
-    if not ls["two_sided"] or not summaries["YES"]["two_sided"] or not summaries["NO"]["two_sided"]:
-        raise RuntimeError("EXACT_PAIR_TWO_SIDED_BOOK_REQUIRED")
+    # The upstream fair-value frame requires a real YES bid+ask. The opposite
+    # token hedge book is allowed to be one-sided: a BUY hedge only consumes
+    # asks, and absent/insufficient asks are a quote-safety rejection rather
+    # than a failure to observe the market-data cycle.
+    if not summaries["YES"]["two_sided"]:
+        raise RuntimeError("POLYMARKET_YES_FAIR_VALUE_TWO_SIDED_REQUIRED")
 
     # Upstream parity remains literal: computeBuyPrices consumes the YES frame.
     poly_bid = float(summaries["YES"]["best_executable_bid"])
     poly_ask = float(summaries["YES"]["best_executable_ask"])
-    ltop = BookTop(float(ls["best_executable_bid"]), float(ls["best_executable_ask"]))
+    ltop = BookTop(ls["best_executable_bid"], ls["best_executable_ask"])
     quotes = compute_buy_prices(poly_bid, poly_ask, margin_bps, ltop)
     margin = margin_bps / 10_000.0
     yes_cap = poly_bid - margin
