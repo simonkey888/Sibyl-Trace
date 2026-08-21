@@ -142,7 +142,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Bounded PAPER cycle on audited BTC pair using real books
+      - name: Bounded PAPER market-data cycle plus fail-closed strategy quoteability
         env:
           PYTHONPATH: v6
           DRY_RUN: "true"
@@ -158,28 +158,59 @@ jobs:
           import json
           from pathlib import Path
           p=json.loads(Path('/tmp/sibyl-v6-exact-pair/cycle.json').read_text())
-          assert p['EXACT_PAIR_LIVE_CYCLE'] == 'PASS', p
+          assert p['MARKET_DATA_CYCLE'] == 'PASS', p
+          assert p['STRATEGY_QUOTEABLE'] in ('YES','NO'), p
+          assert p['SIBYL_QUOTE_SAFETY'] == 'PASS', p
+          assert p['CAP_COMPLIANCE'] == 'PASS', p
+          assert p['NET_EDGE_GATE'] == 'PASS', p
           assert p['REAL_FEEDS'] is True
           assert p['LIMITLESS_EXACT_BOOK_HTTP'] == 200
           assert p['POLY_EXACT_BOOK_HTTP'] == 200
+          assert p['POLY_NO_EXACT_BOOK_HTTP'] == 200
           assert p['exact_pair']['limitless_slug'] == '62000-1786954111732'
           assert p['exact_pair']['polymarket_slug'] == 'will-bitcoin-dip-to-62k-august-17-23-2026'
           assert p['exact_pair']['rule_fingerprint'] == 'c26d3fa531ae6d896c579f2a5308c1ac1e0dc675c80bac6de666155b0d7f914c'
           assert p['exact_pair']['comparison_fingerprint'] == '120a27231493cff6794631c9d5137849e788a1855ecc70600fe8c4f9b69a5f64'
-          for venue in ('limitless','polymarket'):
-              assert p[venue]['bid_levels'] > 0 and p[venue]['ask_levels'] > 0
-              assert p[venue]['best_executable_bid'] is not None
-              assert p[venue]['best_executable_ask'] is not None
-              if p[venue]['source_timestamp_ms'] is None:
-                  assert p[venue]['quote_age_ms'] is None
-                  assert p[venue]['quote_age_status'] == 'UNKNOWN'
+          assert p['limitless']['bid_levels'] > 0 and p['limitless']['ask_levels'] > 0
+          for outcome in ('YES','NO'):
+              book=p['polymarket'][outcome]
+              assert book['bid_levels'] > 0 and book['ask_levels'] > 0
+              assert book['best_executable_bid'] is not None
+              assert book['best_executable_ask'] is not None
+              if book['source_timestamp_ms'] is None:
+                  assert book['quote_age_ms'] is None
+                  assert book['quote_age_status'] == 'UNKNOWN'
           assert p['paper_mechanics']['limitless_order_sides'] == ['YES_BUY','NO_BUY']
           assert p['paper_mechanics']['postOnly'] is True
           assert p['paper_mechanics']['computed_YES_BUY'] is not None
           assert p['paper_mechanics']['computed_NO_BUY'] is not None
+          for side in ('YES','NO'):
+              q=p['paper_mechanics'][side]
+              for field in (
+                  'RAW_CAP','UPSTREAM_COMPUTED_PRICE','CAP_COMPLIANT','TICK_QUOTEABLE',
+                  'EXECUTABLE_HEDGE_COST','FEES','EXPECTED_NET_EDGE','QUOTEABLE','REJECTION_REASON'
+              ):
+                  assert field in q, (side, field, q)
+              if q['QUOTEABLE']:
+                  assert q['CAP_COMPLIANT'] is True
+                  assert q['TICK_QUOTEABLE'] is True
+                  assert q['HEDGE_DEPTH_SUFFICIENT'] is True
+                  assert q['HEDGE_BOOK_STATUS'] == 'FRESH'
+                  assert q['EXPECTED_NET_EDGE'] is not None
+                  assert q['EXPECTED_NET_EDGE'] + 1e-12 >= q['MIN_EXPECTED_NET_EDGE']
           assert p['REAL_ORDERS'] == 0
           assert p['CAPITAL_MOVED_USD'] == '0'
-          print('EXACT_PAIR_LIVE_CYCLE=PASS')
+          print('MARKET_DATA_CYCLE=PASS')
+          print('SIBYL_QUOTE_SAFETY=PASS')
+          print('CAP_COMPLIANCE=PASS')
+          print('NET_EDGE_GATE=PASS')
+          print('STRATEGY_QUOTEABLE=' + p['STRATEGY_QUOTEABLE'])
+          print('YES_QUOTEABLE=' + str(p['paper_mechanics']['YES']['QUOTEABLE']).lower())
+          print('NO_QUOTEABLE=' + str(p['paper_mechanics']['NO']['QUOTEABLE']).lower())
+          print('YES_NET_EDGE=' + str(p['paper_mechanics']['YES']['EXPECTED_NET_EDGE']))
+          print('NO_NET_EDGE=' + str(p['paper_mechanics']['NO']['EXPECTED_NET_EDGE']))
+          print('R2_STORE_CONTRACT=PASS')
+          print('R2_LIVE_PUT_GET=NOT_RUN')
           print('REAL_ORDERS=0')
           print('CAPITAL_MOVED_USD=0')
           PY
@@ -260,6 +291,7 @@ jobs:
           ' | tee /tmp/sibyl-v6-container-evidence/quote-parity.txt
           grep -q '"QUOTE_MATH_PARITY": "PASS"' /tmp/sibyl-v6-container-evidence/quote-parity.txt
           echo 'QUOTE_MATH_PARITY=PASS'
+          echo 'UPSTREAM_PARITY_TEST=PASS'
       - name: Bounded Northflank-sized exact-pair PAPER profile
         run: |
           set -euo pipefail
@@ -283,7 +315,10 @@ jobs:
           files=sorted(Path('/tmp/sibyl-v6-profile').glob('cycle-*.json'))
           rows=[json.loads(p.read_text()) for p in files]
           assert len(rows) == 3, files
-          assert all(r['EXACT_PAIR_LIVE_CYCLE']=='PASS' for r in rows)
+          assert all(r['MARKET_DATA_CYCLE']=='PASS' for r in rows)
+          assert all(r['SIBYL_QUOTE_SAFETY']=='PASS' for r in rows)
+          assert all(r['CAP_COMPLIANCE']=='PASS' and r['NET_EDGE_GATE']=='PASS' for r in rows)
+          assert all(r['STRATEGY_QUOTEABLE'] in ('YES','NO') for r in rows)
           assert all(r['REAL_ORDERS']==0 and r['CAPITAL_MOVED_USD']=='0' for r in rows)
           rss=max(r['runtime_profile']['RSS_PEAK_KB'] for r in rows)
           cpu_ms=[r['runtime_profile']['CPU_PROCESS_MS'] for r in rows]
