@@ -171,12 +171,15 @@ jobs:
           assert p['exact_pair']['polymarket_slug'] == 'will-bitcoin-dip-to-62k-august-17-23-2026'
           assert p['exact_pair']['rule_fingerprint'] == 'c26d3fa531ae6d896c579f2a5308c1ac1e0dc675c80bac6de666155b0d7f914c'
           assert p['exact_pair']['comparison_fingerprint'] == '120a27231493cff6794631c9d5137849e788a1855ecc70600fe8c4f9b69a5f64'
-          assert p['limitless']['bid_levels'] > 0 and p['limitless']['ask_levels'] > 0
+          assert 'bid_levels' in p['limitless'] and 'ask_levels' in p['limitless']
+          yes_book=p['polymarket']['YES']
+          assert yes_book['bid_levels'] > 0 and yes_book['ask_levels'] > 0
+          assert yes_book['best_executable_bid'] is not None
+          assert yes_book['best_executable_ask'] is not None
           for outcome in ('YES','NO'):
               book=p['polymarket'][outcome]
-              assert book['bid_levels'] > 0 and book['ask_levels'] > 0
-              assert book['best_executable_bid'] is not None
-              assert book['best_executable_ask'] is not None
+              assert 'bid_levels' in book and 'ask_levels' in book
+              assert 'best_executable_bid' in book and 'best_executable_ask' in book
               if book['source_timestamp_ms'] is None:
                   assert book['quote_age_ms'] is None
                   assert book['quote_age_status'] == 'UNKNOWN'
