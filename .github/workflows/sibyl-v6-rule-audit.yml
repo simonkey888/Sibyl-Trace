@@ -29,13 +29,20 @@ jobs:
           python-version: "3.12"
       - name: Exact-head gate
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-      - name: Audit authoritative venue rules field-by-field
+      - name: Capture venue catalog representation
         env:
           PYTHONPATH: v6
         run: |
-          set -euo pipefail
           mkdir -p /tmp/sibyl-v6-rule-audit
-          python -m sibyl_v6.rule_audit > /tmp/sibyl-v6-rule-audit/rule-audit.json
+          python -m sibyl_v6.catalog_diag > /tmp/sibyl-v6-rule-audit/catalog-diag.json
+      - name: Audit authoritative venue rules field-by-field
+        env:
+          PYTHONPATH: v6
+        run: python -m sibyl_v6.rule_audit > /tmp/sibyl-v6-rule-audit/rule-audit.json
+      - name: Verify audit result
+        env:
+          PYTHONPATH: v6
+        run: |
           python - <<'PY'
           import json
           from pathlib import Path
@@ -55,9 +62,10 @@ jobs:
               }, sort_keys=True))
           assert p['CANDIDATE_PAIR_COUNT'] > 0, p
           PY
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sibyl-v6-authoritative-rule-audit-${{ env.SOURCE_SHA }}
-          path: /tmp/sibyl-v6-rule-audit/rule-audit.json
+          path: /tmp/sibyl-v6-rule-audit
           if-no-files-found: error
           retention-days: 14
