@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import urllib.parse
 from typing import Any
 
@@ -50,8 +51,17 @@ def fetch_polymarket() -> list[dict[str, Any]]:
     seen: set[str] = set()
     cursor: str | None = None
     seen_cursors: set[str] = set()
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    now_iso = now.isoformat().replace("+00:00", "Z")
     for _ in range(30):
-        params: dict[str, Any] = {"limit": 500, "closed": "false"}
+        # This is the live/current discovery universe: not closed, already started,
+        # and not ended yet. Keyset pagination remains exhaustive inside that set.
+        params: dict[str, Any] = {
+            "limit": 500,
+            "closed": "false",
+            "start_date_max": now_iso,
+            "end_date_min": now_iso,
+        }
         if cursor:
             params["after_cursor"] = cursor
         url = "https://gamma-api.polymarket.com/events/keyset?" + urllib.parse.urlencode(params)
