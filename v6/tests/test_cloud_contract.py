@@ -7,8 +7,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CloudContractTests(unittest.TestCase):
-    def test_builder_workflow_never_references_trading_secret_values(self):
-        source = (ROOT / ".github/workflows/sibyl-v6-gcp-observe.yml").read_text(encoding="utf-8")
+    def workflow(self) -> str:
+        return (ROOT / ".github/workflows/sibyl-v6-r1.yml").read_text(encoding="utf-8")
+
+    def test_builder_job_never_references_trading_secret_values(self):
+        source = self.workflow()
+        gcp = source[source.index("  gcp-inventory:") :]
         for forbidden in (
             "PRIVATE_KEY",
             "LMTS_TOKEN_SECRET",
@@ -17,13 +21,16 @@ class CloudContractTests(unittest.TestCase):
             "LIVE_ARMED",
             "secrets.",
         ):
-            self.assertNotIn(forbidden, source)
+            self.assertNotIn(forbidden, gcp)
 
-    def test_keyless_wif_permissions_only(self):
-        source = (ROOT / ".github/workflows/sibyl-v6-gcp-observe.yml").read_text(encoding="utf-8")
-        self.assertIn("id-token: write", source)
-        self.assertIn("google-github-actions/auth@7c6bc770", source)
-        self.assertNotIn("credentials_json", source)
+    def test_keyless_wif_permissions_are_scoped_to_gcp_job(self):
+        source = self.workflow()
+        before_gcp = source[: source.index("  gcp-inventory:")]
+        gcp = source[source.index("  gcp-inventory:") :]
+        self.assertNotIn("id-token: write", before_gcp)
+        self.assertIn("id-token: write", gcp)
+        self.assertIn("google-github-actions/auth@7c6bc770", gcp)
+        self.assertNotIn("credentials_json", gcp)
 
     def test_bootstrap_refuses_unbudgeted_apply(self):
         source = (ROOT / "v6/cloud/bootstrap.sh").read_text(encoding="utf-8")
@@ -33,7 +40,8 @@ class CloudContractTests(unittest.TestCase):
 
     def test_builder_is_never_granted_secret_accessor(self):
         source = (ROOT / "v6/cloud/bootstrap.sh").read_text(encoding="utf-8")
-        self.assertNotIn("--member \"serviceAccount:$BUILDER_SA\" \\\n  --role roles/secretmanager.secretAccessor", source)
+        forbidden_binding = 'serviceAccount:$BUILDER_SA" \\\n  --role roles/secretmanager.secretAccessor'
+        self.assertNotIn(forbidden_binding, source)
         self.assertIn("BUILDER_SECRET_ACCESSOR_FORBIDDEN", source)
 
     def test_worker_pool_is_exactly_one_and_r1_has_no_live_armed(self):
