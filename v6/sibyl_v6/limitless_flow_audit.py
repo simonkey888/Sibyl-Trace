@@ -179,9 +179,7 @@ def audit_pair_flow(
         "market_status": detail.get("status"),
         "expired": detail.get("expired"),
         "volume_formatted": detail.get("volumeFormatted"),
-        "event_source_url": (
-            f"https://api.limitless.exchange/markets/{encoded}/events"
-        ),
+        "event_source_url": f"https://api.limitless.exchange/markets/{encoded}/events",
         "market_source_url": detail_url,
         "window_hours": 24,
         "window_start_utc": cutoff.isoformat().replace("+00:00", "Z"),
@@ -193,9 +191,7 @@ def audit_pair_flow(
         "all_time_event_count": len(normalized),
         "all_time_taker_notional_usd": float(all_notional),
         "last_trade_utc": (
-            max(row["created_at"] for row in normalized)
-            .isoformat()
-            .replace("+00:00", "Z")
+            max(row["created_at"] for row in normalized).isoformat().replace("+00:00", "Z")
             if normalized
             else None
         ),
@@ -222,6 +218,8 @@ def run_flow_audit(
     nonzero_lp = [row["limitless_slug"] for row in pairs if row["reward_state"]["lp_reward_nonzero"]]
     return {
         "schema_version": "SIBYL_V6_LIMITLESS_FLOW_AUDIT_V1",
+        "diagnostic_only": True,
+        "terminal_economic_evidence": False,
         "observed_at_utc": observed.isoformat().replace("+00:00", "Z"),
         "candidate_pair_count": int(rule_audit.get("CANDIDATE_PAIR_COUNT", 0)),
         "exact_pair_count": len(pairs),
