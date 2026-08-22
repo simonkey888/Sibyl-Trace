@@ -93,14 +93,21 @@ class CloudContractTests(unittest.TestCase):
         self.assertIn("value <= 0", deploy)
         self.assertIn("refs/heads/feat/sibyl-v6-cross-market-mm-r1", deploy)
 
-    def test_container_default_is_continuous_paper_worker(self):
+    def test_container_default_is_continuous_exact_pair_paper_observer(self):
         dockerfile = (ROOT / "v6/Dockerfile").read_text(encoding="utf-8")
-        worker = (ROOT / "v6/sibyl_v6/worker.py").read_text(encoding="utf-8")
-        self.assertIn('ENTRYPOINT ["python3", "-m", "sibyl_v6.worker"]', dockerfile)
+        observer = (ROOT / "v6/sibyl_v6/paper_cloud_loop.py").read_text(encoding="utf-8")
+        selector = (ROOT / "v6/sibyl_v6/live_pair_selector.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'ENTRYPOINT ["python3", "-m", "sibyl_v6.paper_cloud_loop"]', dockerfile
+        )
         self.assertIn("DRY_RUN=true", dockerfile)
         self.assertIn("SIBYL_V6_LIVE_ALLOWED=false", dockerfile)
-        self.assertIn("time.sleep(interval)", worker)
-        self.assertIn("if code == 2", worker)
+        self.assertIn("SIBYL_V6_RUN_UPSTREAM=0", dockerfile)
+        self.assertIn("audit_current_pairs()", observer)
+        self.assertIn("select_current_exact_pair(audit, preferred)", observer)
+        self.assertIn("time.sleep(max(args.interval, 1.0))", observer)
+        self.assertNotIn("CLOUD_PAPER_EXPECTED_AUDITED_PAIR_NOT_SELECTED", observer)
+        self.assertIn("rule_audit.audit_live_pairs()", selector)
 
     def test_no_gcs_fuse_or_bucket_mount(self):
         cloud = "\n".join(
