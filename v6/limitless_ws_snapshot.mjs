@@ -21,6 +21,8 @@ let resubscribeCount = 0;
 let attempts = 0;
 let settled = false;
 let lastError = null;
+let everConnected = false;
+let namespaceReadyAny = false;
 
 function emit(payload) {
   if (settled) return;
@@ -44,9 +46,8 @@ function parseSocketIoEvent(text) {
 function connect() {
   attempts += 1;
   const ws = new WebSocket(endpoint);
-  let namespaceReady = false;
 
-  ws.addEventListener('open', () => {});
+  ws.addEventListener('open', () => { everConnected = true; });
   ws.addEventListener('message', (event) => {
     const text = String(event.data);
     if (text === '2') {
@@ -58,7 +59,7 @@ function connect() {
       return;
     }
     if (text.startsWith('40/markets')) {
-      namespaceReady = true;
+      namespaceReadyAny = true;
       resubscribeCount += 1;
       ws.send(`42/markets,["subscribe_market_prices",${JSON.stringify({ marketSlugs: slugs })}]`);
       return;
@@ -76,7 +77,7 @@ function connect() {
       event_received: true,
       target_slug: targetSlug,
       desired_market_slugs: slugs,
-      namespace_ready: namespaceReady,
+      namespace_ready: namespaceReadyAny,
       timestamp: data.timestamp ?? null,
       received_at_ms: Date.now(),
       orderbook: book,
@@ -102,11 +103,11 @@ function connect() {
 setTimeout(() => {
   emit({
     endpoint,
-    connected: false,
+    connected: everConnected,
     event_received: false,
     target_slug: targetSlug,
     desired_market_slugs: slugs,
-    namespace_ready: false,
+    namespace_ready: namespaceReadyAny,
     timestamp: null,
     received_at_ms: Date.now(),
     orderbook: null,
