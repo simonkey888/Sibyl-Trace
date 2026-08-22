@@ -13,10 +13,11 @@ from sibyl_v6.runtime_market_data import _top_matches, _untimestamped_reconcilia
 
 
 TOKENS = {"YES": "111", "NO": "222"}
+EPOCH_MS = 1_787_420_000_000
 
 
 class PolymarketWsFreshnessTests(unittest.TestCase):
-    def snapshot(self, *, connected=True, yes_ts=1_000_000, no_ts=1_000_000):
+    def snapshot(self, *, connected=True, yes_ts=EPOCH_MS, no_ts=EPOCH_MS):
         books = {
             "111": {"bids": [{"price": "0.4", "size": "5"}], "asks": [{"price": "0.5", "size": "5"}], "timestamp": yes_ts},
             "222": {"bids": [{"price": "0.5", "size": "5"}], "asks": [{"price": "0.6", "size": "5"}], "timestamp": no_ts},
@@ -25,7 +26,7 @@ class PolymarketWsFreshnessTests(unittest.TestCase):
             "connected": connected,
             "event_received": True,
             "books": books,
-            "received_at_ms": {"111": 1_000_010, "222": 1_000_011},
+            "received_at_ms": {"111": EPOCH_MS + 10, "222": EPOCH_MS + 11},
             "reconnects": 0,
             "resubscribe_count": 1,
             "pong_count": 0,
@@ -40,7 +41,7 @@ class PolymarketWsFreshnessTests(unittest.TestCase):
 
     def test_fresh_books_are_fresh_from_ws_source_timestamps(self):
         state = classify_ws_books(
-            self.snapshot(), token_ids=["111", "222"], observed_at_ms=1_000_100
+            self.snapshot(), token_ids=["111", "222"], observed_at_ms=EPOCH_MS + 100
         )
         self.assertEqual(state["status"], "FRESH")
         self.assertEqual(state["per_token"]["111"]["status"], "FRESH")
@@ -48,9 +49,9 @@ class PolymarketWsFreshnessTests(unittest.TestCase):
 
     def test_stale_one_outcome_never_yields_overall_fresh(self):
         state = classify_ws_books(
-            self.snapshot(yes_ts=980_000, no_ts=1_000_000),
+            self.snapshot(yes_ts=EPOCH_MS - 20_000, no_ts=EPOCH_MS),
             token_ids=["111", "222"],
-            observed_at_ms=1_000_100,
+            observed_at_ms=EPOCH_MS + 100,
             max_age_ms=15_000,
         )
         self.assertEqual(state["per_token"]["111"]["status"], "STALE")
@@ -58,7 +59,7 @@ class PolymarketWsFreshnessTests(unittest.TestCase):
 
     def test_disconnected_stream_is_fail_closed(self):
         state = classify_ws_books(
-            self.snapshot(connected=False), token_ids=["111", "222"], observed_at_ms=1_000_100
+            self.snapshot(connected=False), token_ids=["111", "222"], observed_at_ms=EPOCH_MS + 100
         )
         self.assertEqual(state["per_token"]["111"]["status"], "DISCONNECTED")
         self.assertEqual(state["per_token"]["222"]["status"], "DISCONNECTED")
@@ -66,14 +67,14 @@ class PolymarketWsFreshnessTests(unittest.TestCase):
     def test_missing_book_is_no_event(self):
         snap = self.snapshot()
         del snap["books"]["222"]
-        state = classify_ws_books(snap, token_ids=["111", "222"], observed_at_ms=1_000_100)
+        state = classify_ws_books(snap, token_ids=["111", "222"], observed_at_ms=EPOCH_MS + 100)
         self.assertEqual(state["per_token"]["222"]["status"], "NO_EVENT")
         self.assertNotEqual(state["status"], "FRESH")
 
     def test_missing_source_timestamp_is_unknown(self):
         snap = self.snapshot()
         snap["books"]["222"]["timestamp"] = None
-        state = classify_ws_books(snap, token_ids=["111", "222"], observed_at_ms=1_000_100)
+        state = classify_ws_books(snap, token_ids=["111", "222"], observed_at_ms=EPOCH_MS + 100)
         self.assertEqual(state["per_token"]["222"]["status"], "UNKNOWN")
         self.assertNotEqual(state["status"], "FRESH")
 
