@@ -13,6 +13,7 @@ from typing import Any
 from .discovery import load_verified_pairs
 from .evidence_store import evidence_store_from_env
 from .feeds import _freshness, _get_json, _source_timestamp_ms
+from .live_pair_selector import audit_current_pairs, select_current_exact_pair
 from .quote_math import BookTop, book_top, compute_buy_prices, norm_price
 from .quote_safety import assess_buy_quote
 
@@ -52,7 +53,11 @@ def _poly_tokens(market: dict[str, Any]) -> dict[str, str]:
         raw_outcomes = json.loads(raw_outcomes)
     if isinstance(raw_tokens, str):
         raw_tokens = json.loads(raw_tokens)
-    if not isinstance(raw_outcomes, list) or not isinstance(raw_tokens, list) or len(raw_outcomes) != len(raw_tokens):
+    if (
+        not isinstance(raw_outcomes, list)
+        or not isinstance(raw_tokens, list)
+        or len(raw_outcomes) != len(raw_tokens)
+    ):
         raise RuntimeError("POLYMARKET_TOKEN_MAPPING_INVALID")
     result: dict[str, str] = {}
     for outcome, token in zip(raw_outcomes, raw_tokens):
@@ -96,27 +101,53 @@ def _book_summary(book: dict[str, Any], observed_at_ms: int) -> dict[str, Any]:
 def _with_evidence_size(payload: dict[str, Any]) -> dict[str, Any]:
     payload["evidence_bytes_per_cycle"] = 0
     for _ in range(8):
-        size = len(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        size = len(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
         if payload["evidence_bytes_per_cycle"] == size:
             break
         payload["evidence_bytes_per_cycle"] = size
     return payload
 
 
-def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any]:
+def _validate_live_exact_pair(pair: dict[str, Any]) -> None:
+    comparison = pair.get("comparison") or {}
+    if comparison.get("state") != "EXACT_EQUIVALENT":
+        raise RuntimeError("LIVE_SELECTED_PAIR_NOT_EXACT_EQUIVALENT")
+    if comparison.get("unknown_fields"):
+        raise RuntimeError("LIVE_SELECTED_PAIR_HAS_UNKNOWN_RULE_FIELDS")
+    if comparison.get("differing_fields"):
+        raise RuntimeError("LIVE_SELECTED_PAIR_HAS_RULE_DIFFERENCES")
+    left = str(comparison.get("left_rule_fingerprint") or "")
+    right = str(comparison.get("right_rule_fingerprint") or "")
+    if len(left) != 64 or left != right:
+        raise RuntimeError("LIVE_SELECTED_PAIR_RULE_FINGERPRINT_MISMATCH")
+
+
+def paper_cycle(
+    pair: dict[str, Any], *, audit: dict[str, Any], margin_bps: int = 100
+) -> dict[str, Any]:
+    _validate_live_exact_pair(pair)
     wall_started = time.perf_counter_ns()
     cpu_started = time.process_time_ns()
     observed_started_ms = int(time.time() * 1000)
     lslug = str(pair["limitless_slug"])
     pslug = str(pair["polymarket_slug"])
 
-    lurl = "https://api.limitless.exchange/markets/" + urllib.parse.quote(lslug, safe="") + "/orderbook"
+    lurl = (
+        "https://api.limitless.exchange/markets/"
+        + urllib.parse.quote(lslug, safe="")
+        + "/orderbook"
+    )
     lstatus, lbook = _get_json(lurl)
     l_observed = int(time.time() * 1000)
     if lstatus != 200 or not isinstance(lbook, dict):
         raise RuntimeError("LIMITLESS_EXACT_PAIR_BOOK_INVALID")
 
-    pdetail_url = "https://gamma-api.polymarket.com/markets/slug/" + urllib.parse.quote(pslug, safe="")
+    pdetail_url = (
+        "https://gamma-api.polymarket.com/markets/slug/"
+        + urllib.parse.quote(pslug, safe="")
+    )
     pstatus, pmarket = _get_json(pdetail_url)
     if pstatus != 200 or not isinstance(pmarket, dict):
         raise RuntimeError("POLYMARKET_EXACT_PAIR_MARKET_INVALID")
@@ -127,7 +158,9 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     book_urls: dict[str, str] = {}
     summaries: dict[str, dict[str, Any]] = {}
     for outcome in ("YES", "NO"):
-        url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": tokens[outcome]})
+        url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode(
+            {"token_id": tokens[outcome]}
+        )
         status, book = _get_json(url)
         seen = int(time.time() * 1000)
         if status != 200 or not isinstance(book, dict):
@@ -146,20 +179,23 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     if fair_value_frame_complete:
         poly_bid = float(poly_bid)
         poly_ask = float(poly_ask)
-        quotes: dict[str, float | None] = compute_buy_prices(poly_bid, poly_ask, margin_bps, ltop)
+        quotes: dict[str, float | None] = compute_buy_prices(
+            poly_bid, poly_ask, margin_bps, ltop
+        )
         yes_cap: float | None = poly_bid - margin
         no_cap: float | None = 1.0 - poly_ask - margin
     else:
-        # Do not synthesize a complement or midpoint for a missing live side.
-        # Deterministic upstream parity remains a separate exact-head test.
         quotes = {"yes": None, "no": None}
         yes_cap = None
         no_cap = None
 
     quote_size = float(os.environ.get("SIBYL_V6_QUOTE_SIZE_SHARES", "5"))
-    min_edge_bps = float(os.environ.get("SIBYL_V6_MIN_EXPECTED_NET_EDGE_BPS", str(margin_bps)))
+    min_edge_bps = float(
+        os.environ.get("SIBYL_V6_MIN_EXPECTED_NET_EDGE_BPS", str(margin_bps))
+    )
     poly_taker_fee_bps = _optional_nonnegative_number(pmarket.get("takerBaseFee"))
     limitless_maker_fee_bps = 0.0
+    maker_book_status = str(ls["quote_age_status"])
 
     yes_safety = assess_buy_quote(
         side="YES",
@@ -167,6 +203,7 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         upstream_price=quotes["yes"],
         hedge_book=books["NO"],
         hedge_book_status=str(summaries["NO"]["quote_age_status"]),
+        maker_book_status=maker_book_status,
         hedge_token=tokens["NO"],
         quote_size=quote_size,
         polymarket_taker_fee_bps=poly_taker_fee_bps,
@@ -180,6 +217,7 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         upstream_price=quotes["no"],
         hedge_book=books["YES"],
         hedge_book_status=str(summaries["YES"]["quote_age_status"]),
+        maker_book_status=maker_book_status,
         hedge_token=tokens["YES"],
         quote_size=quote_size,
         polymarket_taker_fee_bps=poly_taker_fee_bps,
@@ -189,7 +227,10 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     )
 
     strategy_quoteable = bool(yes_safety["QUOTEABLE"] and no_safety["QUOTEABLE"])
-    cap_gate_ok = all((not side["QUOTEABLE"]) or side["CAP_COMPLIANT"] for side in (yes_safety, no_safety))
+    cap_gate_ok = all(
+        (not side["QUOTEABLE"]) or side["CAP_COMPLIANT"]
+        for side in (yes_safety, no_safety)
+    )
     net_edge_gate_ok = all(
         (not side["QUOTEABLE"])
         or (
@@ -204,8 +245,9 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
     cycle_latency_ms = (time.perf_counter_ns() - wall_started) / 1_000_000.0
     cpu_ms = (time.process_time_ns() - cpu_started) / 1_000_000.0
     rss_peak_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    comparison = pair["comparison"]
     payload = {
-        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V3",
+        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V4",
         "event": "v6_exact_pair_paper_cycle",
         "observed_at_ms": observed_started_ms,
         "cycle_latency_ms": round(cycle_latency_ms, 3),
@@ -215,10 +257,17 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "REAL_ORDERS": 0,
         "CAPITAL_MOVED_USD": "0",
         "REAL_FEEDS": True,
+        "DISCOVERY_CYCLE": "PASS",
         "MARKET_DATA_CYCLE": "PASS",
         "STRATEGY_QUOTEABLE": "YES" if strategy_quoteable else "NO",
         "EXACT_PAIR_LIVE_CYCLE": (
-            "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES" if strategy_quoteable else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
+            "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES"
+            if strategy_quoteable
+            else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
+        ),
+        "CANDIDATE_PAIR_COUNT": int(audit.get("CANDIDATE_PAIR_COUNT", 0)),
+        "EXACT_EQUIVALENT_PAIR_COUNT": int(
+            audit.get("EXACT_EQUIVALENT_PAIR_COUNT", 0)
         ),
         "SIBYL_QUOTE_SAFETY": "PASS",
         "CAP_COMPLIANCE": "PASS",
@@ -231,16 +280,32 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "exact_pair": {
             "limitless_slug": lslug,
             "polymarket_slug": pslug,
-            "comparison_fingerprint": pair["comparison"]["comparison_fingerprint"],
-            "rule_fingerprint": pair["comparison"]["left_rule_fingerprint"],
+            "comparison_state": comparison["state"],
+            "comparison_fingerprint": comparison["comparison_fingerprint"],
+            "left_rule_fingerprint": comparison["left_rule_fingerprint"],
+            "right_rule_fingerprint": comparison["right_rule_fingerprint"],
+            "unknown_fields": comparison.get("unknown_fields", []),
+            "differing_fields": comparison.get("differing_fields", []),
+            "limitless_rule_source_url": pair.get("limitless_rule_source_url"),
+            "polymarket_rule_source_url": pair.get("polymarket_rule_source_url"),
+            "limitless_rule_payload_hash": pair.get("limitless_rule_payload_hash"),
+            "polymarket_rule_payload_hash": pair.get("polymarket_rule_payload_hash"),
         },
         "limitless": {"endpoint": lurl, **ls},
         "polymarket": {
             "market_endpoint": pdetail_url,
             "taker_base_fee_bps": poly_taker_fee_bps,
             "fair_value_frame_complete": fair_value_frame_complete,
-            "YES": {"endpoint": book_urls["YES"], "token": tokens["YES"], **summaries["YES"]},
-            "NO": {"endpoint": book_urls["NO"], "token": tokens["NO"], **summaries["NO"]},
+            "YES": {
+                "endpoint": book_urls["YES"],
+                "token": tokens["YES"],
+                **summaries["YES"],
+            },
+            "NO": {
+                "endpoint": book_urls["NO"],
+                "token": tokens["NO"],
+                **summaries["NO"],
+            },
         },
         "paper_mechanics": {
             "semantics": "PINNED_UPSTREAM_COMPUTE_BUY_PRICES_E35AD881_PLUS_SIBYL_FAIL_CLOSED_GATE",
@@ -269,11 +334,58 @@ def paper_cycle(pair: dict[str, Any], *, margin_bps: int = 100) -> dict[str, Any
         "runtime_profile": {
             "RSS_PEAK_KB": rss_peak_kb,
             "CPU_PROCESS_MS": round(cpu_ms, 3),
-            "CPU_TO_WALL_RATIO": round(cpu_ms / cycle_latency_ms, 6) if cycle_latency_ms > 0 else 0.0,
+            "CPU_TO_WALL_RATIO": (
+                round(cpu_ms / cycle_latency_ms, 6) if cycle_latency_ms > 0 else 0.0
+            ),
             "reconnects": {"limitless": 0, "polymarket": 0},
         },
     }
     return _with_evidence_size(payload)
+
+
+def _no_exact_cycle(audit: dict[str, Any]) -> dict[str, Any]:
+    return _with_evidence_size(
+        {
+            "schema_version": "SIBYL_V6_NO_EXACT_PAIR_CYCLE_V1",
+            "event": "v6_no_exact_pair_cycle",
+            "observed_at_ms": int(time.time() * 1000),
+            "SOURCE_SHA": os.environ.get("SOURCE_SHA", "UNKNOWN"),
+            "DRY_RUN": True,
+            "LIVE": "NO",
+            "REAL_ORDERS": 0,
+            "CAPITAL_MOVED_USD": "0",
+            "REAL_FEEDS": True,
+            "DISCOVERY_CYCLE": "PASS",
+            "MARKET_DATA_CYCLE": "FAIL",
+            "MARKET_DATA_REJECTION_REASON": "NO_CURRENT_EXACT_EQUIVALENT_PAIR",
+            "STRATEGY_QUOTEABLE": "NO",
+            "CANDIDATE_PAIR_COUNT": int(audit.get("CANDIDATE_PAIR_COUNT", 0)),
+            "EXACT_EQUIVALENT_PAIR_COUNT": 0,
+            "SIBYL_QUOTE_SAFETY": "PASS_FAIL_CLOSED_NO_PAIR",
+            "REALIZED_OR_SIMULATED_ORDER_ACTIONS": 0,
+        }
+    )
+
+
+def _failure_cycle(exc: Exception) -> dict[str, Any]:
+    return _with_evidence_size(
+        {
+            "schema_version": "SIBYL_V6_OBSERVER_FAILURE_CYCLE_V1",
+            "event": "v6_observer_failure_cycle",
+            "observed_at_ms": int(time.time() * 1000),
+            "SOURCE_SHA": os.environ.get("SOURCE_SHA", "UNKNOWN"),
+            "DRY_RUN": True,
+            "LIVE": "NO",
+            "REAL_ORDERS": 0,
+            "CAPITAL_MOVED_USD": "0",
+            "REAL_FEEDS": False,
+            "DISCOVERY_CYCLE": "FAIL",
+            "MARKET_DATA_CYCLE": "FAIL",
+            "STRATEGY_QUOTEABLE": "NO",
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        }
+    )
 
 
 def _persist_cycle(store, key: str, path: Path, payload: dict[str, Any]) -> None:
@@ -283,11 +395,22 @@ def _persist_cycle(store, key: str, path: Path, payload: dict[str, Any]) -> None
     store.put_bytes(key, data)
 
 
+def _preferred_pairs(path: Path) -> set[tuple[str, str]]:
+    return {
+        (str(row["limitless_slug"]), str(row["polymarket_slug"]))
+        for row in load_verified_pairs(path)
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--cycles", type=int, default=0, help="0 means continuous")
-    parser.add_argument("--interval", type=float, default=float(os.environ.get("SIBYL_V6_PAPER_INTERVAL_SECONDS", "60")))
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=float(os.environ.get("SIBYL_V6_PAPER_INTERVAL_SECONDS", "60")),
+    )
     parser.add_argument("--evidence", default="/tmp/sibyl-v6-paper/startup.json")
     args = parser.parse_args()
 
@@ -298,30 +421,40 @@ def main() -> int:
     if os.environ.get("SIBYL_V6_RUN_UPSTREAM", "0") != "0":
         raise SystemExit("CLOUD_PAPER_UPSTREAM_WRITES_FORBIDDEN")
 
-    pair_path = Path(os.environ.get("SIBYL_V6_VERIFIED_PAIRS", "v6/config/verified_pairs.json"))
-    exact = load_verified_pairs(pair_path)
-    if not exact:
-        raise SystemExit("CLOUD_PAPER_NO_EXACT_PAIR")
-    pair = exact[0]
-    if pair["limitless_slug"] != "62000-1786954111732" or pair["polymarket_slug"] != "will-bitcoin-dip-to-62k-august-17-23-2026":
-        raise SystemExit("CLOUD_PAPER_EXPECTED_AUDITED_PAIR_NOT_SELECTED")
-
+    pair_path = Path(
+        os.environ.get("SIBYL_V6_VERIFIED_PAIRS", "v6/config/verified_pairs.json")
+    )
+    preferred = _preferred_pairs(pair_path)
     store = evidence_store_from_env()
     source_sha = os.environ.get("SOURCE_SHA", "UNKNOWN")
     evidence = Path(args.evidence)
     target_cycles = 1 if args.once else max(0, args.cycles)
     completed = 0
+
     while True:
-        cycle = paper_cycle(pair)
+        exit_code = 0
+        try:
+            audit = audit_current_pairs()
+            pair = select_current_exact_pair(audit, preferred)
+            cycle = paper_cycle(pair, audit=audit) if pair else _no_exact_cycle(audit)
+            if not pair:
+                exit_code = 4
+        except Exception as exc:
+            cycle = _failure_cycle(exc)
+            exit_code = 3
+
         completed += 1
         cycle["evidence_store"] = store.contract()
         cycle = _with_evidence_size(cycle)
         path = evidence if completed == 1 else evidence.with_name(f"cycle-{completed:06d}.json")
         key = f"paper/{source_sha}/cycle-{completed:06d}.json"
         _persist_cycle(store, key, path, cycle)
-        print(json.dumps({"BOT_CLOUD_RUNNING": target_cycles == 0, **cycle}, sort_keys=True), flush=True)
+        print(
+            json.dumps({"BOT_CLOUD_RUNNING": target_cycles == 0, **cycle}, sort_keys=True),
+            flush=True,
+        )
         if target_cycles and completed >= target_cycles:
-            return 0
+            return exit_code
         time.sleep(max(args.interval, 1.0))
 
 
