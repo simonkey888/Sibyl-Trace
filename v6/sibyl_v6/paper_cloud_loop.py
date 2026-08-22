@@ -3,19 +3,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import resource
 import time
-import urllib.parse
 from pathlib import Path
 from typing import Any
 
 from .discovery import load_verified_pairs
 from .evidence_store import evidence_store_from_env
-from .feeds import _freshness, _get_json, _source_timestamp_ms
+from .feeds import _freshness, _source_timestamp_ms
 from .live_pair_selector import audit_current_pairs, select_current_exact_pair
 from .quote_math import BookTop, book_top, compute_buy_prices, norm_price
 from .quote_safety import assess_buy_quote
+from .runtime_market_data import fetch_runtime_market_data
 
 
 def _hash(payload: Any) -> str:
@@ -41,42 +42,10 @@ def _levels(book: dict[str, Any], side: str) -> list[dict[str, float]]:
             s = float(size)
         except (TypeError, ValueError):
             continue
-        if 0 < p < 1 and s > 0:
+        if math.isfinite(p) and math.isfinite(s) and 0 < p < 1 and s > 0:
             out.append({"price": p, "size": s})
+    out.sort(key=lambda row: row["price"], reverse=(side == "bids"))
     return out
-
-
-def _poly_tokens(market: dict[str, Any]) -> dict[str, str]:
-    raw_outcomes = market.get("outcomes")
-    raw_tokens = market.get("clobTokenIds")
-    if isinstance(raw_outcomes, str):
-        raw_outcomes = json.loads(raw_outcomes)
-    if isinstance(raw_tokens, str):
-        raw_tokens = json.loads(raw_tokens)
-    if (
-        not isinstance(raw_outcomes, list)
-        or not isinstance(raw_tokens, list)
-        or len(raw_outcomes) != len(raw_tokens)
-    ):
-        raise RuntimeError("POLYMARKET_TOKEN_MAPPING_INVALID")
-    result: dict[str, str] = {}
-    for outcome, token in zip(raw_outcomes, raw_tokens):
-        label = str(outcome).strip().casefold()
-        if label in ("yes", "no"):
-            result[label.upper()] = str(token)
-    if set(result) != {"YES", "NO"}:
-        raise RuntimeError("POLYMARKET_BINARY_TOKEN_MAPPING_REQUIRED")
-    return result
-
-
-def _optional_nonnegative_number(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    if result < 0 or result != result or result in (float("inf"), float("-inf")):
-        return None
-    return result
 
 
 def _book_summary(book: dict[str, Any], observed_at_ms: int) -> dict[str, Any]:
@@ -96,6 +65,76 @@ def _book_summary(book: dict[str, Any], observed_at_ms: int) -> dict[str, Any]:
         "quote_age_ms": age_ms,
         "quote_age_status": status,
     }
+
+
+def _shares_for_notional(book: dict[str, Any], notional_usdc: float) -> dict[str, Any]:
+    """Conservative L2 simulation of a market BUY spending a fixed USD notional."""
+    if not math.isfinite(notional_usdc) or notional_usdc <= 0:
+        return {"shares": 0.0, "spent": 0.0, "unspent": notional_usdc, "levels": 0}
+    remaining = float(notional_usdc)
+    shares = 0.0
+    spent = 0.0
+    levels = 0
+    for row in _levels(book, "asks"):
+        price = row["price"]
+        size = row["size"]
+        max_cost = price * size
+        take_cost = min(remaining, max_cost)
+        if take_cost <= 0:
+            continue
+        take_shares = take_cost / price
+        shares += take_shares
+        spent += take_cost
+        remaining -= take_cost
+        levels += 1
+        if remaining <= 1e-12:
+            break
+    return {
+        "shares": round(shares, 12),
+        "spent": round(spent, 12),
+        "unspent": round(remaining, 12),
+        "levels": levels,
+    }
+
+
+def _apply_pinned_hedge_contract(
+    result: dict[str, Any],
+    *,
+    hedge_book: dict[str, Any],
+    upstream_hedge_price: float | None,
+    quote_size: float,
+    hedge_threshold: float,
+) -> None:
+    """Reject quotes the pinned upstream FAK notional cannot keep approximately flat."""
+    notional = (
+        quote_size * float(upstream_hedge_price)
+        if upstream_hedge_price is not None and math.isfinite(float(upstream_hedge_price))
+        else None
+    )
+    simulated = _shares_for_notional(hedge_book, notional) if notional is not None else {
+        "shares": 0.0,
+        "spent": 0.0,
+        "unspent": None,
+        "levels": 0,
+    }
+    residual = quote_size - float(simulated["shares"])
+    approximately_flat = bool(
+        notional is not None
+        and float(simulated["unspent"] or 0.0) <= 1e-9
+        and abs(residual) < max(float(hedge_threshold), 1e-12)
+    )
+    result["PINNED_HEDGE_PRICE"] = upstream_hedge_price
+    result["PINNED_HEDGE_NOTIONAL_USDC"] = notional
+    result["PINNED_HEDGE_SIMULATED_SHARES"] = simulated["shares"]
+    result["PINNED_HEDGE_RESIDUAL_SHARES"] = round(residual, 12)
+    result["PINNED_HEDGE_APPROX_FLAT"] = approximately_flat
+    if not approximately_flat:
+        result["QUOTEABLE"] = False
+        reason = str(result.get("REJECTION_REASON") or "NONE")
+        parts = [] if reason == "NONE" else reason.split("|")
+        if "PINNED_HEDGE_NOTIONAL_MISMATCH" not in parts:
+            parts.append("PINNED_HEDGE_NOTIONAL_MISMATCH")
+        result["REJECTION_REASON"] = "|".join(parts)
 
 
 def _with_evidence_size(payload: dict[str, Any]) -> dict[str, Any]:
@@ -134,43 +173,31 @@ def paper_cycle(
     lslug = str(pair["limitless_slug"])
     pslug = str(pair["polymarket_slug"])
 
-    lurl = (
-        "https://api.limitless.exchange/markets/"
-        + urllib.parse.quote(lslug, safe="")
-        + "/orderbook"
-    )
-    lstatus, lbook = _get_json(lurl)
+    runtime = fetch_runtime_market_data(pair, audit)
+    lctx = runtime["limitless"]
+    pctx = runtime["polymarket"]
+    lbook = lctx["maker_book"]
+    books: dict[str, dict[str, Any]] = pctx["books"]
+    tokens: dict[str, str] = pctx["tokens"]
+
     l_observed = int(time.time() * 1000)
-    if lstatus != 200 or not isinstance(lbook, dict):
-        raise RuntimeError("LIMITLESS_EXACT_PAIR_BOOK_INVALID")
-
-    pdetail_url = (
-        "https://gamma-api.polymarket.com/markets/slug/"
-        + urllib.parse.quote(pslug, safe="")
+    ls = _book_summary(lbook, l_observed)
+    ws_state = lctx["ws_state"]
+    ls.update(
+        {
+            "source_timestamp_ms": ws_state.get("source_timestamp_ms"),
+            "quote_age_ms": ws_state.get("age_ms"),
+            "quote_age_status": lctx["maker_book_status"],
+            "book_source": lctx["maker_book_source"],
+            "ws_rest_top_reconciled": lctx["ws_rest_top_reconciled"],
+        }
     )
-    pstatus, pmarket = _get_json(pdetail_url)
-    if pstatus != 200 or not isinstance(pmarket, dict):
-        raise RuntimeError("POLYMARKET_EXACT_PAIR_MARKET_INVALID")
-    tokens = _poly_tokens(pmarket)
+    rest_summary = _book_summary(lctx["rest_book"], int(time.time() * 1000))
 
-    books: dict[str, dict[str, Any]] = {}
-    book_http: dict[str, int] = {}
-    book_urls: dict[str, str] = {}
     summaries: dict[str, dict[str, Any]] = {}
     for outcome in ("YES", "NO"):
-        url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode(
-            {"token_id": tokens[outcome]}
-        )
-        status, book = _get_json(url)
-        seen = int(time.time() * 1000)
-        if status != 200 or not isinstance(book, dict):
-            raise RuntimeError(f"POLYMARKET_{outcome}_EXACT_PAIR_BOOK_INVALID")
-        books[outcome] = book
-        book_http[outcome] = status
-        book_urls[outcome] = url
-        summaries[outcome] = _book_summary(book, seen)
+        summaries[outcome] = _book_summary(books[outcome], int(time.time() * 1000))
 
-    ls = _book_summary(lbook, l_observed)
     poly_bid = summaries["YES"]["best_executable_bid"]
     poly_ask = summaries["YES"]["best_executable_ask"]
     fair_value_frame_complete = poly_bid is not None and poly_ask is not None
@@ -193,9 +220,18 @@ def paper_cycle(
     min_edge_bps = float(
         os.environ.get("SIBYL_V6_MIN_EXPECTED_NET_EDGE_BPS", str(margin_bps))
     )
-    poly_taker_fee_bps = _optional_nonnegative_number(pmarket.get("takerBaseFee"))
-    limitless_maker_fee_bps = 0.0
-    maker_book_status = str(ls["quote_age_status"])
+    fee_safety_buffer_bps = float(
+        os.environ.get("SIBYL_V6_POLY_FEE_SAFETY_BUFFER_BPS", "0")
+    )
+    hedge_threshold = float(os.environ.get("SIBYL_V6_HEDGE_THRESHOLD_SHARES", "2"))
+    poly_min_order_size = pctx.get("minimum_order_size")
+    size_valid = bool(
+        poly_min_order_size is not None and quote_size >= float(poly_min_order_size) - 1e-12
+    )
+    market_tradeable = bool(runtime["market_tradeable"] and size_valid)
+
+    fee_details = pctx["fee_details"]
+    maker_book_status = str(lctx["maker_book_status"])
 
     yes_safety = assess_buy_quote(
         side="YES",
@@ -206,10 +242,12 @@ def paper_cycle(
         maker_book_status=maker_book_status,
         hedge_token=tokens["NO"],
         quote_size=quote_size,
-        polymarket_taker_fee_bps=poly_taker_fee_bps,
+        polymarket_fee_details=fee_details,
         minimum_net_edge_bps=min_edge_bps,
-        limitless_maker_fee_bps=limitless_maker_fee_bps,
+        fee_safety_buffer_bps=fee_safety_buffer_bps,
+        limitless_maker_fee_bps=0.0,
         fair_value_frame_complete=fair_value_frame_complete,
+        market_tradeable=market_tradeable,
     )
     no_safety = assess_buy_quote(
         side="NO",
@@ -220,13 +258,37 @@ def paper_cycle(
         maker_book_status=maker_book_status,
         hedge_token=tokens["YES"],
         quote_size=quote_size,
-        polymarket_taker_fee_bps=poly_taker_fee_bps,
+        polymarket_fee_details=fee_details,
         minimum_net_edge_bps=min_edge_bps,
-        limitless_maker_fee_bps=limitless_maker_fee_bps,
+        fee_safety_buffer_bps=fee_safety_buffer_bps,
+        limitless_maker_fee_bps=0.0,
         fair_value_frame_complete=fair_value_frame_complete,
+        market_tradeable=market_tradeable,
     )
 
-    strategy_quoteable = bool(yes_safety["QUOTEABLE"] and no_safety["QUOTEABLE"])
+    # Mirror the pinned upstream hedger's actual notional formula:
+    # YES fill -> buy NO at (1 - Poly YES bid); NO fill -> buy YES at YES ask.
+    yes_hedge_price = 1.0 - float(poly_bid) if poly_bid is not None else None
+    no_hedge_price = float(poly_ask) if poly_ask is not None else None
+    _apply_pinned_hedge_contract(
+        yes_safety,
+        hedge_book=books["NO"],
+        upstream_hedge_price=yes_hedge_price,
+        quote_size=quote_size,
+        hedge_threshold=hedge_threshold,
+    )
+    _apply_pinned_hedge_contract(
+        no_safety,
+        hedge_book=books["YES"],
+        upstream_hedge_price=no_hedge_price,
+        quote_size=quote_size,
+        hedge_threshold=hedge_threshold,
+    )
+
+    yes_quoteable = bool(yes_safety["QUOTEABLE"])
+    no_quoteable = bool(no_safety["QUOTEABLE"])
+    any_side_quoteable = bool(yes_quoteable or no_quoteable)
+    strategy_quoteable = bool(yes_quoteable and no_quoteable)
     cap_gate_ok = all(
         (not side["QUOTEABLE"]) or side["CAP_COMPLIANT"]
         for side in (yes_safety, no_safety)
@@ -246,8 +308,12 @@ def paper_cycle(
     cpu_ms = (time.process_time_ns() - cpu_started) / 1_000_000.0
     rss_peak_kb = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     comparison = pair["comparison"]
+    ldetail = lctx["detail"]
+    lsettings = ldetail.get("settings") if isinstance(ldetail.get("settings"), dict) else {}
+    pinfo = pctx["clob_market_info"]
+
     payload = {
-        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V4",
+        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V5",
         "event": "v6_exact_pair_paper_cycle",
         "observed_at_ms": observed_started_ms,
         "cycle_latency_ms": round(cycle_latency_ms, 3),
@@ -260,23 +326,27 @@ def paper_cycle(
         "DISCOVERY_CYCLE": "PASS",
         "MARKET_DATA_CYCLE": "PASS",
         "STRATEGY_QUOTEABLE": "YES" if strategy_quoteable else "NO",
+        "YES_QUOTEABLE": yes_quoteable,
+        "NO_QUOTEABLE": no_quoteable,
+        "ANY_SIDE_QUOTEABLE": any_side_quoteable,
+        "BOTH_SIDES_QUOTEABLE": strategy_quoteable,
         "EXACT_PAIR_LIVE_CYCLE": (
             "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_YES"
             if strategy_quoteable
             else "MARKET_DATA_PASS_STRATEGY_QUOTEABLE_NO"
         ),
         "CANDIDATE_PAIR_COUNT": int(audit.get("CANDIDATE_PAIR_COUNT", 0)),
-        "EXACT_EQUIVALENT_PAIR_COUNT": int(
-            audit.get("EXACT_EQUIVALENT_PAIR_COUNT", 0)
-        ),
+        "EXACT_EQUIVALENT_PAIR_COUNT": int(audit.get("EXACT_EQUIVALENT_PAIR_COUNT", 0)),
         "SIBYL_QUOTE_SAFETY": "PASS",
         "CAP_COMPLIANCE": "PASS",
         "NET_EDGE_GATE": "PASS",
         "UPSTREAM_PARITY_TEST": "PASS_BY_SEPARATE_EXACT_HEAD_CONTAINER_GATE",
-        "LIMITLESS_EXACT_BOOK_HTTP": lstatus,
-        "POLY_EXACT_BOOK_HTTP": book_http["YES"],
-        "POLY_NO_EXACT_BOOK_HTTP": book_http["NO"],
-        "POLY_EXACT_MARKET_HTTP": pstatus,
+        "LIMITLESS_EXACT_BOOK_HTTP": lctx["rest_book_http"],
+        "LIMITLESS_MARKET_HTTP": lctx["detail_http"],
+        "POLY_EXACT_BOOK_HTTP": pctx["book_http"]["YES"],
+        "POLY_NO_EXACT_BOOK_HTTP": pctx["book_http"]["NO"],
+        "POLY_EXACT_MARKET_HTTP": pctx["gamma_http"],
+        "POLY_CLOB_V2_MARKET_HTTP": pctx["clob_market_info_http"],
         "exact_pair": {
             "limitless_slug": lslug,
             "polymarket_slug": pslug,
@@ -291,24 +361,54 @@ def paper_cycle(
             "limitless_rule_payload_hash": pair.get("limitless_rule_payload_hash"),
             "polymarket_rule_payload_hash": pair.get("polymarket_rule_payload_hash"),
         },
-        "limitless": {"endpoint": lurl, **ls},
+        "limitless": {
+            "endpoint": lctx["rest_book_url"],
+            **ls,
+            "REST_RECONCILIATION": rest_summary,
+            "WS": {
+                **ws_state,
+                "event_received": bool(lctx["ws"].get("event_received")),
+                "namespace_ready": bool(lctx["ws"].get("namespace_ready")),
+                "target_slug": lslug,
+            },
+            "market_tradeable": bool(lctx["tradeable"]),
+            "market_status": ldetail.get("status"),
+            "expired": ldetail.get("expired"),
+            "volume_usd": ldetail.get("volumeFormatted"),
+            "reward_state": {
+                "isRewardable": ldetail.get("isRewardable"),
+                "rebateRate": lsettings.get("rebateRate"),
+                "dailyReward": lsettings.get("dailyReward"),
+                "effectiveDailyReward": lsettings.get("effectiveDailyReward"),
+                "currentRewardsMultiplier": lsettings.get("currentRewardsMultiplier"),
+                "maxSpread": lsettings.get("maxSpread"),
+                "minSize": lsettings.get("minSize"),
+                "takerDelayMs": lsettings.get("takerDelayMs"),
+            },
+        },
         "polymarket": {
-            "market_endpoint": pdetail_url,
-            "taker_base_fee_bps": poly_taker_fee_bps,
+            "market_endpoint": pctx["gamma_url"],
+            "clob_v2_market_info_endpoint": pctx["clob_market_info_url"],
+            "market_tradeable": bool(pctx["tradeable"]),
+            "token_map_matches": bool(pctx["token_map_matches"]),
+            "minimum_tick": pctx["minimum_tick"],
+            "minimum_order_size": pctx["minimum_order_size"],
             "fair_value_frame_complete": fair_value_frame_complete,
+            "fee_details": fee_details.to_dict() if fee_details else None,
+            "clob_market_info_version": pinfo.get("v"),
             "YES": {
-                "endpoint": book_urls["YES"],
+                "endpoint": pctx["book_urls"]["YES"],
                 "token": tokens["YES"],
                 **summaries["YES"],
             },
             "NO": {
-                "endpoint": book_urls["NO"],
+                "endpoint": pctx["book_urls"]["NO"],
                 "token": tokens["NO"],
                 **summaries["NO"],
             },
         },
         "paper_mechanics": {
-            "semantics": "PINNED_UPSTREAM_COMPUTE_BUY_PRICES_E35AD881_PLUS_SIBYL_FAIL_CLOSED_GATE",
+            "semantics": "PINNED_UPSTREAM_COMPUTE_BUY_PRICES_PLUS_SIBYL_FAIL_CLOSED_V2_GATE",
             "limitless_order_sides": ["YES_BUY", "NO_BUY"],
             "postOnly": True,
             "poly_yes_bid": poly_bid,
@@ -317,6 +417,8 @@ def paper_cycle(
             "margin_bps": margin_bps,
             "minimum_net_edge_bps": min_edge_bps,
             "quote_size_shares": quote_size,
+            "hedge_threshold_shares": hedge_threshold,
+            "poly_min_order_size_satisfied": size_valid,
             "YES_BUY_CAP": yes_cap,
             "NO_BUY_CAP": no_cap,
             "computed_YES_BUY": quotes["yes"],
@@ -324,11 +426,14 @@ def paper_cycle(
             "YES": yes_safety,
             "NO": no_safety,
             "strategy_requires_both_sides": True,
+            "paper_any_side_opportunity": any_side_quoteable,
             "orders_submitted": 0,
             "fees_provenance": {
-                "limitless_maker_fee": "PINNED_UPSTREAM_QUICKSTART_NO_FEE_E35AD881",
-                "polymarket_taker_fee": "GAMMA_MARKET_TAKER_BASE_FEE_OR_UNKNOWN",
-                "fee_model": "CONSERVATIVE_BPS_PER_FULL_USD_PAYOUT_PER_SHARE",
+                "limitless_maker_fee": "OFFICIAL_MAKER_ZERO_FEE",
+                "polymarket_platform_fee": "CLOB_V2_MARKET_INFO_FD_PER_EXECUTED_L2_LEVEL",
+                "fee_formula": "SHARES_X_RATE_X_P_X_1_MINUS_P_POW_EXPONENT",
+                "safety_buffer_separate": True,
+                "realized_fee": None,
             },
         },
         "runtime_profile": {
@@ -337,7 +442,11 @@ def paper_cycle(
             "CPU_TO_WALL_RATIO": (
                 round(cpu_ms / cycle_latency_ms, 6) if cycle_latency_ms > 0 else 0.0
             ),
-            "reconnects": {"limitless": 0, "polymarket": 0},
+            "reconnects": {
+                "limitless": int(ws_state.get("reconnects") or 0),
+                "polymarket": 0,
+            },
+            "resubscribe_count": int(ws_state.get("resubscribe_count") or 0),
         },
     }
     return _with_evidence_size(payload)
