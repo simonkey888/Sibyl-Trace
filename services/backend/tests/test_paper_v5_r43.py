@@ -126,7 +126,8 @@ class ScanClient:
             }
         ]
 
-    def closed_positions(self, _address):
+    def closed_positions(self, _address, *, limit=1000):
+        assert limit == 1000
         return []
 
 
@@ -155,6 +156,7 @@ def matrix_stub():
         realized_pnl=100.0,
         volume=1000.0,
         closed_count=100,
+        decided_count=100,
         concentration=0.2,
     )
     return SimpleNamespace(
