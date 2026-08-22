@@ -40,10 +40,26 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def git_value(root: Path, value: str) -> str:
     return subprocess.check_output(
         ["git", "rev-parse", value], cwd=root, text=True
     ).strip()
+
+
+def git_blob(root: Path, commit: str, relative: str) -> bytes:
+    try:
+        return subprocess.check_output(
+            ["git", "show", f"{commit}:{relative}"], cwd=root
+        )
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            f"freeze source object unavailable for {relative} at {commit}; "
+            "CI must checkout full history"
+        ) from exc
 
 
 def protected_hashes(root: Path) -> dict[str, str]:
@@ -56,9 +72,19 @@ def protected_hashes(root: Path) -> dict[str, str]:
     return hashes
 
 
+def frozen_protected_hashes(root: Path, frozen_source_sha: str) -> dict[str, str]:
+    return {
+        relative: sha256_bytes(git_blob(root, frozen_source_sha, relative))
+        for relative in PROTECTED_PATHS
+    }
+
+
 def policy_checks(root: Path) -> dict[str, bool]:
     config = (root / "services/backend/app/config.py").read_text(encoding="utf-8")
-    workflow = (root / ".github/workflows/github-paper-trial.yml").read_text(
+    canonical_v5 = (root / ".github/workflows/github-paper-v5.yml").read_text(
+        encoding="utf-8"
+    )
+    retired_v2 = (root / ".github/workflows/github-paper-trial.yml").read_text(
         encoding="utf-8"
     )
     secret_scan = (root / "scripts/secret-scan.sh").read_text(encoding="utf-8")
@@ -68,11 +94,18 @@ def policy_checks(root: Path) -> dict[str, bool]:
         ),
         "live_validator_rejects_true": "if value:" in config
         and "LIVE trading is not available" in config,
-        "scheduled_live_false": 'LIVE_TRADING_ENABLED: "false"' in workflow,
-        "scheduled_cost_zero": 'COST_AUTHORIZED_USD: "0"' in workflow,
-        "scheduled_ai_disabled": 'AI_ANALYSIS_ENABLED: "false"' in workflow,
+        "canonical_v5_live_false": 'LIVE_TRADING_ENABLED: "false"' in canonical_v5,
+        "canonical_v5_cost_zero": 'COST_AUTHORIZED_USD: "0"' in canonical_v5,
+        "canonical_v5_ai_disabled": 'AI_ANALYSIS_ENABLED: "false"' in canonical_v5,
+        "retired_v2_dispatch_only": "workflow_dispatch:" in retired_v2
+        and "\n  push:" not in retired_v2
+        and "\n  schedule:" not in retired_v2,
+        "retired_v2_read_only": "contents: read" in retired_v2
+        and "contents: write" not in retired_v2,
+        "retired_v2_declares_no_execution": "does not create state, execute PAPER, publish Cloudflare, or use write permissions" in retired_v2,
         "secret_scan_checks_live": "LIVE trading enablement detected" in secret_scan,
         "secret_scan_checks_cost": "Non-zero cost authorization detected" in secret_scan,
+        "secret_scan_uses_explicit_pattern_operand": 'git grep -n -E -e "$pattern"' in secret_scan,
     }
     return checks
 
@@ -122,19 +155,37 @@ def check_manifest(root: Path) -> None:
         raise SystemExit("cost policy drift")
     if manifest.get("live_policy") != {"available": False, "real_money": False}:
         raise SystemExit("LIVE policy drift")
-    checks = policy_checks(root)
-    if not all(checks.values()):
-        raise SystemExit("runtime safety policy no longer matches freeze contract")
+
+    frozen_source_sha = str(manifest.get("frozen_source_sha") or "")
+    expected_tree = str(manifest.get("frozen_source_tree_sha") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", frozen_source_sha):
+        raise SystemExit("freeze source SHA invalid")
+    actual_tree = git_value(root, f"{frozen_source_sha}^{{tree}}")
+    if actual_tree != expected_tree:
+        raise SystemExit("freeze source tree drift")
+
+    # The V2 manifest is historical evidence. Verify its hashes against the
+    # immutable commit it froze, not against today's R4.5/V5 runtime files.
     expected = manifest.get("protected_files_sha256")
-    actual = protected_hashes(root)
+    actual = frozen_protected_hashes(root, frozen_source_sha)
     if expected != actual:
         changed = sorted(
-            path for path in set(expected or {}) | set(actual) if (expected or {}).get(path) != actual.get(path)
+            item
+            for item in set(expected or {}) | set(actual)
+            if (expected or {}).get(item) != actual.get(item)
         )
         raise SystemExit(
-            "protected files changed without a new preregistered freeze: " + ", ".join(changed)
+            "historical freeze object no longer matches manifest: " + ", ".join(changed)
         )
-    print("SIBYL_PAPER_V2 freeze guard PASS")
+
+    # Current runtime safety is a separate contract. V2 is retired; R4.5/V5
+    # must remain zero-cost/no-live and the retired workflow must remain inert.
+    checks = policy_checks(root)
+    if not all(checks.values()):
+        failed = [name for name, passed in checks.items() if not passed]
+        raise SystemExit("current runtime safety policy mismatch: " + ", ".join(failed))
+
+    print("SIBYL_PAPER_V2 historical freeze + current R4.5 safety guard PASS")
 
 
 def main() -> int:
