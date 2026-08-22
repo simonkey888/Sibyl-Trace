@@ -179,6 +179,12 @@ def paper_cycle(
     lbook = lctx["maker_book"]
     books: dict[str, dict[str, Any]] = pctx["books"]
     tokens: dict[str, str] = pctx["tokens"]
+    pws_state = pctx["ws_state"] if isinstance(pctx.get("ws_state"), dict) else {}
+    pws_per_token = (
+        pws_state.get("per_token")
+        if isinstance(pws_state.get("per_token"), dict)
+        else {}
+    )
 
     l_observed = int(time.time() * 1000)
     ls = _book_summary(lbook, l_observed)
@@ -196,7 +202,24 @@ def paper_cycle(
 
     summaries: dict[str, dict[str, Any]] = {}
     for outcome in ("YES", "NO"):
-        summaries[outcome] = _book_summary(books[outcome], int(time.time() * 1000))
+        token = tokens[outcome]
+        state = pws_per_token.get(token) if isinstance(pws_per_token.get(token), dict) else {}
+        summary = _book_summary(books[outcome], int(time.time() * 1000))
+        summary.update(
+            {
+                "source_timestamp_ms": state.get("source_timestamp_ms"),
+                "quote_age_ms": state.get("age_ms"),
+                "quote_age_status": str(
+                    pctx["book_status"].get(outcome) or state.get("status") or "UNKNOWN"
+                ),
+                "received_at_ms": state.get("received_at_ms"),
+                "book_source": pctx["book_source"].get(outcome),
+                "ws_rest_top_reconciled": pctx["ws_rest_top_reconciled"].get(outcome),
+                "rest_received_at_ms": pctx["rest_received_at_ms"].get(outcome),
+                "reconciliation_sequence": pctx["reconciliation_sequence"],
+            }
+        )
+        summaries[outcome] = summary
 
     poly_bid = summaries["YES"]["best_executable_bid"]
     poly_ask = summaries["YES"]["best_executable_ask"]
@@ -238,7 +261,7 @@ def paper_cycle(
         raw_cap=yes_cap,
         upstream_price=quotes["yes"],
         hedge_book=books["NO"],
-        hedge_book_status=str(summaries["NO"]["quote_age_status"]),
+        hedge_book_status=str(pctx["book_status"].get("NO") or "UNKNOWN"),
         maker_book_status=maker_book_status,
         hedge_token=tokens["NO"],
         quote_size=quote_size,
@@ -254,7 +277,7 @@ def paper_cycle(
         raw_cap=no_cap,
         upstream_price=quotes["no"],
         hedge_book=books["YES"],
-        hedge_book_status=str(summaries["YES"]["quote_age_status"]),
+        hedge_book_status=str(pctx["book_status"].get("YES") or "UNKNOWN"),
         maker_book_status=maker_book_status,
         hedge_token=tokens["YES"],
         quote_size=quote_size,
@@ -313,7 +336,7 @@ def paper_cycle(
     pinfo = pctx["clob_market_info"]
 
     payload = {
-        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V5",
+        "schema_version": "SIBYL_V6_EXACT_PAIR_PAPER_CYCLE_V6",
         "event": "v6_exact_pair_paper_cycle",
         "observed_at_ms": observed_started_ms,
         "cycle_latency_ms": round(cycle_latency_ms, 3),
@@ -396,6 +419,11 @@ def paper_cycle(
             "fair_value_frame_complete": fair_value_frame_complete,
             "fee_details": fee_details.to_dict() if fee_details else None,
             "clob_market_info_version": pinfo.get("v"),
+            "reconciliation_sequence": pctx["reconciliation_sequence"],
+            "WS": {
+                **pws_state,
+                "observed_at_ms": pctx.get("ws_observed_at_ms"),
+            },
             "YES": {
                 "endpoint": pctx["book_urls"]["YES"],
                 "token": tokens["YES"],
@@ -444,9 +472,11 @@ def paper_cycle(
             ),
             "reconnects": {
                 "limitless": int(ws_state.get("reconnects") or 0),
-                "polymarket": 0,
+                "polymarket": int(pws_state.get("reconnects") or 0),
             },
             "resubscribe_count": int(ws_state.get("resubscribe_count") or 0),
+            "polymarket_resubscribe_count": int(pws_state.get("resubscribe_count") or 0),
+            "polymarket_pong_count": int(pws_state.get("pong_count") or 0),
         },
     }
     return _with_evidence_size(payload)
