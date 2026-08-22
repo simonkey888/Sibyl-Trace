@@ -32,10 +32,10 @@ ENV PYTHONPATH=/app/v6 \
     SIBYL_V6_FILE_STORE_ROOT=/var/lib/sibyl-v6/store \
     SIBYL_V6_EVIDENCE_BACKEND=FILE \
     SIBYL_V6_VERIFIED_PAIRS=/app/v6/config/verified_pairs.json \
-    SIBYL_V6_CYCLE_INTERVAL_SECONDS=60 \
+    SIBYL_V6_PAPER_INTERVAL_SECONDS=60 \
     DRY_RUN=true \
     SIBYL_V6_LIVE_ALLOWED=false \
     SIBYL_V6_RUN_UPSTREAM=0
 WORKDIR /app
 USER node
-ENTRYPOINT ["python3", "-m", "sibyl_v6.worker"]
+ENTRYPOINT ["python3", "-m", "sibyl_v6.paper_cloud_loop"]
