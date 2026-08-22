@@ -146,7 +146,8 @@ class ScannerClient:
             }
         ]
 
-    def closed_positions(self, _: str) -> list[dict]:
+    def closed_positions(self, _: str, *, limit: int = 1000) -> list[dict]:
+        assert limit == 1000
         return [{"realizedPnl": 4.0} for _ in range(30)]
 
 
