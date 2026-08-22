@@ -97,6 +97,7 @@ def assess_buy_quote(
     upstream_price: float | None,
     hedge_book: dict[str, Any] | None,
     hedge_book_status: str,
+    maker_book_status: str,
     hedge_token: str,
     quote_size: float,
     polymarket_taker_fee_bps: float | None,
@@ -107,9 +108,10 @@ def assess_buy_quote(
 ) -> dict[str, Any]:
     """Fail-closed Sibyl gate applied after pinned upstream quote math.
 
-    If the public fair-value frame is incomplete, upstream live quote math is
-    deliberately not invented: raw_cap/upstream_price remain ``None`` and the
-    side is rejected. Deterministic upstream parity is tested separately.
+    A quote can be approved only when every market-data input used by the
+    pinned upstream calculation is fresh. In particular, Limitless book
+    competition is part of ``computeBuyPrices``; an unavailable/UNKNOWN venue
+    timestamp therefore cannot be silently treated as fresh.
 
     The hedge is an actual executable BUY of the opposite Polymarket token:
       Limitless YES fill -> BUY Polymarket NO
@@ -124,12 +126,13 @@ def assess_buy_quote(
         reasons.append("RAW_CAP_INVALID")
     if not upstream_ok:
         reasons.append("UPSTREAM_PRICE_INVALID")
+    if maker_book_status != "FRESH":
+        reasons.append("LIMITLESS_BOOK_NOT_FRESH")
 
     safe_quote = None
     if raw_cap_ok and float(raw_cap) < tick:
         reasons.append("RAW_CAP_BELOW_MIN_TICK")
     if raw_cap_ok and upstream_ok and float(raw_cap) >= tick:
-        # A BUY cap is a maximum. Use min(upstream, cap), then FLOOR to tick.
         safe_quote = floor_buy_cap(min(float(upstream_price), float(raw_cap)), tick)
         if safe_quote is None:
             reasons.append("NO_VALID_FLOOR_TICK")
@@ -173,8 +176,6 @@ def assess_buy_quote(
     expected_net_edge = None
     min_edge = float(minimum_net_edge_bps) / 10_000.0
     if safe_quote is not None and hedge["vwap"] is not None and fee_known:
-        # Conservative bound: charge each venue's bps against a full $1/share
-        # payout rather than understating the fee on a lower-price notional.
         fees_per_share = (
             float(polymarket_taker_fee_bps) + float(limitless_maker_fee_bps)
         ) / 10_000.0
@@ -184,6 +185,7 @@ def assess_buy_quote(
 
     quoteable = bool(
         fair_value_frame_complete
+        and maker_book_status == "FRESH"
         and cap_compliant
         and tick_quoteable
         and hedge["depth_sufficient"]
@@ -200,6 +202,7 @@ def assess_buy_quote(
         "SAFE_QUOTE_PRICE": safe_quote,
         "CAP_COMPLIANT": cap_compliant,
         "TICK_QUOTEABLE": tick_quoteable,
+        "LIMITLESS_BOOK_STATUS": maker_book_status,
         "HEDGE_TOKEN": hedge_token,
         "HEDGE_BOOK_STATUS": hedge_book_status,
         "EXECUTABLE_HEDGE_COST": hedge["vwap"],
