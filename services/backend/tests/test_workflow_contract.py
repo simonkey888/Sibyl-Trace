@@ -2,7 +2,6 @@ from pathlib import Path
 
 from app.watchdogs import ACCOUNTING_WATCHDOG
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 
