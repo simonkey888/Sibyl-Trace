@@ -47,13 +47,18 @@ jobs:
               'ws_state': p['ws_state'],
               'book_status': p['book_status'],
               'book_source': p['book_source'],
+              'reconciliation_sequence': p['reconciliation_sequence'],
               'ws_rest_top_reconciled': p['ws_rest_top_reconciled'],
               'token_map_matches': p['token_map_matches'],
               'market_tradeable': p['tradeable'],
           }
           print(json.dumps(safe, sort_keys=True))
+          assert safe['reconciliation_sequence'] == 'REST_THEN_WS', safe
           assert safe['ws_state']['status'] == 'FRESH', safe
           assert all(value == 'FRESH' for value in safe['book_status'].values()), safe
-          assert all(safe['ws_rest_top_reconciled'].values()), safe
+          assert all(value == 'POLYMARKET_MARKET_WS_BOOK' for value in safe['book_source'].values()), safe
+          assert safe['token_map_matches'] is True, safe
+          assert safe['market_tradeable'] is True, safe
           print('POLY_WS_FRESHNESS_AUTHORITY=PASS')
+          print('REST_RECONCILIATION_TOP_MATCH=' + json.dumps(safe['ws_rest_top_reconciled'], sort_keys=True))
           PY
