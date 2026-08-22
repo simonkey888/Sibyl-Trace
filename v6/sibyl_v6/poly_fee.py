@@ -6,6 +6,11 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from typing import Any, Iterable
 
 FEE_QUANTUM = Decimal("0.00001")
+# Defensive implementation bounds for remote CLOB metadata. These are not
+# claims about protocol maxima: values outside them are treated as unsupported
+# so an anomalous/malicious payload cannot drive pathological arithmetic.
+MAX_SUPPORTED_FEE_RATE = 1.0
+MAX_SUPPORTED_FEE_EXPONENT = 64
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,14 @@ def parse_clob_fee_details(info: dict[str, Any] | None) -> PolyFeeDetails | None
     taker_only = raw.get("to")
     if rate is None or exponent is None or not isinstance(taker_only, bool):
         return None
+    # Defensive local bounds: fee rate is a fractional rate and the exponent is
+    # only supported when integral and computationally bounded. Any future
+    # protocol contract outside these bounds fails closed until explicitly
+    # reviewed rather than being approximated or consuming unbounded work.
+    if rate > MAX_SUPPORTED_FEE_RATE:
+        return None
+    if exponent != float(int(exponent)) or exponent > MAX_SUPPORTED_FEE_EXPONENT:
+        return None
     # Fee-bearing V2 markets use a positive exponent. A zero-rate market is
     # fee-free regardless of exponent, so it remains a known fee contract.
     if rate > 0 and exponent <= 0:
@@ -56,6 +69,13 @@ def protocol_fee_raw(shares: float, price: float, details: PolyFeeDetails) -> De
     """
     if not (math.isfinite(shares) and shares >= 0 and math.isfinite(price) and 0 < price < 1):
         raise ValueError("INVALID_FEE_FILL")
+    if not (
+        math.isfinite(details.rate)
+        and 0 <= details.rate <= MAX_SUPPORTED_FEE_RATE
+        and math.isfinite(details.exponent)
+        and 0 <= details.exponent <= MAX_SUPPORTED_FEE_EXPONENT
+    ):
+        raise ValueError("UNSUPPORTED_FEE_DETAILS")
     s = Decimal(str(shares))
     p = Decimal(str(price))
     rate = Decimal(str(details.rate))
