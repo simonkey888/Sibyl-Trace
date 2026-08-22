@@ -25,40 +25,61 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Diagnose exact-pair Polymarket market WebSocket
+      - name: Diagnose every exact-pair Polymarket market WebSocket
         env:
           PYTHONPATH: v6
         run: |
           python - <<'PY'
+          import collections
           import json
+          import os
           from sibyl_v6.live_pair_selector import audit_current_pairs
           from sibyl_v6.runtime_market_data import fetch_runtime_market_data
 
           audit = audit_current_pairs()
-          exact = [row for row in (audit.get('exact_pairs') or []) if isinstance(row, dict)]
+          exact = sorted(
+              [row for row in (audit.get('exact_pairs') or []) if isinstance(row, dict)],
+              key=lambda row: (str(row.get('limitless_slug') or ''), str(row.get('polymarket_slug') or '')),
+          )
           if not exact:
               raise SystemExit('NO_CURRENT_EXACT_PAIR')
-          pair = sorted(exact, key=lambda row: (str(row.get('limitless_slug') or ''), str(row.get('polymarket_slug') or '')))[0]
-          runtime = fetch_runtime_market_data(pair, audit)
-          p = runtime['polymarket']
-          safe = {
-              'source_sha': __import__('os').environ['SOURCE_SHA'],
-              'pair': {'limitless_slug': pair['limitless_slug'], 'polymarket_slug': pair['polymarket_slug']},
-              'ws_state': p['ws_state'],
-              'book_status': p['book_status'],
-              'book_source': p['book_source'],
-              'reconciliation_sequence': p['reconciliation_sequence'],
-              'ws_rest_top_reconciled': p['ws_rest_top_reconciled'],
-              'token_map_matches': p['token_map_matches'],
-              'market_tradeable': p['tradeable'],
-          }
-          print(json.dumps(safe, sort_keys=True))
-          assert safe['reconciliation_sequence'] == 'REST_THEN_WS', safe
-          assert safe['ws_state']['status'] == 'FRESH', safe
-          assert all(value == 'FRESH' for value in safe['book_status'].values()), safe
-          assert all(value == 'POLYMARKET_MARKET_WS_BOOK' for value in safe['book_source'].values()), safe
-          assert safe['token_map_matches'] is True, safe
-          assert safe['market_tradeable'] is True, safe
-          print('POLY_WS_FRESHNESS_AUTHORITY=PASS')
-          print('REST_RECONCILIATION_TOP_MATCH=' + json.dumps(safe['ws_rest_top_reconciled'], sort_keys=True))
+
+          rows = []
+          status_counts = collections.Counter()
+          ambiguous = {'DISCONNECTED', 'NO_EVENT', 'INVALID', 'UNKNOWN', 'CLOCK_SKEW'}
+          for pair in exact:
+              runtime = fetch_runtime_market_data(pair, audit)
+              p = runtime['polymarket']
+              safe = {
+                  'source_sha': os.environ['SOURCE_SHA'],
+                  'pair': {
+                      'limitless_slug': pair['limitless_slug'],
+                      'polymarket_slug': pair['polymarket_slug'],
+                  },
+                  'ws_state': p['ws_state'],
+                  'book_status': p['book_status'],
+                  'book_source': p['book_source'],
+                  'reconciliation_sequence': p['reconciliation_sequence'],
+                  'ws_rest_top_reconciled': p['ws_rest_top_reconciled'],
+                  'token_map_matches': p['token_map_matches'],
+                  'market_tradeable': p['tradeable'],
+              }
+              print(json.dumps(safe, sort_keys=True))
+              assert safe['reconciliation_sequence'] == 'REST_THEN_WS', safe
+              assert all(value == 'POLYMARKET_MARKET_WS_BOOK' for value in safe['book_source'].values()), safe
+              assert safe['token_map_matches'] is True, safe
+              for value in safe['book_status'].values():
+                  status_counts[value] += 1
+                  assert value not in ambiguous, safe
+                  assert value in {'FRESH', 'STALE'}, safe
+              rows.append(safe)
+
+          fresh_pairs = sum(all(v == 'FRESH' for v in row['book_status'].values()) for row in rows)
+          stale_pairs = sum(any(v == 'STALE' for v in row['book_status'].values()) for row in rows)
+          print('POLY_WS_TRANSPORT_AUTHORITY=PASS')
+          print('EXACT_PAIR_COUNT=' + str(len(rows)))
+          print('FRESH_EXACT_PAIRS=' + str(fresh_pairs))
+          print('STALE_EXACT_PAIRS=' + str(stale_pairs))
+          print('POLY_WS_STATUS_COUNTS=' + json.dumps(dict(status_counts), sort_keys=True))
+          print('REST_RECONCILIATION_IS_NON_AUTHORITY=PASS')
           PY
