@@ -4,13 +4,15 @@ import math
 from typing import Any
 
 from .poly_fee import PolyFeeDetails, protocol_fee_for_fills, safety_buffer_usdc
-from .quote_math import norm_price
+from .quote_math import TICK as UPSTREAM_EXECUTION_TICK, norm_price
 
-# Current Limitless CLOB SDK/order documentation requires price alignment to
-# 0.001. The pinned upstream still rounds to whole cents; that remains a parity
-# diagnostic. Sibyl's post-upstream safety layer may only move a BUY price DOWN
-# to this finer valid venue grid, never above the raw cap.
-LIMITLESS_MAKER_TICK = 0.001
+# Current Limitless venue docs allow 0.001-aligned prices. The pinned upstream
+# adapter, however, exposes `limitPriceCents` and converts cents/100 before
+# calling the SDK, so this strategy's effective execution grid remains 0.01.
+# A price that cannot survive that adapter unchanged is not a safe executable
+# quote. Venue capability and pinned-adapter capability are recorded separately.
+LIMITLESS_VENUE_TICK = 0.001
+LIMITLESS_EXECUTION_TICK = UPSTREAM_EXECUTION_TICK
 
 
 def _finite(value: Any) -> bool:
@@ -20,8 +22,8 @@ def _finite(value: Any) -> bool:
         return False
 
 
-def floor_buy_cap(value: float, tick: float = LIMITLESS_MAKER_TICK) -> float | None:
-    """Floor a maximum BUY price to the venue tick; never rounds upward."""
+def floor_buy_cap(value: float, tick: float = LIMITLESS_EXECUTION_TICK) -> float | None:
+    """Floor a maximum BUY price to the effective execution tick; never up."""
     if not _finite(value) or not _finite(tick) or tick <= 0:
         return None
     units = math.floor((float(value) + 1e-12) / float(tick))
@@ -114,20 +116,23 @@ def assess_buy_quote(
     polymarket_fee_details: PolyFeeDetails | None,
     minimum_net_edge_bps: float,
     fee_safety_buffer_bps: float = 0.0,
-    tick: float = LIMITLESS_MAKER_TICK,
+    tick: float = LIMITLESS_EXECUTION_TICK,
+    venue_tick: float = LIMITLESS_VENUE_TICK,
     limitless_maker_fee_bps: float | None = 0.0,
     fair_value_frame_complete: bool = True,
+    market_tradeable: bool = True,
 ) -> dict[str, Any]:
     """Fail-closed Sibyl gate applied after pinned upstream quote math.
 
-    A quote can be approved only when every market-data input used by the
-    pinned upstream calculation is fresh. The Polymarket taker fee is evaluated
-    from the current CLOB V2 fee details on each actual L2 fill level. A separate
-    configurable safety buffer is then added; neither is called realized PnL.
+    Fee economics use current Polymarket CLOB V2 parameters on each actual L2
+    fill level. The safety fee buffer is independent from the protocol fee.
+    The quote grid reflects what the pinned Limitless adapter can actually send.
     """
     reasons: list[str] = []
     raw_cap_ok = _finite(raw_cap)
     upstream_ok = _finite(upstream_price)
+    if not market_tradeable:
+        reasons.append("MARKET_NOT_TRADEABLE")
     if not fair_value_frame_complete:
         reasons.append("FAIR_VALUE_FRAME_INCOMPLETE")
     if not raw_cap_ok:
@@ -159,6 +164,7 @@ def assess_buy_quote(
         and safe_quote >= tick - 1e-12
         and safe_quote <= 1.0 - tick + 1e-12
         and abs((safe_quote / tick) - round(safe_quote / tick)) <= 1e-9
+        and abs((safe_quote / venue_tick) - round(safe_quote / venue_tick)) <= 1e-9
     )
     if safe_quote is not None and not tick_quoteable:
         reasons.append("INVALID_VENUE_TICK")
@@ -227,7 +233,8 @@ def assess_buy_quote(
         reasons.append("NET_EDGE_BELOW_MINIMUM")
 
     quoteable = bool(
-        fair_value_frame_complete
+        market_tradeable
+        and fair_value_frame_complete
         and maker_book_status == "FRESH"
         and cap_compliant
         and tick_quoteable
@@ -239,12 +246,14 @@ def assess_buy_quote(
     )
     return {
         "SIDE": side,
+        "MARKET_TRADEABLE": market_tradeable,
         "RAW_CAP": raw_cap,
         "UPSTREAM_COMPUTED_PRICE": upstream_price,
         "UPSTREAM_CAP_COMPLIANT": upstream_cap_compliant,
         "SAFE_QUOTE_PRICE": safe_quote,
         "CAP_COMPLIANT": cap_compliant,
-        "VENUE_TICK": tick,
+        "EXECUTION_TICK": tick,
+        "VENUE_TICK": venue_tick,
         "TICK_QUOTEABLE": tick_quoteable,
         "LIMITLESS_BOOK_STATUS": maker_book_status,
         "HEDGE_TOKEN": hedge_token,
