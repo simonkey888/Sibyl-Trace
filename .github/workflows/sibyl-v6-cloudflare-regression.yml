@@ -38,6 +38,7 @@ jobs:
           ROOT_STATUS="$root_status" SNAPSHOT_STATUS="$snapshot_status" API_STATUS="$api_status" POST_STATUS="$post_status" python - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
 
           snapshot = json.loads(Path('/tmp/sibyl-v6-cloudflare/snapshot.json').read_text(encoding='utf-8'))
@@ -56,9 +57,32 @@ jobs:
           assert api.get('detail') == 'API and control routes are disabled on the public PAPER terminal'
           assert 'x-content-type-options: nosniff' in api_headers
           assert 'x-frame-options: deny' in api_headers
-          serialized = json.dumps(snapshot).casefold()
-          for forbidden in ('private_key', 'seed_phrase', 'mnemonic', 'bearer_token', 'access_token', 'refresh_token'):
-              assert forbidden not in serialized
+
+          sensitive_keys = {
+              'private_key', 'seed_phrase', 'mnemonic', 'bearer_token',
+              'access_token', 'refresh_token', 'api_key', 'password', 'secret',
+          }
+          credential_patterns = (
+              re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
+              re.compile(r'Bearer\s+[A-Za-z0-9._-]{12,}', re.I),
+              re.compile(r'\bsk-[A-Za-z0-9_-]{16,}\b'),
+          )
+
+          def walk(value):
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      normalized = str(key).strip().casefold()
+                      if normalized in sensitive_keys and item not in (None, '', False, 'REDACTED', 'redacted'):
+                          raise AssertionError(f'sensitive public key has non-empty value: {normalized}')
+                      walk(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      walk(item)
+              elif isinstance(value, str):
+                  for pattern in credential_patterns:
+                      assert pattern.search(value) is None
+
+          walk(snapshot)
           payload = {
               'PUBLIC_CLOUDFLARE_TERMINAL': 'HEALTHY',
               'ROOT_HTTP': int(os.environ['ROOT_STATUS']),
