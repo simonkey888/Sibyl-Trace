@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Run bounded real-feed PAPER observer
+      - name: Run bounded all-exact-pair real-feed PAPER observer
         env:
           PYTHONPATH: v6
           DRY_RUN: "true"
@@ -37,19 +37,53 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/sibyl-v6-runtime
-          python -m sibyl_v6.paper_cloud_loop --cycles 3 --interval 1 \
-            --evidence /tmp/sibyl-v6-runtime/cycle-000001.json \
-            | tee /tmp/sibyl-v6-runtime/stdout.jsonl
+          python - <<'PY' | tee /tmp/sibyl-v6-runtime/stdout.jsonl
+          import json
+          import os
+          import time
+          from pathlib import Path
+
+          from sibyl_v6.evidence_store import evidence_store_from_env
+          from sibyl_v6.live_pair_selector import audit_current_pairs
+          from sibyl_v6.paper_cloud_loop import _with_evidence_size, paper_cycle
+
+          root = Path('/tmp/sibyl-v6-runtime')
+          store = evidence_store_from_env()
+          source_sha = os.environ['SOURCE_SHA']
+          cycle_no = 0
+          sweeps = 5
+          for sweep in range(sweeps):
+              audit = audit_current_pairs()
+              exact = [row for row in (audit.get('exact_pairs') or []) if isinstance(row, dict)]
+              if not exact:
+                  raise SystemExit('NO_CURRENT_EXACT_PAIR_FOR_PROFILE')
+              exact.sort(key=lambda row: (str(row.get('limitless_slug') or ''), str(row.get('polymarket_slug') or '')))
+              for pair in exact:
+                  cycle_no += 1
+                  cycle = paper_cycle(pair, audit=audit)
+                  cycle['profile_sweep'] = sweep + 1
+                  cycle['evidence_store'] = store.contract()
+                  cycle = _with_evidence_size(cycle)
+                  data = (json.dumps(cycle, indent=2, sort_keys=True) + '\n').encode('utf-8')
+                  path = root / f'cycle-{cycle_no:06d}.json'
+                  path.write_bytes(data)
+                  store.put_bytes(f'profile/{source_sha}/cycle-{cycle_no:06d}.json', data)
+                  print(json.dumps(cycle, sort_keys=True), flush=True)
+                  time.sleep(1)
+          print(f'PROFILE_SWEEPS={sweeps}')
+          print(f'PROFILE_CYCLES={cycle_no}')
+          PY
       - name: Summarize bounded observer
         run: |
           python - <<'PY' | tee /tmp/sibyl-v6-runtime/profile-summary.txt
           import json
           import math
           import statistics
+          from collections import Counter, defaultdict
           from pathlib import Path
 
           rows = [json.loads(path.read_text(encoding='utf-8')) for path in sorted(Path('/tmp/sibyl-v6-runtime').glob('cycle-*.json'))]
-          assert len(rows) == 3, len(rows)
+          assert len(rows) >= 5, len(rows)
           assert all(row.get('DRY_RUN') is True and row.get('LIVE') == 'NO' for row in rows)
           assert all(row.get('REAL_ORDERS') == 0 and str(row.get('CAPITAL_MOVED_USD')) == '0' for row in rows)
           assert all(row.get('DISCOVERY_CYCLE') == 'PASS' for row in rows)
@@ -60,56 +94,117 @@ jobs:
           cpu_ms = [float(item['CPU_PROCESS_MS']) for item in runtime]
           cpu_ratio = [float(item['CPU_TO_WALL_RATIO']) for item in runtime]
           latency = [float(row['cycle_latency_ms']) for row in rows]
-          ordered = sorted(latency)
-          p50 = statistics.median(ordered)
-          p95 = ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
+          ordered_latency = sorted(latency)
+          percentile = lambda vals, q: sorted(vals)[max(0, math.ceil(q * len(vals)) - 1)]
+
           reconnects = {
               'limitless': sum(int(item.get('reconnects', {}).get('limitless', 0)) for item in runtime),
-              'polymarket': sum(int(item.get('reconnects', {}).get('polymarket', 0)) for item in runtime),
+              'polymarket_reported_by_cycle': sum(int(item.get('reconnects', {}).get('polymarket', 0)) for item in runtime),
           }
-          stale = 0
-          incomplete = 0
-          edge_samples = []
+          reasons = Counter()
+          freshness = Counter()
+          pair_stats = defaultdict(lambda: {'cycles': 0, 'strategy_quoteable': 0, 'any_side_quoteable': 0, 'conditional_edges': [], 'quoteable_edges': [], 'rewards': []})
+          all_conditional_edges = []
+          quoteable_edges = []
+          quoteable_fill_net = []
+          both_side_gate_constrained = 0
+
           for row in rows:
+              assert row['polymarket']['YES']['endpoint'].startswith('wss://ws-subscriptions-clob.polymarket.com/')
+              assert row['polymarket']['NO']['endpoint'].startswith('wss://ws-subscriptions-clob.polymarket.com/')
+              key = row['exact_pair']['limitless_slug'] + '|' + row['exact_pair']['polymarket_slug']
+              stats = pair_stats[key]
+              stats['cycles'] += 1
+              strategy_q = row.get('STRATEGY_QUOTEABLE') == 'YES'
+              any_q = bool(row.get('ANY_SIDE_QUOTEABLE'))
+              stats['strategy_quoteable'] += int(strategy_q)
+              stats['any_side_quoteable'] += int(any_q)
+              both_side_gate_constrained += int(any_q and not strategy_q)
+              freshness['limitless:' + str(row['limitless'].get('quote_age_status'))] += 1
+              for outcome in ('YES', 'NO'):
+                  freshness['polymarket_' + outcome + ':' + str(row['polymarket'][outcome].get('quote_age_status'))] += 1
               mechanics = row.get('paper_mechanics') or {}
-              cycle_stale = False
-              cycle_incomplete = not mechanics.get('fair_value_frame_complete', False)
+              quote_size = float(mechanics.get('quote_size_shares') or 0)
               for side_name in ('YES', 'NO'):
                   side = mechanics.get(side_name) or {}
-                  reason = str(side.get('REJECTION_REASON') or '')
-                  cycle_stale = cycle_stale or 'STALE' in reason or side.get('HEDGE_BOOK_STATUS') == 'STALE' or side.get('LIMITLESS_BOOK_STATUS') == 'STALE'
-                  cycle_incomplete = cycle_incomplete or 'INSUFFICIENT_HEDGE_DEPTH' in reason or side.get('HEDGE_DEPTH_SUFFICIENT') is False
+                  for reason in str(side.get('REJECTION_REASON') or '').split('|'):
+                      if reason and reason != 'NONE':
+                          reasons[reason] += 1
                   edge = side.get('EXPECTED_NET_EDGE')
-                  if isinstance(edge, (int, float)):
-                      edge_samples.append(float(edge))
-              stale += int(cycle_stale)
-              incomplete += int(cycle_incomplete)
+                  if isinstance(edge, (int, float)) and math.isfinite(float(edge)):
+                      edge = float(edge)
+                      all_conditional_edges.append(edge)
+                      stats['conditional_edges'].append(edge)
+                      if side.get('QUOTEABLE') is True:
+                          quoteable_edges.append(edge)
+                          stats['quoteable_edges'].append(edge)
+                          quoteable_fill_net.append(edge * quote_size)
+              stats['rewards'].append(row['limitless'].get('reward_state') or {})
 
-          exact_count = max(int(row.get('EXACT_EQUIVALENT_PAIR_COUNT', 0)) for row in rows)
-          quoteable = sum(row.get('STRATEGY_QUOTEABLE') == 'YES' for row in rows)
-          non_quoteable = sum(row.get('STRATEGY_QUOTEABLE') == 'NO' for row in rows)
-          assert exact_count >= 1
-          assert quoteable + non_quoteable == len(rows)
+          exact_pair_keys = sorted(pair_stats)
+          exact_counts = [int(row.get('EXACT_EQUIVALENT_PAIR_COUNT', 0)) for row in rows]
+          strategy_quoteable = sum(row.get('STRATEGY_QUOTEABLE') == 'YES' for row in rows)
+          any_side_quoteable = sum(bool(row.get('ANY_SIDE_QUOTEABLE')) for row in rows)
+          non_quoteable = len(rows) - strategy_quoteable
+          assert min(exact_counts) >= 1
+          assert strategy_quoteable + non_quoteable == len(rows)
+
+          def dist(values):
+              if not values:
+                  return None
+              return {
+                  'min': min(values),
+                  'p50': statistics.median(values),
+                  'p95': percentile(values, 0.95),
+                  'max': max(values),
+              }
+
+          reward_summary = {}
+          for key, stats in pair_stats.items():
+              latest = stats['rewards'][-1] if stats['rewards'] else {}
+              reward_summary[key] = {
+                  'isRewardable': latest.get('isRewardable'),
+                  'rebateRate': latest.get('rebateRate'),
+                  'dailyReward': latest.get('dailyReward'),
+                  'effectiveDailyReward': latest.get('effectiveDailyReward'),
+                  'currentRewardsMultiplier': latest.get('currentRewardsMultiplier'),
+                  'maxSpread': latest.get('maxSpread'),
+                  'minSize': latest.get('minSize'),
+              }
 
           summary = {
               'SOURCE_SHA': rows[0]['SOURCE_SHA'],
               'CYCLE_COUNT': len(rows),
+              'EXACT_PAIR_KEYS': exact_pair_keys,
+              'EXACT_PAIR_COUNT_MIN': min(exact_counts),
+              'EXACT_PAIR_COUNT_MAX': max(exact_counts),
               'RSS_MIN_KB': min(rss),
               'RSS_PEAK_KB': max(rss),
               'CPU_PROFILE': {'process_ms': cpu_ms, 'cpu_to_wall_ratio': cpu_ratio},
-              'CYCLE_LATENCY_P50_MS': round(p50, 3),
-              'CYCLE_LATENCY_P95_MS': round(p95, 3),
+              'CYCLE_LATENCY_P50_MS': round(statistics.median(ordered_latency), 3),
+              'CYCLE_LATENCY_P95_MS': round(percentile(ordered_latency, 0.95), 3),
+              'CYCLE_LATENCY_P99_MS': round(percentile(ordered_latency, 0.99), 3),
               'RECONNECTS': reconnects,
-              'HTTP_ERRORS': 0,
-              'STALE_REJECTIONS': stale,
-              'INCOMPLETE_BOOK_REJECTIONS': incomplete,
-              'EXACT_PAIR_COUNT': exact_count,
-              'QUOTEABLE_CYCLES': quoteable,
+              'FRESHNESS_DISTRIBUTION': dict(sorted(freshness.items())),
+              'REJECTION_DISTRIBUTION': dict(sorted(reasons.items())),
+              'STRATEGY_QUOTEABLE_CYCLES': strategy_quoteable,
+              'ANY_SIDE_QUOTEABLE_CYCLES': any_side_quoteable,
+              'BOTH_SIDE_GATE_CONSTRAINED_CYCLES': both_side_gate_constrained,
               'NON_QUOTEABLE_CYCLES': non_quoteable,
-              'NET_EDGE_SAMPLES': edge_samples,
+              'QUOTEABLE_RATE': strategy_quoteable / len(rows),
+              'ANY_SIDE_QUOTEABLE_RATE': any_side_quoteable / len(rows),
+              'CONDITIONAL_NET_EDGE_DISTRIBUTION_PER_SHARE': dist(all_conditional_edges),
+              'QUOTEABLE_NET_EDGE_DISTRIBUTION_PER_SHARE': dist(quoteable_edges),
+              'QUOTEABLE_NET_PER_FILL_DISTRIBUTION_USD': dist(quoteable_fill_net),
+              'REWARD_ELIGIBILITY': reward_summary,
+              'PAIR_STATS': pair_stats,
+              'EST_FILL_RATE': None,
+              'EST_NET_PER_FILL': statistics.median(quoteable_fill_net) if quoteable_fill_net else None,
+              'EST_NET_24H': None,
               'EVIDENCE_BYTES_PER_CYCLE': [int(row.get('evidence_bytes_per_cycle', 0)) for row in rows],
               'DISCOVERY_CYCLE': 'PASS',
               'MARKET_DATA_CYCLE': 'PASS',
+              'POLY_WS_AUTHORITY': True,
               'REAL_ORDERS': 0,
               'CAPITAL_MOVED_USD': 0,
               'LIVE': 'NO',
