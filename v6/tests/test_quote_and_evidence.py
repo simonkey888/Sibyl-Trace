@@ -58,6 +58,7 @@ class QuoteSafetyTests(unittest.TestCase):
             "upstream_price": 0.50,
             "hedge_book": self.book(0.47),
             "hedge_book_status": "FRESH",
+            "maker_book_status": "FRESH",
             "hedge_token": "NO_TOKEN",
             "quote_size": 5.0,
             "polymarket_taker_fee_bps": 0.0,
@@ -114,6 +115,11 @@ class QuoteSafetyTests(unittest.TestCase):
         result = self.assess(hedge_book_status="STALE")
         self.assertFalse(result["QUOTEABLE"])
         self.assertIn("HEDGE_BOOK_NOT_FRESH", result["REJECTION_REASON"])
+
+    def test_unknown_limitless_competition_book_rejects(self):
+        result = self.assess(maker_book_status="UNKNOWN")
+        self.assertFalse(result["QUOTEABLE"])
+        self.assertIn("LIMITLESS_BOOK_NOT_FRESH", result["REJECTION_REASON"])
 
     def test_unknown_fee_rejects(self):
         result = self.assess(polymarket_taker_fee_bps=None)
