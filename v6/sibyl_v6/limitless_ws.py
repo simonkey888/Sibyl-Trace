@@ -126,8 +126,10 @@ def classify_ws_snapshot(
         return {"status": "DISCONNECTED", "age_ms": None, "source_timestamp_ms": None}
     source_ts = _source_timestamp_ms({"timestamp": snapshot.get("timestamp")})
     age_ms, freshness = _freshness(source_ts, observed_at_ms, max_age_ms)
-    if not snapshot.get("connected") or not snapshot.get("event_received"):
+    if not snapshot.get("connected"):
         status = "DISCONNECTED"
+    elif not snapshot.get("event_received"):
+        status = "NO_EVENT"
     elif not isinstance(snapshot.get("orderbook"), dict):
         status = "INVALID"
     else:
