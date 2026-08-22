@@ -12,7 +12,15 @@ from .limitless_ws import (
     fetch_limitless_ws_snapshot,
 )
 from .poly_fee import PolyFeeDetails, parse_clob_fee_details
+from .polymarket_ws import (
+    classify_ws_books,
+    desired_token_ids,
+    fetch_polymarket_ws_snapshot,
+)
 from .quote_math import book_top
+
+
+POLYMARKET_MARKET_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
 def _poly_tokens_from_gamma(market: dict[str, Any]) -> dict[str, str]:
@@ -103,6 +111,15 @@ def _top_matches(left: dict[str, Any], right: dict[str, Any], tolerance: float =
     return True
 
 
+def _untimestamped_reconciliation_copy(book: dict[str, Any]) -> dict[str, Any]:
+    """REST is state reconciliation only and can never become freshness authority."""
+    return {
+        key: value
+        for key, value in book.items()
+        if str(key).casefold() not in {"timestamp", "ts", "time", "updated_at", "updatedat"}
+    }
+
+
 def fetch_runtime_market_data(
     pair: dict[str, Any],
     audit: dict[str, Any],
@@ -112,9 +129,9 @@ def fetch_runtime_market_data(
 ) -> dict[str, Any]:
     """Fetch quote-decision data with fail-closed venue state/provenance.
 
-    Limitless REST is reconciliation only. Only a timestamped orderbookUpdate
-    can prove maker-book freshness; a quiet/disconnected stream stays non-fresh.
-    Polymarket uses current CLOB V2 market info for tick/min-size/fees/token map.
+    On both venues, REST is reconciliation only. Timestamped public WebSocket
+    order-book events are the only freshness authority. Missing, stale,
+    disconnected, ambiguous or desynchronized WS state cannot become FRESH.
     """
     lslug = str(pair["limitless_slug"])
     pslug = str(pair["polymarket_slug"])
@@ -134,8 +151,6 @@ def fetch_runtime_market_data(
     ws_observed = int(time.time() * 1000)
     ws_state = classify_ws_snapshot(ws, observed_at_ms=ws_observed, max_age_ms=ws_max_age_ms)
 
-    # Fetch REST after the WS observation. It is a current untimestamped snapshot
-    # used only to detect obvious local-stream desynchronization.
     lbook_url = ldetail_url + "/orderbook"
     lbook_status, lbook_rest = _get_json(lbook_url)
     if lbook_status != 200 or not isinstance(lbook_rest, dict):
@@ -146,7 +161,7 @@ def fetch_runtime_market_data(
     maker_status = str(ws_state.get("status") or "UNKNOWN")
     if maker_status == "FRESH" and not reconciled:
         maker_status = "DESYNC"
-    maker_book = ws_book if isinstance(ws_book, dict) else lbook_rest
+    maker_book = ws_book if isinstance(ws_book, dict) else _untimestamped_reconciliation_copy(lbook_rest)
 
     pdetail_url = "https://gamma-api.polymarket.com/markets/slug/" + urllib.parse.quote(pslug, safe="")
     pdetail_status, pmarket = _get_json(pdetail_url)
@@ -165,20 +180,64 @@ def fetch_runtime_market_data(
     clob_tokens = _poly_tokens_from_clob(pclob)
     token_map_matches = gamma_tokens == clob_tokens and set(clob_tokens) == {"YES", "NO"}
     fee_details: PolyFeeDetails | None = parse_clob_fee_details(pclob)
+    exact_tokens = desired_token_ids(gamma_tokens)
+    if not token_map_matches or len(exact_tokens) != 2:
+        raise RuntimeError("POLYMARKET_EXACT_TOKEN_SET_INVALID")
 
+    pws = fetch_polymarket_ws_snapshot(
+        token_ids=exact_tokens,
+        timeout_ms=ws_timeout_ms,
+        max_reconnects=1,
+    )
+    pws_observed = int(time.time() * 1000)
+    pws_state = classify_ws_books(
+        pws,
+        token_ids=exact_tokens,
+        observed_at_ms=pws_observed,
+        max_age_ms=ws_max_age_ms,
+    )
+
+    rest_books: dict[str, dict[str, Any]] = {}
     books: dict[str, dict[str, Any]] = {}
     book_http: dict[str, int] = {}
     book_urls: dict[str, str] = {}
+    rest_book_urls: dict[str, str] = {}
+    book_status: dict[str, str] = {}
+    ws_rest_top_reconciled: dict[str, bool] = {}
+    book_source: dict[str, str] = {}
+    per_token = pws_state.get("per_token") if isinstance(pws_state.get("per_token"), dict) else {}
+    ws_books = pws.get("books") if isinstance(pws.get("books"), dict) else {}
+
     for outcome in ("YES", "NO"):
-        url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode(
-            {"token_id": gamma_tokens[outcome]}
-        )
-        status, book = _get_json(url)
-        if status != 200 or not isinstance(book, dict):
-            raise RuntimeError(f"POLYMARKET_{outcome}_BOOK_INVALID")
-        books[outcome] = book
+        token = gamma_tokens[outcome]
+        rest_url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": token})
+        status, rest_book = _get_json(rest_url)
+        if status != 200 or not isinstance(rest_book, dict):
+            raise RuntimeError(f"POLYMARKET_{outcome}_RECONCILIATION_BOOK_INVALID")
+        rest_books[outcome] = rest_book
         book_http[outcome] = status
-        book_urls[outcome] = url
+        rest_book_urls[outcome] = rest_url
+
+        ws_outcome_book = ws_books.get(token)
+        state = per_token.get(token) if isinstance(per_token.get(token), dict) else {}
+        freshness = str(state.get("status") or "UNKNOWN")
+        top_reconciled = bool(
+            isinstance(ws_outcome_book, dict) and _top_matches(ws_outcome_book, rest_book)
+        )
+        if freshness == "FRESH" and not top_reconciled:
+            freshness = "DESYNC"
+        book_status[outcome] = freshness
+        ws_rest_top_reconciled[outcome] = top_reconciled
+        if isinstance(ws_outcome_book, dict):
+            authoritative = dict(ws_outcome_book)
+            if freshness != "FRESH":
+                authoritative["timestamp"] = None
+            books[outcome] = authoritative
+            book_source[outcome] = "POLYMARKET_MARKET_WS_BOOK"
+        else:
+            books[outcome] = _untimestamped_reconciliation_copy(rest_book)
+            book_source[outcome] = "REST_RECONCILIATION_ONLY"
+        book_urls[outcome] = POLYMARKET_MARKET_WS_URL
 
     limitless_tradeable = _limitless_tradeable(ldetail)
     polymarket_tradeable = _polymarket_tradeable(pmarket, pclob)
@@ -216,8 +275,15 @@ def fetch_runtime_market_data(
             "token_map_matches": token_map_matches,
             "fee_details": fee_details,
             "books": books,
+            "rest_books": rest_books,
             "book_http": book_http,
             "book_urls": book_urls,
+            "rest_book_urls": rest_book_urls,
+            "book_status": book_status,
+            "book_source": book_source,
+            "ws": pws,
+            "ws_state": pws_state,
+            "ws_rest_top_reconciled": ws_rest_top_reconciled,
             "tradeable": polymarket_tradeable,
             "minimum_tick": _finite_positive(pclob.get("mts")),
             "minimum_order_size": _finite_positive(pclob.get("mos")),
