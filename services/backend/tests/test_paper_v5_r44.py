@@ -51,6 +51,7 @@ def matrix_stub():
         realized_pnl=100.0,
         volume=1000.0,
         closed_count=100,
+        decided_count=100,
         concentration=0.2,
     )
     return SimpleNamespace(
@@ -100,10 +101,13 @@ class ScanClient:
             },
         ]
 
-    def closed_positions(self, _address):
+    def closed_positions(self, _address, *, limit=1000):
+        assert limit == 1000
         return []
 
     def _get(self, url, params=None):
+        if url == "https://data.test/closed-positions":
+            return []
         assert url == "https://data.test/activity"
         wallet = params["user"]
         rows = trades(wallet)

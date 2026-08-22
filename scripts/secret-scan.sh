@@ -11,7 +11,9 @@ patterns=(
 )
 
 for pattern in "${patterns[@]}"; do
-  if git grep -n -E "$pattern" -- . \
+  # -e is mandatory because some secret signatures begin with '-' and must
+  # never be parsed as git-grep command-line options.
+  if git grep -n -E -e "$pattern" -- . \
     ':(exclude)scripts/secret-scan.sh' \
     ':(exclude)docs/**' \
     ':(exclude)**/*.md'; then
@@ -20,13 +22,13 @@ for pattern in "${patterns[@]}"; do
   fi
 done
 
-if git grep -n -E 'LIVE_TRADING_ENABLED[=:][[:space:]]*(true|TRUE|1)' -- \
+if git grep -n -E -e 'LIVE_TRADING_ENABLED[=:][[:space:]]*(true|TRUE|1)' -- \
   '.github/**' 'infra/**' 'services/**'; then
   echo "LIVE trading enablement detected." >&2
   fail=1
 fi
 
-if git grep -n -E 'COST_AUTHORIZED_USD[=:][[:space:]]*[1-9]' -- \
+if git grep -n -E -e 'COST_AUTHORIZED_USD[=:][[:space:]]*[1-9]' -- \
   '.github/**' 'infra/**' 'services/**'; then
   echo "Non-zero cost authorization detected." >&2
   fail=1

@@ -21,7 +21,23 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pip check
       - run: pip-audit --local --progress-spinner off
-      - run: ruff check .
+      - name: Lint backend Python changed against main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C ../.. fetch --no-tags --depth=1 origin main
+          mapfile -t files < <(
+            git -C ../.. diff --name-only --diff-filter=ACMRT FETCH_HEAD HEAD -- services/backend \
+              | grep -E '^services/backend/.*\.py$' \
+              | sed 's#^services/backend/##' \
+              || true
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "No backend Python changes relative to main; historical frozen files are not retro-linted."
+          else
+            printf 'Ruff changed backend files:\n%s\n' "${files[@]}"
+            ruff check "${files[@]}"
+          fi
       - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=75
   dashboard:
     runs-on: ubuntu-latest
@@ -46,9 +62,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Scan repository boundaries
         run: bash scripts/secret-scan.sh
-      - name: Verify frozen PAPER V2 invariants
+      - name: Verify historical PAPER V2 freeze and current R4.5 safety
         run: python scripts/freeze_manifest.py --check
   container:
     runs-on: ubuntu-latest

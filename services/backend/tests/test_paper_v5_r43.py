@@ -18,8 +18,8 @@ from app.models import AuditEvent, Wallet
 from app.models_v5 import PaperV5ExecutionEvidence, PaperV5Position, PaperV5Prediction
 from app.paper_v5_r43 import (
     CYCLE_SELECTION_EFFECTIVE_STATE,
-    PaperEngineV5R43,
     SELECTION_EVENT,
+    PaperEngineV5R43,
     _selection_evidence_binding_valid,
     _selection_payload_hash_valid,
     _write_ledger_r43,
@@ -126,7 +126,8 @@ class ScanClient:
             }
         ]
 
-    def closed_positions(self, _address):
+    def closed_positions(self, _address, *, limit=1000):
+        assert limit == 1000
         return []
 
 
@@ -155,6 +156,7 @@ def matrix_stub():
         realized_pnl=100.0,
         volume=1000.0,
         closed_count=100,
+        decided_count=100,
         concentration=0.2,
     )
     return SimpleNamespace(
@@ -245,7 +247,10 @@ def test_r43_valid_activity_persists_recomputable_selection_evidence(tmp_path: P
         assert len(rows) == 1
         row = rows[0]
         assert row["selection_provenance"]["prospective_selection"] is True
-        assert row["selection_provenance"]["source_timestamp"] >= row["selection_provenance"]["selection_effective_at"]
+        assert (
+            row["selection_provenance"]["source_timestamp"]
+            >= row["selection_provenance"]["selection_effective_at"]
+        )
         assert row["selection_evidence_bound"] is True
         assert row["execution_evidence"]["execution_evidence_hash"] == payload[
             "r4_3_execution_evidence_hash"

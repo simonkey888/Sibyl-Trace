@@ -97,9 +97,9 @@ def test_activity_fetch_uses_corrected_csv_activity_enum_filter() -> None:
         "REWARD",
         "CONVERSION",
         "MAKER_REBATE",
+        "TAKER_REBATE",
         "REFERRAL_REWARD",
     }
-    assert "TAKER_REBATE" not in requested
     assert calls[0]["sortBy"] == "TIMESTAMP"
     assert calls[0]["sortDirection"] == "DESC"
 
@@ -317,14 +317,17 @@ class ScannerClient:
             },
         ]
 
-    def closed_positions(self, address: str) -> list[dict]:
+    def closed_positions(self, address: str, *, limit: int = 1000) -> list[dict]:
         assert address in {MAKER, DIRECTIONAL}
+        assert limit == 1000
         return closed_positions()
 
     settings = SimpleNamespace(data_api_base="https://data-api.polymarket.com")
 
     def _get(self, _url: str, params: dict) -> list[dict]:
         wallet = params["user"]
+        if _url.endswith("/closed-positions"):
+            return closed_positions() if int(params.get("offset") or 0) == 0 else []
         if _url.endswith("/trades"):
             all_rows = [
                 event(
@@ -461,7 +464,9 @@ def test_forensics_failure_does_not_discard_valid_directional_source(
 
 class BrokenActivityClient(ScannerClient):
     def _get(self, _url: str, params: dict) -> list[dict]:
-        raise RuntimeError("activity unavailable")
+        if _url.endswith("/activity"):
+            raise RuntimeError("activity unavailable")
+        return super()._get(_url, params)
 
 
 def test_scanner_activity_failure_fails_closed_without_selecting_source(

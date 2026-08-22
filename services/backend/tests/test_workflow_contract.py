@@ -2,16 +2,16 @@ from pathlib import Path
 
 from app.watchdogs import ACCOUNTING_WATCHDOG
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 
 
 def test_r45_workflow_accepts_present_empty_ledger_as_cold_start_evidence() -> None:
     workflow = (WORKFLOWS / "github-paper-v5.yml").read_text(encoding="utf-8")
-    assert 'empty_valid = name == "prediction-ledger-v5.jsonl"' in workflow
+    assert 'test -f "$OUTPUT_DIR/prediction-ledger-v5.jsonl"' in workflow
+    assert 'empty_valid = name == \'prediction-ledger-v5.jsonl\'' in workflow
     assert "included = path.is_file() and (empty_valid or path.stat().st_size > 0)" in workflow
-    assert 'assert packaged["prediction-ledger-v5.jsonl"]["empty_valid"] is True' in workflow
+    assert "files=(paper-v5-summary.json paper-v5-summary.md prediction-ledger-v5.jsonl" in workflow
 
 
 def test_paper_v2_uses_shared_neutral_accounting_watchdog_identity() -> None:
@@ -42,15 +42,24 @@ def test_legacy_cloudflare_paths_are_retired_without_credentials() -> None:
         assert "wrangler deploy" not in source
         assert "CLOUDFLARE_API_TOKEN" not in source
         assert "CLOUDFLARE_ACCOUNT_ID" not in source
-        assert "canonical public publisher" in source.lower() or "only publish-cloudflare-terminal-v5.yml" in source.lower()
+        assert (
+            "canonical public publisher" in source.lower()
+            or "only publish-cloudflare-terminal-v5.yml" in source.lower()
+        )
 
 
-def test_r45_publisher_rejects_stale_successful_source_sha() -> None:
+def test_r45_publisher_rejects_noncanonical_or_stale_manual_source_run() -> None:
     source = (WORKFLOWS / "publish-cloudflare-terminal-v5.yml").read_text(encoding="utf-8")
-    assert "workflow_dispatch" not in source
-    assert 'main_sha=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main"' in source
-    assert 'if [[ "$sha" != "$main_sha" ]]' in source
-    assert "Refusing stale V5 publish" in source
+    assert "workflow_dispatch:" in source
+    assert "source_run_id:" in source
+    assert "required: true" in source
+    assert "run_json=$(gh api" in source
+    assert "workflow_name=$(jq -r '.name'" in source
+    assert "conclusion=$(jq -r '.conclusion'" in source
+    assert '[[ "$workflow_name" == "GitHub PAPER V5 Truthful Execution" ]]' in source
+    assert '[[ "$conclusion" == "success" ]]' in source
+    assert '[[ "$branch" == "main" ]]' in source
+    assert '[[ "$sha" == "$main_sha" ]]' in source
     assert '"canonical_publisher_workflow": "publish-cloudflare-terminal-v5.yml"' in source
     assert '"max_public_snapshot_age_seconds": 10800' in source
     assert '"history_basis": "DECIDED_OUTCOMES"' in source

@@ -1,0 +1,57 @@
+{
+  "schema_version": "SIBYL_V6_VERIFIED_PAIRS_V1",
+  "pairs": [
+    {
+      "limitless_slug": "62000-1786954111732",
+      "limitless_title": "↓ 62,000",
+      "polymarket_id": "3653966",
+      "polymarket_slug": "will-bitcoin-dip-to-62k-august-17-23-2026",
+      "polymarket_title": "Will Bitcoin dip to $62,000 August 17-23?",
+      "limitless_rule_source_url": "https://api.limitless.exchange/markets/62000-1786954111732",
+      "polymarket_rule_source_url": "https://gamma-api.polymarket.com/markets/slug/will-bitcoin-dip-to-62k-august-17-23-2026",
+      "limitless_rule_payload_hash": "8045e94169c577761b58a652dbed1e64fe8e0c1c04373892ba08a1d4b5a17b84",
+      "polymarket_rule_payload_hash": "159c7a59891e68656410c4460ff4fbd321ac975c033e26ba7448cbded73ef4cc",
+      "verified_at_utc": "2026-08-21T13:01:08Z",
+      "limitless_rule": {
+        "underlying": "btc/usdt",
+        "polarity": "yes_if_threshold_reached_else_no",
+        "threshold": "62000",
+        "comparison_operator": "<=",
+        "reference_source": "binance:btc/usdt:1m:final_low",
+        "window_start_utc": "2026-08-17t04:00:00z",
+        "window_end_utc": "2026-08-24t03:59:00z",
+        "resolution_instant_utc": "immediate_after_qualifying_1m_candle_else_after_2026-08-24t03:59:00z",
+        "price_to_beat_construction": "fixed_title_threshold_62000_against_final_low",
+        "equality_tie_handling": "equality_counts_as_yes",
+        "invalid_market_rules": "no_market_specific_invalid_rule",
+        "cancellation_rules": "no_market_specific_cancellation_rule",
+        "fallback_oracle_failure_rules": "no_market_specific_oracle_fallback",
+        "settlement_semantics": "binary_yes_no_winner_redeems_1_loser_0"
+      },
+      "polymarket_rule": {
+        "underlying": "btc/usdt",
+        "polarity": "yes_if_threshold_reached_else_no",
+        "threshold": "62000",
+        "comparison_operator": "<=",
+        "reference_source": "binance:btc/usdt:1m:final_low",
+        "window_start_utc": "2026-08-17t04:00:00z",
+        "window_end_utc": "2026-08-24t03:59:00z",
+        "resolution_instant_utc": "immediate_after_qualifying_1m_candle_else_after_2026-08-24t03:59:00z",
+        "price_to_beat_construction": "fixed_title_threshold_62000_against_final_low",
+        "equality_tie_handling": "equality_counts_as_yes",
+        "invalid_market_rules": "no_market_specific_invalid_rule",
+        "cancellation_rules": "no_market_specific_cancellation_rule",
+        "fallback_oracle_failure_rules": "no_market_specific_oracle_fallback",
+        "settlement_semantics": "binary_yes_no_winner_redeems_1_loser_0"
+      },
+      "audit_evidence": {
+        "workflow_run_id": 32484668549,
+        "artifact_id": 9447379558,
+        "artifact_zip_sha256": "6c404b78aeb439c03f665b585a3f88e3f4b850380e3e1e64372d82be796fe235",
+        "comparison_fingerprint": "120a27231493cff6794631c9d5137849e788a1855ecc70600fe8c4f9b69a5f64",
+        "rule_fingerprint": "c26d3fa531ae6d896c579f2a5308c1ac1e0dc675c80bac6de666155b0d7f914c"
+      }
+    }
+  ],
+  "note": "The persisted pair was promoted only from an exact-head authoritative live rule-audit artifact with no unknown or differing fingerprint fields. Candidate title similarity was not used as equivalence proof."
+}

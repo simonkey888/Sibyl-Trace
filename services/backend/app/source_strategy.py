@@ -20,6 +20,7 @@ _ACTIVITY_TYPES = (
     "REWARD",
     "CONVERSION",
     "MAKER_REBATE",
+    "TAKER_REBATE",
     "REFERRAL_REWARD",
 )
 
@@ -277,7 +278,7 @@ def classify_source_strategy(
         "attributable_trade_count": attributable_trade_count,
         "unattributable_trade_count": unattributable_trade_count,
         "maker_rebate_count": counts["MAKER_REBATE"],
-        "taker_rebate_count": 0,
+        "taker_rebate_count": counts["TAKER_REBATE"],
         "split_count": counts["SPLIT"],
         "merge_count": counts["MERGE"],
         "conversion_count": counts["CONVERSION"],
@@ -303,7 +304,7 @@ def classify_source_strategy(
         attributable_trade_count=attributable_trade_count,
         unattributable_trade_count=unattributable_trade_count,
         maker_rebate_count=counts["MAKER_REBATE"],
-        taker_rebate_count=0,
+        taker_rebate_count=counts["TAKER_REBATE"],
         split_count=counts["SPLIT"],
         merge_count=counts["MERGE"],
         conversion_count=counts["CONVERSION"],

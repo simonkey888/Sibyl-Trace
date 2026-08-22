@@ -1,0 +1,113 @@
+name: Sibyl V6 Evidence Store Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "feat/sibyl-v6-cross-market-mm-r1"
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  evidence-store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      R2_PROBE_AUTHORIZED: ${{ vars.SIBYL_V6_R2_LIVE_PROBE_AUTHORIZED }}
+      SIBYL_V6_R2_ACCOUNT_ID: ${{ secrets.SIBYL_V6_R2_ACCOUNT_ID }}
+      SIBYL_V6_R2_BUCKET: ${{ secrets.SIBYL_V6_R2_BUCKET }}
+      SIBYL_V6_R2_ACCESS_KEY_ID: ${{ secrets.SIBYL_V6_R2_ACCESS_KEY_ID }}
+      SIBYL_V6_R2_SECRET_ACCESS_KEY: ${{ secrets.SIBYL_V6_R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Verify compute-independent store contracts
+        env:
+          PYTHONPATH: v6
+        run: |
+          python -m unittest discover -s v6/tests -p 'test_quote_and_evidence.py' -v
+          echo 'FILE_STORE=PASS'
+          echo 'FILE_RESTART_DURABILITY_CLAIM=NO'
+          echo 'R2_STORE_CONTRACT=PASS'
+          echo 'GCS_STORE_CONTRACT=PASS'
+          echo 'GCP_METADATA_REQUIRED_FOR_BOOT=NO'
+      - name: Probe authorized R2 durability if configured
+        env:
+          PYTHONPATH: v6
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sibyl-v6-store
+          missing=()
+          [[ "$R2_PROBE_AUTHORIZED" == "true" ]] || missing+=(SIBYL_V6_R2_LIVE_PROBE_AUTHORIZED=true)
+          for name in SIBYL_V6_R2_ACCOUNT_ID SIBYL_V6_R2_BUCKET SIBYL_V6_R2_ACCESS_KEY_ID SIBYL_V6_R2_SECRET_ACCESS_KEY; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            MISSING="$(IFS=,; echo "${missing[*]}")" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              'R2_LIVE_PUT_GET': 'NOT_RUN',
+              'reason': 'MISSING_EXTERNAL_AUTHORIZED_CONFIGURATION',
+              'missing': os.environ['MISSING'].split(','),
+              'trading_secrets_required': False,
+          }
+          Path('/tmp/sibyl-v6-store/r2-live-probe.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(payload, sort_keys=True))
+          PY
+          else
+            python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from sibyl_v6.evidence_store import R2EvidenceStore
+
+          def make_store():
+              return R2EvidenceStore(
+                  os.environ['SIBYL_V6_R2_ACCOUNT_ID'],
+                  os.environ['SIBYL_V6_R2_BUCKET'],
+                  os.environ['SIBYL_V6_R2_ACCESS_KEY_ID'],
+                  os.environ['SIBYL_V6_R2_SECRET_ACCESS_KEY'],
+              )
+
+          key = f"sibyl-v6-zero-cost-probe/{os.environ['SOURCE_SHA']}/durability.json"
+          first = json.dumps({'source_sha': os.environ['SOURCE_SHA'], 'version': 1}, sort_keys=True).encode()
+          second = json.dumps({'source_sha': os.environ['SOURCE_SHA'], 'version': 2}, sort_keys=True).encode()
+          store = make_store()
+          store.put_bytes(key, first)
+          assert hashlib.sha256(store.get_bytes(key)).digest() == hashlib.sha256(first).digest()
+          store.put_bytes(key, second)
+          assert hashlib.sha256(store.get_bytes(key)).digest() == hashlib.sha256(second).digest()
+          restarted_store = make_store()
+          assert hashlib.sha256(restarted_store.get_bytes(key)).digest() == hashlib.sha256(second).digest()
+          payload = {
+              'R2_LIVE_PUT_GET': 'PASS',
+              'PUT': 'PASS',
+              'GET': 'PASS',
+              'CONTENT_HASH_EQUALITY': 'PASS',
+              'OVERWRITE_LATEST_READ': 'PASS',
+              'READ_AFTER_CLIENT_RESTART': 'PASS',
+              'storage_class': 'STANDARD',
+              'trading_secrets_required': False,
+          }
+          Path('/tmp/sibyl-v6-store/r2-live-probe.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(payload, sort_keys=True))
+          PY
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-store-verification-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-store
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,71 @@
+name: Sibyl V6 Authoritative Rule Audit
+
+on:
+  pull_request:
+    paths:
+      - "v6/**"
+      - ".github/workflows/sibyl-v6-rule-audit.yml"
+  push:
+    branches:
+      - feat/sibyl-v6-cross-market-mm-r1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  authoritative-rule-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Exact-head gate
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Capture venue catalog representation
+        env:
+          PYTHONPATH: v6
+        run: |
+          mkdir -p /tmp/sibyl-v6-rule-audit
+          python -m sibyl_v6.catalog_diag > /tmp/sibyl-v6-rule-audit/catalog-diag.json
+      - name: Audit authoritative venue rules field-by-field
+        env:
+          PYTHONPATH: v6
+        run: python -m sibyl_v6.rule_audit_runner_v2 > /tmp/sibyl-v6-rule-audit/rule-audit.json
+      - name: Verify audit result
+        env:
+          PYTHONPATH: v6
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/sibyl-v6-rule-audit/rule-audit.json').read_text())
+          print('CANDIDATE_PAIR_COUNT=' + str(p['CANDIDATE_PAIR_COUNT']))
+          print('EXACT_EQUIVALENT_PAIR_COUNT=' + str(p['EXACT_EQUIVALENT_PAIR_COUNT']))
+          for i,row in enumerate(p['candidates'][:20], 1):
+              print(f"AUDIT_{i}=" + json.dumps({
+                  'event':row.get('event'),
+                  'threshold':row.get('threshold'),
+                  'family':row.get('family'),
+                  'limitless_slug':row.get('limitless_slug'),
+                  'polymarket_slug':row.get('polymarket_slug'),
+                  'state':(row.get('comparison') or {}).get('state'),
+                  'diff':(row.get('comparison') or {}).get('differing_fields'),
+                  'unknown':sorted(set((row.get('limitless_unknown_fields') or [])+(row.get('polymarket_unknown_fields') or []))),
+              }, sort_keys=True))
+          assert p['CANDIDATE_PAIR_COUNT'] > 0, p
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-authoritative-rule-audit-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-rule-audit
+          if-no-files-found: error
+          retention-days: 14

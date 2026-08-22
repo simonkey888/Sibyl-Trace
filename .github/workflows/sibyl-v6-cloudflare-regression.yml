@@ -1,0 +1,105 @@
+name: Sibyl V6 Cloudflare Regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "feat/sibyl-v6-cross-market-mm-r1"
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  PUBLIC_TERMINAL_URL: https://sibyl-trace.simondalmasso44.workers.dev
+
+jobs:
+  cloudflare-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact-head checkout
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Probe public read-only R4.5 terminal
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sibyl-v6-cloudflare
+          root_status=$(curl --retry 4 --retry-delay 2 --silent --show-error -D /tmp/sibyl-v6-cloudflare/root.headers -o /tmp/sibyl-v6-cloudflare/root.html -w '%{http_code}' "$PUBLIC_TERMINAL_URL/")
+          snapshot_status=$(curl --retry 4 --retry-delay 2 --silent --show-error -D /tmp/sibyl-v6-cloudflare/snapshot.headers -o /tmp/sibyl-v6-cloudflare/snapshot.json -w '%{http_code}' "$PUBLIC_TERMINAL_URL/data/snapshot.json?verify=$GITHUB_RUN_ID")
+          api_status=$(curl --retry 4 --retry-delay 2 --silent --show-error -D /tmp/sibyl-v6-cloudflare/api.headers -o /tmp/sibyl-v6-cloudflare/api.json -w '%{http_code}' "$PUBLIC_TERMINAL_URL/api/status")
+          post_status=$(curl --retry 4 --retry-delay 2 --silent --show-error -X POST -o /tmp/sibyl-v6-cloudflare/post.txt -w '%{http_code}' "$PUBLIC_TERMINAL_URL/")
+          test "$root_status" = 200
+          test "$snapshot_status" = 200
+          test "$api_status" = 404
+          test "$post_status" = 405
+          ROOT_STATUS="$root_status" SNAPSHOT_STATUS="$snapshot_status" API_STATUS="$api_status" POST_STATUS="$post_status" python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          snapshot = json.loads(Path('/tmp/sibyl-v6-cloudflare/snapshot.json').read_text(encoding='utf-8'))
+          api = json.loads(Path('/tmp/sibyl-v6-cloudflare/api.json').read_text(encoding='utf-8'))
+          api_headers = Path('/tmp/sibyl-v6-cloudflare/api.headers').read_text(encoding='utf-8').lower()
+          contract = snapshot.get('truth_contract') or {}
+          score = contract.get('quality_score') or {}
+          assert snapshot.get('schema_version') == 5
+          assert contract.get('canonical_publisher_workflow') == 'publish-cloudflare-terminal-v5.yml'
+          assert contract.get('single_public_writer_required') is True
+          assert contract.get('live_available') is False
+          assert contract.get('profitability_proven') is False
+          assert score.get('calibrated_probability') is False
+          assert score.get('expected_return_claim') is False
+          assert score.get('alpha_claim') is False
+          assert api.get('detail') == 'API and control routes are disabled on the public PAPER terminal'
+          assert 'x-content-type-options: nosniff' in api_headers
+          assert 'x-frame-options: deny' in api_headers
+
+          sensitive_keys = {
+              'private_key', 'seed_phrase', 'mnemonic', 'bearer_token',
+              'access_token', 'refresh_token', 'api_key', 'password', 'secret',
+          }
+          credential_patterns = (
+              re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
+              re.compile(r'Bearer\s+[A-Za-z0-9._-]{12,}', re.I),
+              re.compile(r'\bsk-[A-Za-z0-9_-]{16,}\b'),
+          )
+
+          def walk(value):
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      normalized = str(key).strip().casefold()
+                      if normalized in sensitive_keys and item not in (None, '', False, 'REDACTED', 'redacted'):
+                          raise AssertionError(f'sensitive public key has non-empty value: {normalized}')
+                      walk(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      walk(item)
+              elif isinstance(value, str):
+                  for pattern in credential_patterns:
+                      assert pattern.search(value) is None
+
+          walk(snapshot)
+          payload = {
+              'PUBLIC_CLOUDFLARE_TERMINAL': 'HEALTHY',
+              'ROOT_HTTP': int(os.environ['ROOT_STATUS']),
+              'SNAPSHOT_HTTP': int(os.environ['SNAPSHOT_STATUS']),
+              'API_BOUNDARY_HTTP': int(os.environ['API_STATUS']),
+              'POST_BOUNDARY_HTTP': int(os.environ['POST_STATUS']),
+              'READ_ONLY': True,
+              'NO_EXECUTION_AUTHORITY': True,
+              'NO_SECRET_EXPOSURE': True,
+              'R45_REGRESSION': 'NO',
+          }
+          Path('/tmp/sibyl-v6-cloudflare/regression-summary.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(payload, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-cloudflare-regression-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-cloudflare
+          if-no-files-found: error
+          retention-days: 14

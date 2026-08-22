@@ -1,0 +1,59 @@
+name: Sibyl V6 Live Cross-Market Recon
+
+on:
+  push:
+    branches:
+      - feat/sibyl-v6-cross-market-mm-r1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+
+jobs:
+  live-recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Assert exact-head
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Comprehensive semantic live reconnaissance
+        env:
+          PYTHONPATH: v6
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sibyl-v6-recon
+          python -m sibyl_v6.live_recon > /tmp/sibyl-v6-recon/live-recon.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/sibyl-v6-recon/live-recon.json').read_text())
+          print('LIMITLESS_MARKETS=' + str(p['limitless_market_count']))
+          print('POLYMARKET_MARKETS=' + str(p['polymarket_market_count']))
+          print('SEMANTIC_CANDIDATE_COUNT=' + str(p['semantic_candidate_count']))
+          for i,row in enumerate(p['top_candidates'][:12], 1):
+              l=row['limitless']; r=row['polymarket']
+              print(f"CANDIDATE_{i}=" + json.dumps({
+                  'score':row['score'],'asset':row['asset'],'family':row['family'],
+                  'end_delta_seconds':row['end_delta_seconds'],
+                  'limitless_slug':l.get('slug'),'limitless_title':l.get('title') or l.get('question'),
+                  'limitless_end':l.get('derived_end_utc'),
+                  'polymarket_slug':r.get('slug'),'polymarket_title':r.get('question') or r.get('title'),
+                  'polymarket_end':r.get('derived_end_utc'),
+              }, sort_keys=True))
+          assert p['semantic_candidate_count'] > 0, p
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sibyl-v6-live-recon-${{ env.SOURCE_SHA }}
+          path: /tmp/sibyl-v6-recon/live-recon.json
+          if-no-files-found: error
+          retention-days: 7
