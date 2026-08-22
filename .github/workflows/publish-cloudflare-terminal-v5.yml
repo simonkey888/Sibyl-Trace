@@ -45,13 +45,20 @@ jobs:
             run_id="${{ github.event.workflow_run.id }}"
             sha="${{ github.event.workflow_run.head_sha }}"
             branch="${{ github.event.workflow_run.head_branch }}"
+            conclusion="${{ github.event.workflow_run.conclusion }}"
+            workflow_name="${{ github.event.workflow_run.name }}"
           else
             run_id="${{ inputs.source_run_id }}"
-            sha=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')
-            branch=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_branch')
+            run_json=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+            sha=$(jq -r '.head_sha' <<<"$run_json")
+            branch=$(jq -r '.head_branch' <<<"$run_json")
+            conclusion=$(jq -r '.conclusion' <<<"$run_json")
+            workflow_name=$(jq -r '.name' <<<"$run_json")
           fi
           main_sha=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           [[ -n "$run_id" && "$sha" =~ ^[0-9a-f]{40}$ && "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$workflow_name" == "GitHub PAPER V5 Truthful Execution" ]]
+          [[ "$conclusion" == "success" ]]
           [[ "$branch" == "main" ]]
           [[ "$sha" == "$main_sha" ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
