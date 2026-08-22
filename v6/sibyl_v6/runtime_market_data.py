@@ -120,6 +120,34 @@ def _untimestamped_reconciliation_copy(book: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_polymarket_ws_authority(
+    ws_book: dict[str, Any] | None,
+    rest_book: dict[str, Any],
+    ws_status: str,
+) -> tuple[dict[str, Any], str, str, bool]:
+    """Resolve the post-reconciliation authoritative book without fabricating freshness.
+
+    The caller fetches REST first, then obtains a complete timestamped WS book.
+    Therefore a top mismatch is evidence of state movement between observations,
+    not proof that the later WS snapshot is stale/desynchronized. The mismatch is
+    retained as reconciliation evidence but never grants freshness. Only the WS
+    classifier can return FRESH. A non-fresh/missing WS result stays fail-closed.
+    """
+    top_reconciled = bool(isinstance(ws_book, dict) and _top_matches(ws_book, rest_book))
+    status = str(ws_status or "UNKNOWN")
+    if isinstance(ws_book, dict):
+        authoritative = dict(ws_book)
+        if status != "FRESH":
+            authoritative["timestamp"] = None
+        return authoritative, status, "POLYMARKET_MARKET_WS_BOOK", top_reconciled
+    return (
+        _untimestamped_reconciliation_copy(rest_book),
+        status,
+        "REST_RECONCILIATION_ONLY",
+        False,
+    )
+
+
 def fetch_runtime_market_data(
     pair: dict[str, Any],
     audit: dict[str, Any],
@@ -129,9 +157,10 @@ def fetch_runtime_market_data(
 ) -> dict[str, Any]:
     """Fetch quote-decision data with fail-closed venue state/provenance.
 
-    On both venues, REST is reconciliation only. Timestamped public WebSocket
-    order-book events are the only freshness authority. Missing, stale,
-    disconnected, ambiguous or desynchronized WS state cannot become FRESH.
+    REST is reconciliation only. Timestamped public WebSocket order-book events
+    are the only freshness authority. For Polymarket, reconciliation REST books
+    are fetched first and a later complete WS book supersedes them. Missing,
+    stale, disconnected or ambiguous WS state cannot become FRESH.
     """
     lslug = str(pair["limitless_slug"])
     pslug = str(pair["polymarket_slug"])
@@ -184,6 +213,23 @@ def fetch_runtime_market_data(
     if not token_map_matches or len(exact_tokens) != 2:
         raise RuntimeError("POLYMARKET_EXACT_TOKEN_SET_INVALID")
 
+    # REST is a reconciliation baseline only. Fetch it BEFORE the WS snapshot so
+    # a subsequent complete timestamped WS book is the newest authoritative state.
+    rest_books: dict[str, dict[str, Any]] = {}
+    book_http: dict[str, int] = {}
+    rest_book_urls: dict[str, str] = {}
+    rest_received_at_ms: dict[str, int] = {}
+    for outcome in ("YES", "NO"):
+        token = gamma_tokens[outcome]
+        rest_url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": token})
+        status, rest_book = _get_json(rest_url)
+        if status != 200 or not isinstance(rest_book, dict):
+            raise RuntimeError(f"POLYMARKET_{outcome}_RECONCILIATION_BOOK_INVALID")
+        rest_books[outcome] = rest_book
+        book_http[outcome] = status
+        rest_book_urls[outcome] = rest_url
+        rest_received_at_ms[outcome] = int(time.time() * 1000)
+
     pws = fetch_polymarket_ws_snapshot(
         token_ids=exact_tokens,
         timeout_ms=ws_timeout_ms,
@@ -197,11 +243,8 @@ def fetch_runtime_market_data(
         max_age_ms=ws_max_age_ms,
     )
 
-    rest_books: dict[str, dict[str, Any]] = {}
     books: dict[str, dict[str, Any]] = {}
-    book_http: dict[str, int] = {}
     book_urls: dict[str, str] = {}
-    rest_book_urls: dict[str, str] = {}
     book_status: dict[str, str] = {}
     ws_rest_top_reconciled: dict[str, bool] = {}
     book_source: dict[str, str] = {}
@@ -210,33 +253,16 @@ def fetch_runtime_market_data(
 
     for outcome in ("YES", "NO"):
         token = gamma_tokens[outcome]
-        rest_url = "https://clob.polymarket.com/book?" + urllib.parse.urlencode({"token_id": token})
-        status, rest_book = _get_json(rest_url)
-        if status != 200 or not isinstance(rest_book, dict):
-            raise RuntimeError(f"POLYMARKET_{outcome}_RECONCILIATION_BOOK_INVALID")
-        rest_books[outcome] = rest_book
-        book_http[outcome] = status
-        rest_book_urls[outcome] = rest_url
-
-        ws_outcome_book = ws_books.get(token)
         state = per_token.get(token) if isinstance(per_token.get(token), dict) else {}
-        freshness = str(state.get("status") or "UNKNOWN")
-        top_reconciled = bool(
-            isinstance(ws_outcome_book, dict) and _top_matches(ws_outcome_book, rest_book)
+        authoritative, freshness, source, top_reconciled = _resolve_polymarket_ws_authority(
+            ws_books.get(token),
+            rest_books[outcome],
+            str(state.get("status") or "UNKNOWN"),
         )
-        if freshness == "FRESH" and not top_reconciled:
-            freshness = "DESYNC"
+        books[outcome] = authoritative
         book_status[outcome] = freshness
+        book_source[outcome] = source
         ws_rest_top_reconciled[outcome] = top_reconciled
-        if isinstance(ws_outcome_book, dict):
-            authoritative = dict(ws_outcome_book)
-            if freshness != "FRESH":
-                authoritative["timestamp"] = None
-            books[outcome] = authoritative
-            book_source[outcome] = "POLYMARKET_MARKET_WS_BOOK"
-        else:
-            books[outcome] = _untimestamped_reconciliation_copy(rest_book)
-            book_source[outcome] = "REST_RECONCILIATION_ONLY"
         book_urls[outcome] = POLYMARKET_MARKET_WS_URL
 
     limitless_tradeable = _limitless_tradeable(ldetail)
@@ -279,10 +305,13 @@ def fetch_runtime_market_data(
             "book_http": book_http,
             "book_urls": book_urls,
             "rest_book_urls": rest_book_urls,
+            "rest_received_at_ms": rest_received_at_ms,
+            "reconciliation_sequence": "REST_THEN_WS",
             "book_status": book_status,
             "book_source": book_source,
             "ws": pws,
             "ws_state": pws_state,
+            "ws_observed_at_ms": pws_observed,
             "ws_rest_top_reconciled": ws_rest_top_reconciled,
             "tradeable": polymarket_tradeable,
             "minimum_tick": _finite_positive(pclob.get("mts")),
